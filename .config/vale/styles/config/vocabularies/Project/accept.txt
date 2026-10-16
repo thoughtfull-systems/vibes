@@ -1,0 +1,8 @@
+[Vv]endored
+devenv
+gitlint
+markdownlint
+mdformat
+MIT
+monorepo
+Nygard
