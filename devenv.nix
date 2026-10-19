@@ -8,10 +8,14 @@
 }:
 
 let
+  gtkSchemas = "${pkgs.gtk4}/share/gsettings-schemas/${pkgs.gtk4.name}";
   vendored = "^\\.config/vale/styles/(Google|write-good)/";
 in
 {
   # keep-sorted start block=yes newline_separated=yes
+  # Nix builds wrap GTK apps to find GSettings schemas; apps run from the shell need them here.
+  enterShell = "export XDG_DATA_DIRS=${gtkSchemas}:$XDG_DATA_DIRS";
+
   env.VALE_CONFIG_PATH = "${config.devenv.root}/.config/vale/vale.ini";
 
   git-hooks.hooks = {
@@ -24,6 +28,10 @@ in
     check-shebang-scripts-are-executable.enable = true;
     check-symlinks.enable = true;
     check-vcs-permalinks.enable = true;
+    clippy = {
+      enable = true;
+      settings.denyWarnings = true;
+    };
     deadnix.enable = true;
     detect-private-keys.enable = true;
     editorconfig-checker = {
@@ -81,6 +89,7 @@ in
       name = "license-header";
       types_or = [
         "nix"
+        "rust"
         "shell"
       ];
     };
@@ -135,6 +144,10 @@ in
       settings.width = 100;
     };
     ripsecrets.enable = true;
+    rustfmt = {
+      enable = true;
+      settings.config-path = ".config/rustfmt.toml";
+    };
     sort-file-contents = {
       enable = true;
       files = lib.concatStrings [
@@ -217,9 +230,17 @@ in
     # keep-sorted end
   };
 
+  git-hooks.settings.rust.cargoManifestPath = "commonplace/Cargo.toml";
+
+  languages.rust.enable = true;
+
   packages = [
     # keep-sorted start
+    pkgs.gtk4
+    pkgs.gtksourceview5
+    pkgs.libadwaita
     pkgs.lychee
+    pkgs.pkg-config
     pkgs.vale
     # keep-sorted end
   ];

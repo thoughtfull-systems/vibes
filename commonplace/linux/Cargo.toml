@@ -1,0 +1,17 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "commonplace-gtk"
+publish.workspace = true
+version.workspace = true
+
+[dependencies]
+adw = { version = "0.9.2", package = "libadwaita", features = ["v1_8"] }
+commonplace-core = { version = "0.1.0", path = "../core" }
+gio = { version = "0.22", features = ["v2_80"] }
+gtk = { version = "0.11.5", package = "gtk4", features = ["v4_20"] }
+sourceview5 = { version = "0.11.2", features = ["v5_18"] }
+
+[[bin]]
+name = "commonplace"
+path = "src/main.rs"

@@ -1,0 +1,2 @@
+# Fill lines up to the 100-character limit instead of breaking expressions early.
+use_small_heuristics = "Max"

@@ -30,6 +30,8 @@ editors read `.editorconfig` only from the root, and GitHub reads workflows only
   clichés, and weak sentence openings. Treat it like the Google style. Its MIT license lives in
   `.config/vale/styles/LICENSE-write-good`.
 - `.config/markdownlint.yaml`: markdown structure rules.
+- `.config/rustfmt.toml`: formatting for Rust. Neither `cargo fmt` nor editors find it on their own,
+  so format with `prek run rustfmt --all-files`, or pass `--config-path` to `rustfmt`.
 - `.config/gitlint`: commit message rules.
 - `.config/lychee.toml`: link checking.
 - `.config/taplo.toml`: formatting for `.toml` files.

@@ -17,9 +17,16 @@ and the web, the platforms I use every day.
 - **Diversity within bounds.** General guidelines set the allowed languages and technologies. Within
   those bounds, each app, or each implementation of an app, can choose what suits it best.
 
+## Apps
+
+- [Commonplace](commonplace): personal knowledge management, with memos, tasks, curios, and zettels.
+
 ## Languages and technologies
 
-The guidelines for languages and technologies are still to come.
+Each platform gets a native app, written in its own language with its own toolkit. An app's
+implementations can share logic through a Rust core.
+[Decision 0001](decisions/0001-languages-and-technologies.md) sets the allowed languages and
+toolkits.
 
 ## Development
 
