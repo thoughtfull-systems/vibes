@@ -19,7 +19,8 @@ and the web, the platforms I use every day.
 
 ## Apps
 
-- [Commonplace](commonplace): personal knowledge management, with memos, tasks, curios, and zettels.
+- [Commonplace](commonplace): personal knowledge management, with memos, actions, curios, and
+  zettels.
 
 ## Languages and technologies
 

@@ -9,8 +9,17 @@ use gtk::{gdk, gio, glib};
 use crate::editor;
 use crate::state::State;
 
-/// Opens a small window that saves its text as a new memo when it closes.
-pub fn present(app: &adw::Application, state: Rc<State>) {
+/// The widget name that marks a capture window.
+const NAME: &str = "capture";
+
+/// Whether `window` is a capture window.
+pub fn is_capture(window: &gtk::Window) -> bool {
+    window.widget_name() == NAME
+}
+
+/// Opens a small window that saves its text as a new memo, or a new task in the inbox if `task` is
+/// set. Saving closes the window, and closing it any other way discards the text.
+pub fn present(app: &adw::Application, state: Rc<State>, task: bool) -> adw::ApplicationWindow {
     let view = editor::new_view();
     let scrolled = gtk::ScrolledWindow::builder().child(&view).build();
     let discard = gtk::Button::builder().label("_Discard").use_underline(true).build();
@@ -19,7 +28,12 @@ pub fn present(app: &adw::Application, state: Rc<State>) {
         .use_underline(true)
         .css_classes(["suggested-action"])
         .build();
-    let header = adw::HeaderBar::new();
+    let kind = if task { "Action" } else { "Memo" };
+    let header = adw::HeaderBar::builder()
+        .title_widget(&adw::WindowTitle::new(&format!("New {kind}"), ""))
+        .show_start_title_buttons(false)
+        .show_end_title_buttons(false)
+        .build();
     header.pack_start(&discard);
     header.pack_end(&save);
     let toolbar = adw::ToolbarView::new();
@@ -27,30 +41,34 @@ pub fn present(app: &adw::Application, state: Rc<State>) {
     toolbar.set_content(Some(&scrolled));
     let window = adw::ApplicationWindow::builder()
         .application(app)
+        .name(NAME)
         .title("Capture")
         .default_width(480)
         .default_height(260)
         .content(&toolbar)
         .build();
 
-    let discarded = Rc::new(Cell::new(false));
+    let saving = Rc::new(Cell::new(false));
     window.connect_close_request(glib::clone!(
         #[strong]
-        discarded,
+        saving,
         #[weak]
         view,
         #[upgrade_or]
         glib::Propagation::Proceed,
         move |window| {
             let text = editor::text(&view.buffer());
-            if discarded.get() || text.trim().is_empty() {
+            if !saving.replace(false) || text.trim().is_empty() {
                 return glib::Propagation::Proceed;
             }
-            match state.write(|library| library.create_memo(&text)) {
+            let created = state.write(|library| {
+                if task { library.create_inbox_task(&text) } else { library.create_memo(&text) }
+            });
+            match created {
                 Ok(_) => glib::Propagation::Proceed,
                 Err(error) => {
                     let dialog = adw::AlertDialog::new(
-                        Some("Couldn’t Save the Memo"),
+                        Some(&format!("Couldn’t Save the {kind}")),
                         Some(&error.to_string()),
                     );
                     dialog.add_response("ok", "_OK");
@@ -60,50 +78,49 @@ pub fn present(app: &adw::Application, state: Rc<State>) {
             }
         }
     ));
-    discard.connect_clicked(glib::clone!(
+    let save_and_close = glib::clone!(
         #[weak]
         window,
-        move |_| {
-            discarded.set(true);
+        move || {
+            saving.set(true);
             window.close();
         }
-    ));
-    save.connect_clicked(glib::clone!(
+    );
+    discard.connect_clicked(glib::clone!(
         #[weak]
         window,
         move |_| window.close()
     ));
-
+    save.connect_clicked(glib::clone!(
+        #[strong]
+        save_and_close,
+        move |_| save_and_close()
+    ));
     let save_action = gio::SimpleAction::new("save", None);
     save_action.connect_activate(glib::clone!(
-        #[weak]
-        window,
-        move |_, _| window.close()
+        #[strong]
+        save_and_close,
+        move |_, _| save_and_close()
     ));
     window.add_action(&save_action);
 
-    // The capture phase sees the keys before the editor turns Control+Return into a line break.
-    let keys = gtk::EventControllerKey::builder()
-        .propagation_phase(gtk::PropagationPhase::Capture)
-        .build();
+    let keys = gtk::EventControllerKey::new();
     keys.connect_key_pressed(glib::clone!(
         #[weak]
         window,
         #[upgrade_or]
         glib::Propagation::Proceed,
-        move |_, key, _, modifiers| {
-            let control_return = modifiers.contains(gdk::ModifierType::CONTROL_MASK)
-                && matches!(key, gdk::Key::Return | gdk::Key::KP_Enter);
-            if control_return || key == gdk::Key::Escape {
-                window.close();
-                glib::Propagation::Stop
-            } else {
-                glib::Propagation::Proceed
+        move |_, key, _, _| {
+            if key != gdk::Key::Escape {
+                return glib::Propagation::Proceed;
             }
+            window.close();
+            glib::Propagation::Stop
         }
     ));
     window.add_controller(keys);
 
     window.present();
     view.grab_focus();
+    window
 }

@@ -4,7 +4,7 @@
 
 Commonplace notes link to each other, and other software links to them: a browser bookmark, a
 calendar entry, a message to oneself, or a launcher on a desktop or a phone. A link has to keep
-working when the note changes, including when a memo becomes a task or a zettel.
+working when the note changes.
 
 Memos have no title, and asking for one adds friction to capture. Titles that do exist change, and
 reorganizing a slip box changes zettel addresses. A link can't rely on any of these. Each device
@@ -15,7 +15,7 @@ raw text looks to anyone who opens it outside the app.
 
 ## Criteria
 
-- **Stable.** A link keeps pointing to the same note through edits, renames, and changes of kind.
+- **Stable.** A link keeps pointing to the same note through edits and renames.
 - **Offline creation.** Any device can create a note and its identifier without coordination.
 - **Readable text.** Links don't clutter a note's raw Markdown more than they must.
 - **Quick to write.** Linking while writing takes a few keystrokes.
@@ -39,7 +39,7 @@ web app also serves each note at `https://<host>/note/<id>`, and it registers th
 scheme, because browsers only let web pages handle schemes that start with `web+`.
 
 - **Stable:** the identifier is the only part of a link that the app resolves, and nothing about a
-  note's content or kind changes it.
+  note's content changes it.
 - **Offline creation:** version 7 UUIDs combine a timestamp with 74 random bits, so two devices
   won't generate the same one.
 - **Readable text:** Base32 makes the identifier 26 characters instead of 36, without hyphens, and

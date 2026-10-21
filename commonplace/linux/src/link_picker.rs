@@ -1,21 +1,35 @@
 // SPDX-License-Identifier: MPL-2.0-no-copyleft-exception
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use adw::prelude::*;
 use commonplace_core::NoteId;
 use gtk::{gdk, glib, graphene};
 
+use crate::rows::display_label;
 use crate::state::State;
 
 const MAX_RESULTS: usize = 20;
 
 #[derive(Clone, Debug)]
 pub enum Choice {
+    /// A new task in the inbox with this text.
+    CreateAction(String),
     /// A new memo with this text.
-    Create(String),
+    CreateMemo(String),
     Note(NoteId, Option<String>),
+    /// No parent: the top level of the action hierarchy.
+    TopLevel,
+}
+
+/// What the user picks a note for.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Purpose {
+    /// A note to link to, or a new memo or action to create and link to.
+    Link,
+    /// An action to move an action under, or the top level.
+    Parent,
 }
 
 type PickHandler = Box<dyn Fn(Choice)>;
@@ -24,10 +38,11 @@ type PickHandler = Box<dyn Fn(Choice)>;
 pub struct LinkPicker {
     choices: RefCell<Vec<Choice>>,
     entry: gtk::SearchEntry,
-    exclude: RefCell<Option<NoteId>>,
+    exclude: RefCell<Vec<NoteId>>,
     list: gtk::ListBox,
     on_pick: RefCell<Option<PickHandler>>,
     popover: gtk::Popover,
+    purpose: Cell<Purpose>,
     state: Rc<State>,
 }
 
@@ -57,6 +72,7 @@ impl LinkPicker {
             list,
             on_pick: RefCell::default(),
             popover,
+            purpose: Cell::new(Purpose::Link),
             state,
         });
 
@@ -108,15 +124,21 @@ impl LinkPicker {
         picker
     }
 
-    /// Shows the picker pointing at `at`, a rectangle in `widget`'s coordinates, and calls
-    /// `on_pick` with the user's choice.
+    /// Shows the picker pointing at `at`, a rectangle in `widget`'s coordinates, leaving out the
+    /// notes in `exclude`, and calls `on_pick` with the user's choice.
     pub fn show(
         &self,
         widget: &impl IsA<gtk::Widget>,
         at: &gdk::Rectangle,
-        exclude: Option<NoteId>,
+        purpose: Purpose,
+        exclude: Vec<NoteId>,
         on_pick: impl Fn(Choice) + 'static,
     ) {
+        self.purpose.set(purpose);
+        self.entry.set_placeholder_text(Some(match purpose {
+            Purpose::Link => "Link to…",
+            Purpose::Parent => "Move to…",
+        }));
         *self.exclude.borrow_mut() = exclude;
         *self.on_pick.borrow_mut() = Some(Box::new(on_pick));
         self.entry.set_text("");
@@ -136,40 +158,49 @@ impl LinkPicker {
 
     fn refresh(&self) {
         let query = self.entry.text().trim().to_owned();
-        let exclude = *self.exclude.borrow();
-        let mut choices: Vec<Choice> = self.state.read(|library| {
+        let purpose = self.purpose.get();
+        let exclude = self.exclude.borrow().clone();
+        let notes: Vec<(Choice, String)> = self.state.read(|library| {
             library
                 .search(&query)
                 .into_iter()
-                .filter(|note| Some(note.id) != exclude)
+                .filter(|note| !exclude.contains(&note.id))
+                .filter(|note| purpose == Purpose::Link || note.action.is_some())
                 .take(MAX_RESULTS)
-                .map(|note| Choice::Note(note.id, note.label()))
+                .map(|note| (Choice::Note(note.id, note.label()), display_label(&note)))
                 .collect()
         });
-        if !query.is_empty() {
-            choices.push(Choice::Create(query));
+        let mut choices = Vec::new();
+        if purpose == Purpose::Parent {
+            choices.push((Choice::TopLevel, "Top level".to_owned()));
+        }
+        choices.extend(notes);
+        if purpose == Purpose::Link && !query.is_empty() {
+            choices.push((Choice::CreateMemo(query.clone()), format!("New memo: {query}")));
+            choices.push((Choice::CreateAction(query.clone()), format!("New action: {query}")));
         }
         self.list.remove_all();
-        for choice in &choices {
-            let text = match choice {
-                Choice::Create(text) => format!("New memo: {text}"),
-                Choice::Note(_, Some(label)) => label.clone(),
-                Choice::Note(_, None) => "Empty memo".to_owned(),
-            };
+        for (choice, text) in &choices {
             let label = gtk::Label::builder()
                 .label(text)
                 .xalign(0.0)
                 .ellipsize(gtk::pango::EllipsizeMode::End)
                 .build();
-            if matches!(choice, Choice::Create(_)) {
+            if matches!(choice, Choice::CreateAction(_) | Choice::CreateMemo(_) | Choice::TopLevel)
+            {
                 label.add_css_class("accent");
             }
             self.list.append(&label);
         }
-        if let Some(row) = self.list.row_at_index(0) {
+        // Once the user types, Enter picks the first match rather than the top level.
+        let first_match = usize::from(
+            !query.is_empty() && matches!(choices.first(), Some((Choice::TopLevel, _))),
+        );
+        let first = self.list.row_at_index(first_match as i32).or(self.list.row_at_index(0));
+        if let Some(row) = first {
             self.list.select_row(Some(&row));
         }
-        *self.choices.borrow_mut() = choices;
+        *self.choices.borrow_mut() = choices.into_iter().map(|(choice, _)| choice).collect();
     }
 
     fn pick(&self, index: i32) {

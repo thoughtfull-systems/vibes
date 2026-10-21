@@ -41,7 +41,7 @@ rustPlatform.buildRustPackage {
 
   meta = {
     # keep-sorted start
-    description = "Personal knowledge management with memos, tasks, curios, and zettels";
+    description = "Personal knowledge management with memos, actions, curios, and zettels";
     license = lib.licenses.mpl20;
     mainProgram = "commonplace";
     platforms = lib.platforms.linux;

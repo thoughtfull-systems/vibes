@@ -2,6 +2,8 @@
 [Cc]ommonplace
 [Ll]ibadwaita
 [Oo]utliners?
+[Ss]ubtasks?
+[Ss]ubtrees?('s)?
 [Tt]oolchains?
 [Vv]endored
 [Ww]ikilinks?
@@ -22,6 +24,7 @@ MIT
 monorepo
 Multiplatform
 Nygard
+Pandoc
 PDFs
 strikethrough
 Tauri

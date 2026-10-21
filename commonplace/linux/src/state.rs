@@ -19,10 +19,11 @@ impl State {
         f(&self.library.borrow())
     }
 
-    /// Changes the library, then tells every listener.
+    /// Changes the library, then tells every listener if anything changed.
     pub fn write<T>(&self, f: impl FnOnce(&mut Library) -> Result<T, Error>) -> Result<T, Error> {
+        let before = self.library.borrow().commits();
         let result = f(&mut self.library.borrow_mut());
-        if result.is_ok() {
+        if result.is_ok() && self.library.borrow().commits() != before {
             for listener in self.listeners.borrow().iter() {
                 listener();
             }

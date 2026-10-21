@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: MPL-2.0-no-copyleft-exception
 
 [Desktop Entry]
-Actions=capture;
+Actions=capture-action;capture-memo;
 Categories=Office;
-Comment=Keep memos, tasks, curios, and zettels together
+Comment=Keep memos, actions, curios, and zettels together
 Exec=commonplace %u
 Icon=accessories-text-editor
 Keywords=notes;memo;zettelkasten;
@@ -13,6 +13,10 @@ StartupNotify=true
 Terminal=false
 Type=Application
 
-[Desktop Action capture]
-Exec=commonplace capture
+[Desktop Action capture-action]
+Exec=commonplace capture action
+Name=Capture an Action
+
+[Desktop Action capture-memo]
+Exec=commonplace capture memo
 Name=Capture a Memo

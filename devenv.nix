@@ -244,5 +244,33 @@ in
     pkgs.vale
     # keep-sorted end
   ];
+
+  scripts.commonplace-test-capture = {
+    description = "Quick capture into the running test copy: commonplace-test-capture memo|action";
+    # Without a running test copy, the capture command would start one on the everyday library.
+    exec = ''
+      set -eu
+      id=systems.thoughtfull.CommonplaceTest
+      if ! busctl --user status "$id" >/dev/null 2>&1; then
+        echo "commonplace-test-capture: start commonplace-test first" >&2
+        exit 1
+      fi
+      COMMONPLACE_APP_ID=$id ${config.devenv.root}/commonplace/target/debug/commonplace capture "$@"
+    '';
+  };
+
+  scripts.commonplace-test = {
+    description = "Run Commonplace from the working tree on a fresh copy of the test library";
+    # The separate app ID keeps the test copy from handing its work to an everyday copy.
+    exec = ''
+      set -eu
+      manifest=${config.devenv.root}/commonplace/Cargo.toml
+      dir=$(mktemp -d -t commonplace-test.XXXXXX)
+      trap 'rm -rf "$dir"' EXIT
+      cargo run --quiet --manifest-path "$manifest" --example test_library -- "$dir/library"
+      COMMONPLACE_LIBRARY="$dir/library" COMMONPLACE_APP_ID=systems.thoughtfull.CommonplaceTest \
+        cargo run --quiet --manifest-path "$manifest" --bin commonplace
+    '';
+  };
   # keep-sorted end
 }

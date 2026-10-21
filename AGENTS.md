@@ -170,6 +170,12 @@ and a language on each fenced code block.
 The `mdformat` hook fills each paragraph's lines up to 100 characters and overrides manual line
 breaks.
 
+## Commonplace test library
+
+`commonplace/core/examples/test_library.rs` builds the sample library that `commonplace-test` runs
+the app on. When a Commonplace feature is ready to ship, add samples that exercise it. Don't add
+samples for a feature that's still changing.
+
 ## Sorted files
 
 A hook sorts the lines of `.gitignore` and the vocabulary files, ignoring case. Every line takes

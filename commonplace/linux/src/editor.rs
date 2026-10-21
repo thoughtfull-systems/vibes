@@ -16,9 +16,19 @@ use sourceview5::prelude::*;
 
 const BROKEN: &str = "broken-link";
 const CODE_BLOCK_SHADE: &str = "markup-code-block-shade";
+/// The colors of headings' text, kept apart from the heading tags so a heading's markers keep the
+/// editor's text color.
+const HEADING_COLORS: [&str; 4] = [
+    "markup-heading-color-1",
+    "markup-heading-color-2",
+    "markup-heading-color-3",
+    "markup-heading-color-4",
+];
 const HIDDEN: &str = "markup-hidden";
 const LINK: &str = "link";
 const QUOTE_MARGIN: &str = "markup-quote-margin";
+/// How far a block quote sits inside the editor's left margin.
+const QUOTE_INDENT: i32 = 16;
 const SYNTAX: &str = "markup-syntax";
 const TARGET: &str = "link-target";
 
@@ -30,13 +40,13 @@ pub fn new_view() -> sourceview5::View {
     let apply_scheme = {
         let buffer = buffer.clone();
         move |style_manager: &adw::StyleManager| {
-            let name = if style_manager.is_dark() { "Adwaita-dark" } else { "Adwaita" };
+            let dark = style_manager.is_dark();
+            let name = if dark { "Adwaita-dark" } else { "Adwaita" };
             buffer
                 .set_style_scheme(sourceview5::StyleSchemeManager::default().scheme(name).as_ref());
+            color_headings(&buffer.tag_table(), dark);
         }
     };
-    apply_scheme(&style_manager);
-    style_manager.connect_dark_notify(apply_scheme);
 
     let table = buffer.tag_table();
     table.add(&gtk::TextTag::builder().name(LINK).underline(pango::Underline::Single).build());
@@ -49,6 +59,8 @@ pub fn new_view() -> sourceview5::View {
     );
     table.add(&gtk::TextTag::builder().name(BROKEN).underline(pango::Underline::Error).build());
     add_preview_tags(&table);
+    apply_scheme(&style_manager);
+    style_manager.connect_dark_notify(apply_scheme);
     attach_preview(&buffer);
 
     let view = sourceview5::View::builder()
@@ -61,8 +73,78 @@ pub fn new_view() -> sourceview5::View {
         .vexpand(true)
         .build();
     view.add_css_class("note-editor");
+    // A tag's margin replaces the view's margin rather than adding to it, so the quote margin
+    // follows the view's.
+    let indent_quotes = |view: &sourceview5::View| {
+        if let Some(tag) = view.buffer().tag_table().lookup(QUOTE_MARGIN) {
+            tag.set_left_margin(view.left_margin() + QUOTE_INDENT);
+        }
+    };
+    indent_quotes(&view);
+    view.connect_left_margin_notify(indent_quotes);
     attach_list_keys(&view);
+    attach_wrap_keys(&view);
     view
+}
+
+/// Wraps the selection in Markdown delimiters when the user types one, rather than replacing it,
+/// and keeps the text inside selected, so typing the delimiter again doubles it.
+fn attach_wrap_keys(view: &sourceview5::View) {
+    // The capture phase sees the key before the view replaces the selection with it.
+    let keys = gtk::EventControllerKey::builder()
+        .propagation_phase(gtk::PropagationPhase::Capture)
+        .build();
+    keys.connect_key_pressed(glib::clone!(
+        #[weak]
+        view,
+        #[upgrade_or]
+        glib::Propagation::Proceed,
+        move |_, key, _, modifiers| {
+            let modifiers = modifiers & gtk::accelerator_get_default_mod_mask();
+            if !(modifiers - gdk::ModifierType::SHIFT_MASK).is_empty() || !view.is_editable() {
+                return glib::Propagation::Proceed;
+            }
+            let (open, close) = match key.to_unicode() {
+                Some(delimiter @ ('*' | '_' | '`' | '~' | '=')) => (delimiter, delimiter),
+                Some('[') => ('[', ']'),
+                _ => return glib::Propagation::Proceed,
+            };
+            let buffer = view.buffer();
+            let Some((mut start, mut end)) = buffer.selection_bounds() else {
+                return glib::Propagation::Proceed;
+            };
+            // Line breaks at either end of the selection stay outside the delimiters, which can't
+            // pair across lines.
+            while start < end && start.char() == '\n' {
+                start.forward_char();
+            }
+            while start < end {
+                let mut last = end;
+                last.backward_char();
+                if last.char() != '\n' {
+                    break;
+                }
+                end = last;
+            }
+            if start == end {
+                return glib::Propagation::Proceed;
+            }
+            let (start_offset, end_offset) = (start.offset(), end.offset());
+            let selected = buffer.text(&start, &end, true);
+            // One insertion, rather than one per delimiter, so handlers that react to a typed
+            // character, such as the link picker's `[[`, don't fire.
+            buffer.begin_user_action();
+            buffer.delete(&mut start, &mut end);
+            buffer.insert(&mut start, &format!("{open}{selected}{close}"));
+            buffer.select_range(
+                &buffer.iter_at_offset(start_offset + 1),
+                &buffer.iter_at_offset(end_offset + 1),
+            );
+            buffer.end_user_action();
+            glib::Propagation::Stop
+        }
+    ));
+    view.add_controller(keys);
 }
 
 /// Gives Enter, Shift+Enter, Tab, and Shift+Tab their outliner meanings inside list items.
@@ -166,6 +248,27 @@ impl Preview {
     }
 }
 
+/// The color of a heading of `level`: a hue from the GNOME palette for each of the first four
+/// levels, purple, blue, green, and orange, in a darker shade on a light background and a lighter
+/// one on a dark background. Deeper levels share the fourth's.
+pub fn heading_color(level: u8, dark: bool) -> &'static str {
+    let (light, dark_shade) = match level {
+        1 => ("#813d9c", "#dc8add"),
+        2 => ("#1a5fb4", "#99c1f1"),
+        3 => ("#26a269", "#8ff0a4"),
+        _ => ("#c64600", "#ffbe6f"),
+    };
+    if dark { dark_shade } else { light }
+}
+
+fn color_headings(table: &gtk::TextTagTable, dark: bool) {
+    for (level, name) in (1..).zip(HEADING_COLORS) {
+        if let Some(tag) = table.lookup(name) {
+            tag.set_foreground(Some(heading_color(level, dark)));
+        }
+    }
+}
+
 fn add_preview_tags(table: &gtk::TextTagTable) {
     let dim = gdk::RGBA::new(0.5, 0.5, 0.5, 0.9);
     let shade = gdk::RGBA::new(0.5, 0.5, 0.5, 0.15);
@@ -183,7 +286,7 @@ fn add_preview_tags(table: &gtk::TextTagTable) {
             .style(pango::Style::Italic)
             .foreground_rgba(&dim)
             .build(),
-        gtk::TextTag::builder().name(QUOTE_MARGIN).left_margin(32).build(),
+        gtk::TextTag::builder().name(QUOTE_MARGIN).build(),
         gtk::TextTag::builder()
             .name(style_tag(Style::Code).unwrap())
             .family("monospace")
@@ -204,17 +307,21 @@ fn add_preview_tags(table: &gtk::TextTagTable) {
             .build(),
         gtk::TextTag::builder().name(style_tag(Style::Strong).unwrap()).weight(700).build(),
         gtk::TextTag::builder()
+            .name(style_tag(Style::Highlight).unwrap())
+            .background_rgba(&gdk::RGBA::new(0.96, 0.83, 0.18, 0.45))
+            .build(),
+        gtk::TextTag::builder()
             .name(style_tag(Style::Completed).unwrap())
             .strikethrough(true)
             .foreground_rgba(&dim)
             .build(),
         gtk::TextTag::builder()
-            .name(style_tag(Style::Task(false)).unwrap())
+            .name(style_tag(Style::Checkbox(false)).unwrap())
             .family("monospace")
             .weight(700)
             .build(),
         gtk::TextTag::builder()
-            .name(style_tag(Style::Task(true)).unwrap())
+            .name(style_tag(Style::Checkbox(true)).unwrap())
             .family("monospace")
             .weight(700)
             .foreground_rgba(&dim)
@@ -226,6 +333,13 @@ fn add_preview_tags(table: &gtk::TextTagTable) {
         gtk::TextTag::builder().name(HIDDEN).invisible(true).build(),
     ] {
         table.add(&tag);
+    }
+    // A tag added later wins, so syntax would take the color of a heading it sits in.
+    for name in HEADING_COLORS {
+        table.add(&gtk::TextTag::builder().name(name).build());
+    }
+    if let Some(syntax) = table.lookup(SYNTAX) {
+        syntax.set_priority(table.size() - 1);
     }
 }
 
@@ -242,12 +356,13 @@ fn style_tag(style: Style) -> Option<&'static str> {
         Style::Heading(2) => Some("markup-heading-2"),
         Style::Heading(3) => Some("markup-heading-3"),
         Style::Heading(_) => Some("markup-heading-4"),
+        Style::Highlight => Some("markup-highlight"),
         Style::Link => None,
         Style::ListPrefix => Some("markup-list-prefix"),
         Style::Strikethrough => Some("markup-strikethrough"),
         Style::Strong => Some("markup-strong"),
-        Style::Task(false) => Some("markup-task"),
-        Style::Task(true) => Some("markup-task-checked"),
+        Style::Checkbox(false) => Some("markup-checkbox"),
+        Style::Checkbox(true) => Some("markup-checkbox-checked"),
     }
 }
 
@@ -283,12 +398,14 @@ fn contain_panic(f: impl FnOnce()) {
 fn restyle(buffer: &gtk::TextBuffer, preview: &mut Preview) {
     let (start, end) = buffer.bounds();
     let mut names = vec![CODE_BLOCK_SHADE, HIDDEN, QUOTE_MARGIN, SYNTAX];
+    names.extend(HEADING_COLORS);
     names.extend((1..=4).filter_map(|level| style_tag(Style::Heading(level))));
     names.extend(
         [Style::BlockQuote, Style::Code, Style::CodeBlock, Style::Emphasis]
             .into_iter()
-            .chain([Style::Completed, Style::ListPrefix, Style::Strikethrough, Style::Strong])
-            .chain([Style::Task(false), Style::Task(true)])
+            .chain([Style::Completed, Style::Highlight, Style::ListPrefix, Style::Strikethrough])
+            .chain([Style::Strong])
+            .chain([Style::Checkbox(false), Style::Checkbox(true)])
             .filter_map(style_tag),
     );
     for name in names {
@@ -327,8 +444,20 @@ fn restyle(buffer: &gtk::TextBuffer, preview: &mut Preview) {
             }
             _ => {}
         }
+        if let Style::Heading(level) = span.style {
+            let color = HEADING_COLORS[usize::from(level.clamp(1, 4)) - 1];
+            let mut start = span.range.start;
+            for syntax in span.syntax.iter().chain([&(span.range.end..span.range.end)]) {
+                if start < syntax.start {
+                    apply(buffer, color, preview.chars(&(start..syntax.start)));
+                }
+                start = start.max(syntax.end);
+            }
+        }
         for syntax in &span.syntax {
-            apply(buffer, SYNTAX, preview.chars(syntax));
+            if !matches!(span.style, Style::Heading(_)) {
+                apply(buffer, SYNTAX, preview.chars(syntax));
+            }
             if !revealed {
                 apply(buffer, HIDDEN, preview.chars(syntax));
             }

@@ -10,6 +10,8 @@ use crate::{LinkSyntax, parse_links};
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Style {
     BlockQuote,
+    /// A checklist item's box, `[ ]` or `[x]`, and whether it's checked.
+    Checkbox(bool),
     Code,
     CodeBlock,
     /// The text of a checklist item that's checked.
@@ -17,6 +19,8 @@ pub enum Style {
     Emphasis,
     /// A heading of level 1 to 6.
     Heading(u8),
+    /// Text marked with `==`, as Obsidian, Pandoc, and others mark highlights.
+    Highlight,
     Link,
     /// The indentation, marker, and checkbox that start a list item's line, or the indentation of a
     /// line that continues one. Editors draw these in a monospace font, so that continuation lines
@@ -24,8 +28,6 @@ pub enum Style {
     ListPrefix,
     Strikethrough,
     Strong,
-    /// A checklist item's box, `[ ]` or `[x]`, and whether it's checked.
-    Task(bool),
 }
 
 /// A styled element of a note's body, for editors that render Markdown as it's written.
@@ -48,9 +50,10 @@ impl Span {
 
 /// Finds the styled elements of `body`, ordered by where they start.
 ///
-/// The elements follow CommonMark, with one exception: a setext heading underlined with a single
+/// The elements follow CommonMark, with three exceptions. A setext heading underlined with a single
 /// `-` isn't styled, as in Obsidian's editor, so a line doesn't flash into a heading while the
-/// next line starts a list.
+/// next line starts a list. A heading without text, such as `##` while it's being typed, stays
+/// plain text until text follows its space. And `==` marks a highlight, which CommonMark lacks.
 pub fn spans(body: &str) -> Vec<Span> {
     struct Frame {
         /// Bytes covered by the element's children: its content, without its syntax.
@@ -61,6 +64,9 @@ pub fn spans(body: &str) -> Vec<Span> {
 
     let mut spans = Vec::new();
     let mut stack: Vec<Frame> = Vec::new();
+    // Highlight markers in the block being read, to pair once the block ends.
+    let mut marks: Vec<Range<usize>> = Vec::new();
+    let mut in_code_block = false;
     let options =
         Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS;
     for (event, range) in Parser::new_ext(body, options).into_offset_iter() {
@@ -72,7 +78,21 @@ pub fn spans(body: &str) -> Vec<Span> {
                 None => range.clone(),
             });
         }
+        let inline = match &event {
+            Event::Start(tag) => is_inline(tag),
+            Event::End(tag) => is_inline_end(*tag),
+            _ => true,
+        };
+        if !inline {
+            pair_highlights(body, &mut marks, &mut spans);
+        }
+        match &event {
+            Event::Start(Tag::CodeBlock(_)) => in_code_block = true,
+            Event::End(TagEnd::CodeBlock) => in_code_block = false,
+            _ => {}
+        }
         match event {
+            Event::Text(_) if !in_code_block => marks.extend(highlight_marks(body, &range)),
             Event::Start(tag) => {
                 let style = match tag {
                     Tag::BlockQuote(_) => Some(Style::BlockQuote),
@@ -96,6 +116,9 @@ pub fn spans(body: &str) -> Vec<Span> {
                     if style == Style::Heading(2) && is_single_dash_underline(body, &range) {
                         continue;
                     }
+                    if matches!(style, Style::Heading(_)) && inner.is_none() {
+                        continue;
+                    }
                     let syntax = match (style, inner) {
                         (Style::BlockQuote, _) => quote_markers(body, &range),
                         (Style::CodeBlock, _) | (_, None) => Vec::new(),
@@ -117,11 +140,12 @@ pub fn spans(body: &str) -> Vec<Span> {
                     let text_start = line_end - rest.trim_start().len();
                     spans.push(span(body, text_start..line_end, Style::Completed, Vec::new()));
                 }
-                spans.push(span(body, range, Style::Task(checked), Vec::new()));
+                spans.push(span(body, range, Style::Checkbox(checked), Vec::new()));
             }
             _ => {}
         }
     }
+    pair_highlights(body, &mut marks, &mut spans);
     spans.extend(list_prefixes(body));
     for link in parse_links(body).into_iter().filter(|link| link.syntax == LinkSyntax::Wiki) {
         let Range { start, end } = link.range;
@@ -131,6 +155,126 @@ pub fn spans(body: &str) -> Vec<Span> {
     }
     spans.sort_by_key(|span| span.range.start);
     spans
+}
+
+/// A run of text that shows in a line of Markdown, with the inline styles that apply to it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Piece {
+    pub styles: Vec<Style>,
+    pub text: String,
+}
+
+/// Splits a single line of Markdown, such as a note's label, into the text that shows, leaving
+/// out the syntax, with the inline styles of each run: emphasis, strong, strikethrough, code,
+/// highlights, and links.
+pub fn inline_pieces(line: &str) -> Vec<Piece> {
+    let inline = |style: &Style| {
+        matches!(
+            style,
+            Style::Code
+                | Style::Emphasis
+                | Style::Highlight
+                | Style::Link
+                | Style::Strikethrough
+                | Style::Strong
+        )
+    };
+    let spans: Vec<Span> = spans(line).into_iter().filter(|span| inline(&span.style)).collect();
+    let mut cuts = vec![0, line.len()];
+    for span in &spans {
+        cuts.extend([span.range.start, span.range.end]);
+        cuts.extend(span.syntax.iter().flat_map(|syntax| [syntax.start, syntax.end]));
+    }
+    cuts.sort_unstable();
+    cuts.dedup();
+    let mut pieces: Vec<Piece> = Vec::new();
+    for cut in cuts.windows(2) {
+        let piece = cut[0]..cut[1];
+        let hidden = spans
+            .iter()
+            .flat_map(|span| &span.syntax)
+            .any(|syntax| syntax.start <= piece.start && piece.end <= syntax.end);
+        if hidden || piece.is_empty() {
+            continue;
+        }
+        let styles: Vec<Style> = spans
+            .iter()
+            .filter(|span| span.range.start <= piece.start && piece.end <= span.range.end)
+            .map(|span| span.style)
+            .collect();
+        match pieces.last_mut() {
+            Some(last) if last.styles == styles => last.text.push_str(&line[piece]),
+            _ => pieces.push(Piece { styles, text: line[piece].to_owned() }),
+        }
+    }
+    pieces
+}
+
+/// Whether a tag sits inside a line of text, rather than holding lines of its own.
+fn is_inline(tag: &Tag) -> bool {
+    matches!(
+        tag,
+        Tag::Emphasis
+            | Tag::Image { .. }
+            | Tag::Link { .. }
+            | Tag::Strikethrough
+            | Tag::Strong
+            | Tag::Subscript
+            | Tag::Superscript
+    )
+}
+
+fn is_inline_end(tag: TagEnd) -> bool {
+    matches!(
+        tag,
+        TagEnd::Emphasis
+            | TagEnd::Image
+            | TagEnd::Link
+            | TagEnd::Strikethrough
+            | TagEnd::Strong
+            | TagEnd::Subscript
+            | TagEnd::Superscript
+    )
+}
+
+/// The runs of exactly two `=` in the text at `range`, which can open or close a highlight.
+fn highlight_marks(body: &str, range: &Range<usize>) -> Vec<Range<usize>> {
+    let bytes = body.as_bytes();
+    let mut marks = Vec::new();
+    let mut i = range.start;
+    while i < range.end {
+        if bytes[i] != b'=' {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < range.end && bytes[i] == b'=' {
+            i += 1;
+        }
+        if i - start == 2 {
+            marks.push(start..i);
+        }
+    }
+    marks
+}
+
+/// Pairs the highlight markers of one block, in order, like `~~` pairs for strikethrough: a marker
+/// opens if text follows it without a space, and closes if text precedes it without a space.
+fn pair_highlights(body: &str, marks: &mut Vec<Range<usize>>, spans: &mut Vec<Span>) {
+    let mut open: Option<Range<usize>> = None;
+    for mark in marks.drain(..) {
+        let can_open = body[mark.end..].chars().next().is_some_and(|c| !c.is_whitespace());
+        let can_close = body[..mark.start].chars().next_back().is_some_and(|c| !c.is_whitespace());
+        open = match open.take() {
+            Some(opener) if can_close => {
+                let range = opener.start..mark.end;
+                spans.push(span(body, range, Style::Highlight, vec![opener, mark]));
+                None
+            }
+            Some(opener) => Some(if can_open { mark } else { opener }),
+            None => can_open.then_some(mark),
+        };
+    }
 }
 
 /// Finds the innermost list item that byte `offset` falls in, and returns the edit that toggles
@@ -430,6 +574,44 @@ mod tests {
     }
 
     #[test]
+    fn splits_lines_into_pieces() {
+        let id = NoteId::generate();
+        let line = format!("Plan **the ~~trip~~** with [[{id}|Sam]] `now`");
+        let pieces: Vec<(String, Vec<Style>)> =
+            inline_pieces(&line).into_iter().map(|piece| (piece.text, piece.styles)).collect();
+        assert_eq!(
+            pieces,
+            [
+                ("Plan ".into(), vec![]),
+                ("the ".into(), vec![Style::Strong]),
+                ("trip".into(), vec![Style::Strong, Style::Strikethrough]),
+                (" with ".into(), vec![]),
+                ("Sam".into(), vec![Style::Link]),
+                (" ".into(), vec![]),
+                ("now".into(), vec![Style::Code]),
+            ]
+        );
+    }
+
+    #[test]
+    fn finds_highlights() {
+        for (body, expected) in [
+            ("==marked==", vec![(Style::Highlight, vec!["==", "=="])]),
+            (
+                "==a *b* c==",
+                vec![(Style::Highlight, vec!["==", "=="]), (Style::Emphasis, vec!["*", "*"])],
+            ),
+            ("a == b == c", vec![]),
+            ("===no===", vec![]),
+            ("`==code==`", vec![(Style::Code, vec!["`", "`"])]),
+            ("==one\n\ntwo==", vec![]),
+            ("```\n==code==\n```", vec![(Style::CodeBlock, vec![])]),
+        ] {
+            assert_eq!(hidden(body), expected, "{body:?}");
+        }
+    }
+
+    #[test]
     fn finds_nested_syntax() {
         assert_eq!(
             hidden("**bold *both***"),
@@ -446,6 +628,9 @@ mod tests {
             ("this\n--", vec![(Style::Heading(2), vec!["--"])]),
             ("this\n=", vec![(Style::Heading(1), vec!["="])]),
             ("## -", vec![(Style::Heading(2), vec!["## "])]),
+            ("##", vec![]),
+            ("## ", vec![]),
+            ("## a", vec![(Style::Heading(2), vec!["## "])]),
         ] {
             assert_eq!(hidden(body), expected, "{body:?}");
         }
@@ -476,7 +661,7 @@ mod tests {
         let id = NoteId::generate();
         for full in [
             "- [ ] parent\n  continued\n  - [ ] child\n".to_owned(),
-            "- [x] done\n  ===\n> - [ ] quoted *task*\n>   ---\n".to_owned(),
+            "- [x] done\n  ===\n> - [ ] quoted *item*\n>   ---\n".to_owned(),
             format!(
                 "# Head **bold [[{id}|link]]** `x`\n\n1. [ ] [a](https://x.example)\n   ~~y~~\n"
             ),
@@ -550,16 +735,16 @@ mod tests {
         let body = "- [ ] open\n- [x]  done *well*\n  - [X] nested\n";
         let found: Vec<_> = spans(body)
             .into_iter()
-            .filter(|span| matches!(span.style, Style::Task(_) | Style::Completed))
+            .filter(|span| matches!(span.style, Style::Checkbox(_) | Style::Completed))
             .map(|span| (span.style, &body[span.range]))
             .collect();
         assert_eq!(
             found,
             [
-                (Style::Task(false), "[ ]"),
-                (Style::Task(true), "[x]"),
+                (Style::Checkbox(false), "[ ]"),
+                (Style::Checkbox(true), "[x]"),
                 (Style::Completed, "done *well*"),
-                (Style::Task(true), "[X]"),
+                (Style::Checkbox(true), "[X]"),
                 (Style::Completed, "nested"),
             ]
         );

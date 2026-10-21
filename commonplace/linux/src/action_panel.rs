@@ -1,0 +1,848 @@
+// SPDX-License-Identifier: MPL-2.0-no-copyleft-exception
+
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
+
+use adw::prelude::*;
+use commonplace_core::{ActionChange, ActionList, ActionState, Date, Note, NoteId};
+use gtk::{gdk, glib};
+
+use crate::link_picker::{Choice, LinkPicker, Purpose};
+use crate::rows::{connect_day_clicked, format_date, note_row, parent_labels, today};
+use crate::state::State;
+
+const LISTS: [(&str, ActionList); 5] = [
+    ("Inbox", ActionList::Inbox),
+    ("Active", ActionList::Active),
+    ("Waiting", ActionList::Waiting),
+    ("Someday", ActionList::Someday),
+    ("Maybe", ActionList::Maybe),
+];
+
+type OpenHandler = Rc<dyn Fn(NoteId)>;
+
+/// The fields of the open action, shown above its text, and its steps, shown below.
+pub struct ActionPanel {
+    current: Cell<Option<NoteId>>,
+    defer: DateButton,
+    done: gtk::Switch,
+    /// Archives an open action, or reopens an archived one.
+    archive_button: gtk::Button,
+    /// A line over the steps list that shows where a dragged step would go between two steps.
+    drop_line: gtk::Box,
+    due: DateButton,
+    /// Names the projects whose start or due dates apply, if they aren't the action's own.
+    inherited: gtk::Label,
+    /// Set while the panel changes its widgets itself, so their signals don't echo back.
+    loading: Cell<bool>,
+    list: gtk::DropDown,
+    /// The lists the list picker offers, in its order. The inbox is among them only while the
+    /// open action started out there, because only capture puts actions in the inbox.
+    lists: RefCell<Vec<ActionList>>,
+    move_button: gtk::Button,
+    on_open: RefCell<Option<OpenHandler>>,
+    /// The actions the open action belongs to, outermost first, each a button that opens it.
+    path: gtk::Label,
+    picker: Rc<LinkPicker>,
+    planning: gtk::CheckButton,
+    project: gtk::Switch,
+    state: Rc<State>,
+    step_entry: gtk::Entry,
+    step_ids: RefCell<Vec<NoteId>>,
+    /// A step to focus after the steps list is rebuilt, because it just moved.
+    step_to_focus: Cell<Option<NoteId>>,
+    steps: gtk::ListBox,
+    steps_scroll: gtk::ScrolledWindow,
+    /// The steps list and the entry for new steps.
+    pub steps_section: gtk::Box,
+    waiting_for: gtk::Entry,
+    /// A pending save of the waiting-for text, which waits for a pause in typing.
+    waiting_save: RefCell<Option<glib::SourceId>>,
+    waiting_label: gtk::Label,
+    /// The fields, for a sidebar beside the action's text.
+    pub widget: gtk::Box,
+}
+
+/// A button that shows a date, with a popover to pick or clear it.
+struct DateButton {
+    button: gtk::MenuButton,
+    calendar: gtk::Calendar,
+    clear: gtk::Button,
+}
+
+impl DateButton {
+    fn new() -> Self {
+        let calendar = gtk::Calendar::new();
+        let clear = gtk::Button::builder().label("_Clear").use_underline(true).build();
+        let content = gtk::Box::new(gtk::Orientation::Vertical, 6);
+        content.append(&calendar);
+        content.append(&clear);
+        // An autohide popover consumes the click that closes it, so a click on the other date
+        // button would only close this one. The panel closes these popovers itself instead.
+        let popover = gtk::Popover::builder().child(&content).autohide(false).build();
+        let keys = gtk::EventControllerKey::new();
+        keys.connect_key_pressed(glib::clone!(
+            #[weak]
+            popover,
+            #[upgrade_or]
+            glib::Propagation::Proceed,
+            move |_, key, _, _| {
+                if key != gdk::Key::Escape {
+                    return glib::Propagation::Proceed;
+                }
+                popover.popdown();
+                glib::Propagation::Stop
+            }
+        ));
+        popover.add_controller(keys);
+        // A popover without autohide doesn't take the keyboard focus, so Escape would go to the
+        // note behind it instead of closing it.
+        popover.connect_show(glib::clone!(
+            #[weak]
+            calendar,
+            move |_| {
+                calendar.grab_focus();
+            }
+        ));
+        let button =
+            gtk::MenuButton::builder().label("None").hexpand(true).popover(&popover).build();
+        Self { button, calendar, clear }
+    }
+
+    fn show(&self, date: Option<Date>) {
+        self.button.set_label(&date.map_or_else(|| "None".to_owned(), format_date));
+        let shown = date.and_then(|date| {
+            glib::DateTime::from_local(
+                i32::from(date.year()),
+                i32::from(date.month()),
+                i32::from(date.day()),
+                0,
+                0,
+                0.0,
+            )
+            .ok()
+        });
+        if let Some(shown) = shown.or_else(|| glib::DateTime::now_local().ok()) {
+            self.calendar.set_date(&shown);
+        }
+    }
+}
+
+/// Where a dragged step goes, relative to the step it's dropped on.
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum Place {
+    After,
+    Before,
+    Inside,
+}
+
+/// Finds where a step dropped at `y` in `list` would go: the index of a row and the place beside
+/// or inside it. Over a row, its thirds decide the place. In a gap between rows, the step goes
+/// after the row above.
+fn locate_drop(list: &gtk::ListBox, y: f64) -> Option<(i32, Place)> {
+    let mut previous = None;
+    let mut index = 0;
+    while let Some(row) = list.row_at_index(index) {
+        if let Some(bounds) = row.compute_bounds(list) {
+            let (top, height) = (f64::from(bounds.y()), f64::from(bounds.height()));
+            if y < top {
+                return Some(
+                    previous.map_or((index, Place::Before), |above| (above, Place::After)),
+                );
+            }
+            if y <= top + height {
+                let place = match (y - top) / height {
+                    part if part < 1.0 / 3.0 => Place::Before,
+                    part if part > 2.0 / 3.0 => Place::After,
+                    _ => Place::Inside,
+                };
+                return Some((index, place));
+            }
+        }
+        previous = Some(index);
+        index += 1;
+    }
+    previous.map(|last| (last, Place::After))
+}
+
+/// Where the line that shows a drop between rows goes, in the coordinates of `space`, the widget
+/// that holds the line. The list's padding makes them differ from the list's own coordinates.
+fn drop_line_y(list: &gtk::ListBox, space: &gtk::Widget, index: i32, place: Place) -> Option<f32> {
+    let bounds = |index: i32| list.row_at_index(index).and_then(|row| row.compute_bounds(space));
+    let bottom = |rect: gtk::graphene::Rect| rect.y() + rect.height();
+    match place {
+        Place::After => {
+            let row = bounds(index)?;
+            Some(bounds(index + 1).map_or(bottom(row) + 1.0, |next| (bottom(row) + next.y()) / 2.0))
+        }
+        Place::Before => {
+            let row = bounds(index)?;
+            let previous = if index > 0 { bounds(index - 1) } else { None };
+            Some(previous.map_or((row.y() - 1.0).max(1.0), |above| (bottom(above) + row.y()) / 2.0))
+        }
+        Place::Inside => None,
+    }
+}
+
+/// A step being dragged. A type of its own, unlike a string, keeps text widgets such as the editor
+/// from taking the drop.
+#[derive(Clone, glib::Boxed)]
+#[boxed_type(name = "CommonplaceDraggedStep")]
+struct DraggedStep(NoteId);
+
+/// Lets the user drag a step's row. The steps list decides where the step goes.
+fn make_draggable(row: &gtk::Box, id: NoteId) {
+    let source = gtk::DragSource::builder().actions(gdk::DragAction::MOVE).build();
+    source.connect_prepare(move |_, _, _| {
+        Some(gdk::ContentProvider::for_value(&DraggedStep(id).to_value()))
+    });
+    source.connect_drag_begin(glib::clone!(
+        #[weak]
+        row,
+        move |_, _| row.add_css_class("dimmed")
+    ));
+    source.connect_drag_end(glib::clone!(
+        #[weak]
+        row,
+        move |_, _, _| row.remove_css_class("dimmed")
+    ));
+    row.add_controller(source);
+}
+
+impl ActionPanel {
+    pub fn new(state: Rc<State>, picker: Rc<LinkPicker>) -> Rc<Self> {
+        let done =
+            gtk::Switch::builder().halign(gtk::Align::Start).valign(gtk::Align::Center).build();
+        let archive_button = gtk::Button::builder().label("Archive").build();
+        let list = gtk::DropDown::builder()
+            .model(&gtk::StringList::new(&LISTS.map(|(name, _)| name)))
+            .hexpand(true)
+            .build();
+        let project =
+            gtk::Switch::builder().halign(gtk::Align::Start).valign(gtk::Align::Center).build();
+        let due = DateButton::new();
+        let defer = DateButton::new();
+        let inherited =
+            gtk::Label::builder().xalign(0.0).wrap(true).css_classes(["caption", "dimmed"]).build();
+        let waiting_for =
+            gtk::Entry::builder().placeholder_text("Who or what").hexpand(true).build();
+        let field_label = |text: &str| {
+            gtk::Label::builder().label(text).xalign(0.0).css_classes(["dimmed"]).build()
+        };
+        let waiting_label = field_label("Waiting for");
+        let fields = gtk::Grid::builder().column_spacing(12).row_spacing(6).build();
+        fields.attach(&field_label("Done"), 0, -1, 1, 1);
+        fields.attach(&done, 1, -1, 1, 1);
+        fields.attach(&field_label("List"), 0, 0, 1, 1);
+        fields.attach(&list, 1, 0, 1, 1);
+        fields.attach(&waiting_label, 0, 1, 1, 1);
+        fields.attach(&waiting_for, 1, 1, 1, 1);
+        fields.attach(&field_label("Project"), 0, 2, 1, 1);
+        fields.attach(&project, 1, 2, 1, 1);
+        fields.attach(&field_label("Starts"), 0, 3, 1, 1);
+        fields.attach(&defer.button, 1, 3, 1, 1);
+        fields.attach(&field_label("Due"), 0, 4, 1, 1);
+        fields.attach(&due.button, 1, 4, 1, 1);
+        fields.attach(&inherited, 0, 5, 2, 1);
+        let planning = gtk::CheckButton::builder()
+            .label("Queue for _planning")
+            .use_underline(true)
+            .tooltip_text("Leave the next tasks until planned")
+            .build();
+        let path = gtk::Label::builder()
+            .xalign(0.0)
+            .wrap(true)
+            .wrap_mode(gtk::pango::WrapMode::WordChar)
+            .build();
+        let move_button = gtk::Button::builder().label("Move…").halign(gtk::Align::Start).build();
+        archive_button.set_valign(gtk::Align::End);
+        archive_button.set_vexpand(true);
+        let widget = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .spacing(18)
+            .margin_start(12)
+            .margin_end(12)
+            .margin_top(6)
+            .margin_bottom(12)
+            .visible(false)
+            .build();
+        widget.append(&fields);
+        widget.append(&planning);
+        widget.append(&archive_button);
+
+        let steps =
+            gtk::ListBox::builder().css_classes(["navigation-sidebar", "step-list"]).build();
+        let step_entry = gtk::Entry::builder()
+            .placeholder_text("Add a step…")
+            .margin_start(12)
+            .margin_end(12)
+            .margin_bottom(6)
+            .build();
+        let steps_section =
+            gtk::Box::builder().orientation(gtk::Orientation::Vertical).visible(false).build();
+        let crumbs = gtk::Box::builder()
+            .spacing(6)
+            .margin_start(12)
+            .margin_end(12)
+            .margin_top(6)
+            .margin_bottom(6)
+            .build();
+        crumbs.append(&field_label("In"));
+        path.set_hexpand(true);
+        crumbs.append(&path);
+        crumbs.append(&move_button);
+        steps_section.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+        steps_section.append(&crumbs);
+        steps_section.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+        steps_section.append(
+            &gtk::Label::builder()
+                .label("Steps")
+                .xalign(0.0)
+                .css_classes(["heading"])
+                .margin_start(12)
+                .margin_top(6)
+                .build(),
+        );
+        let drop_line = gtk::Box::builder()
+            .height_request(2)
+            .valign(gtk::Align::Start)
+            .margin_start(6)
+            .margin_end(6)
+            .css_classes(["drop-line"])
+            .can_target(false)
+            .visible(false)
+            .build();
+        let steps_overlay = gtk::Overlay::builder().child(&steps).build();
+        steps_overlay.add_overlay(&drop_line);
+        // Scrolling lets the steps give up height to the text, so a long list, or a bar above the
+        // text, can't push the entry for new steps out of the window.
+        let steps_scroll = gtk::ScrolledWindow::builder()
+            .child(&steps_overlay)
+            .hscrollbar_policy(gtk::PolicyType::Never)
+            .propagate_natural_height(true)
+            .max_content_height(240)
+            .build();
+        steps_section.append(&steps_scroll);
+        steps_section.append(&step_entry);
+
+        let panel = Rc::new(Self {
+            current: Cell::new(None),
+            defer,
+            done,
+            archive_button,
+            drop_line,
+            due,
+            inherited,
+            loading: Cell::new(false),
+            list,
+            lists: RefCell::default(),
+            move_button,
+            on_open: RefCell::default(),
+            path,
+            picker,
+            planning,
+            project,
+            state,
+            step_entry,
+            step_ids: RefCell::default(),
+            step_to_focus: Cell::new(None),
+            steps,
+            steps_scroll,
+            steps_section,
+            waiting_for,
+            waiting_save: RefCell::default(),
+            waiting_label,
+            widget,
+        });
+        panel.connect_signals();
+        panel
+    }
+
+    /// Saves the waiting-for text now if a save is waiting for a pause in typing.
+    fn save_waiting_for(&self) {
+        if let Some(source) = self.waiting_save.take() {
+            source.remove();
+            self.save_waiting_for_now();
+        }
+    }
+
+    fn save_waiting_for_now(&self) {
+        let text = self.waiting_for.text().trim().to_owned();
+        let saved = self.current.get().and_then(|id| {
+            self.state.read(|library| library.note(id)).and_then(|note| note.action)
+        });
+        if saved.is_some_and(|action| action.waiting_for.unwrap_or_default() != text) {
+            self.change(ActionChange::WaitingFor(Some(text)));
+        }
+    }
+
+    /// Calls `f` when the user asks to open another note from the panel.
+    pub fn connect_open(&self, f: impl Fn(NoteId) + 'static) {
+        *self.on_open.borrow_mut() = Some(Rc::new(f));
+    }
+
+    /// Shows the fields and steps of `note` if it's an action, and hides the panel otherwise. The
+    /// panel follows the note, so it appears if the note becomes an action.
+    pub fn show(&self, note: Option<&Note>, editable: bool) {
+        self.save_waiting_for();
+        self.current.set(note.map(|note| note.id));
+        let in_inbox = note
+            .and_then(|note| note.action.as_ref())
+            .is_some_and(|action| action.list == ActionList::Inbox);
+        let lists: Vec<(&str, ActionList)> =
+            LISTS.into_iter().filter(|(_, list)| in_inbox || *list != ActionList::Inbox).collect();
+        self.loading.set(true);
+        self.list.set_model(Some(&gtk::StringList::new(
+            &lists.iter().map(|(name, _)| *name).collect::<Vec<_>>(),
+        )));
+        self.loading.set(false);
+        *self.lists.borrow_mut() = lists.into_iter().map(|(_, list)| list).collect();
+        self.refresh();
+        self.widget.set_sensitive(editable);
+        self.steps_section.set_sensitive(editable);
+        self.step_entry.set_visible(editable);
+    }
+
+    /// Shows the open action's fields and steps again, after the library changes.
+    pub fn refresh(&self) {
+        let note = self.current.get().and_then(|id| self.state.read(|library| library.note(id)));
+        let Some((note, action)) =
+            note.and_then(|note| note.action.clone().map(|action| (note, action)))
+        else {
+            self.widget.set_visible(false);
+            self.steps_section.set_visible(false);
+            return;
+        };
+        self.loading.set(true);
+        self.done.set_active(action.state == ActionState::Done);
+        let (label, tooltip) = if action.archived.is_some() {
+            ("Unarchive", "Take this action out of the archive")
+        } else {
+            ("Archive", "Set this action aside, out of every list, without changing it")
+        };
+        self.archive_button.set_label(label);
+        self.archive_button.set_tooltip_text(Some(tooltip));
+        let list = self.lists.borrow().iter().position(|list| *list == action.list).unwrap_or(0);
+        self.list.set_selected(list as u32);
+        self.project.set_active(action.project);
+        self.planning.set_active(action.planning.is_some());
+        self.planning.set_visible(action.is_open());
+        self.due.show(action.due);
+        self.defer.show(action.defer);
+        let dates = self.state.read(|library| library.action_dates(today()));
+        let dates = dates.get(&note.id).copied().unwrap_or_default();
+        let start = dates.start.filter(|start| start.date > today());
+        let inherited: Vec<String> = [("Starts", start), ("Due", dates.due)]
+            .into_iter()
+            .filter_map(|(word, dated)| {
+                let dated = dated.filter(|dated| dated.from != note.id)?;
+                let project = parent_labels(&self.state, &[dated.from]);
+                let project = project.first().map_or("", |(_, label)| label.as_str());
+                Some(format!("{word} {} from {project}", format_date(dated.date)))
+            })
+            .collect();
+        let inherited = inherited.join(" · ");
+        self.inherited.set_label(&inherited);
+        self.inherited.set_visible(!inherited.is_empty());
+        self.inherited.set_tooltip_text((!inherited.is_empty()).then_some(inherited.as_str()));
+        let waiting_for = action.waiting_for.clone().unwrap_or_default();
+        // A leading space trims away when saved, so it mustn't count as a difference.
+        let typing = self.waiting_save.borrow().is_some();
+        if !typing && self.waiting_for.text().trim() != waiting_for {
+            self.waiting_for.set_text(&waiting_for);
+        }
+        let waiting = action.list == ActionList::Waiting;
+        self.waiting_label.set_visible(waiting);
+        self.waiting_for.set_visible(waiting);
+        self.show_path(note.id);
+        let steps = self.state.read(|library| library.action_subtree(note.id, today()));
+        self.steps.remove_all();
+        for step in &steps {
+            let row = note_row(&self.state, step, false);
+            make_draggable(&row, step.note.id);
+            self.steps.append(&row);
+        }
+        *self.step_ids.borrow_mut() = steps.iter().map(|step| step.note.id).collect();
+        self.steps_scroll.set_visible(!steps.is_empty());
+        if let Some(moved) = self.step_to_focus.take()
+            && let Some(index) = steps.iter().position(|step| step.note.id == moved)
+            && let Some(row) = self.steps.row_at_index(index as i32)
+        {
+            row.grab_focus();
+        }
+        self.loading.set(false);
+        self.widget.set_visible(true);
+        self.steps_section.set_visible(true);
+    }
+
+    /// Shows the actions that `id` belongs to as a breadcrumb of buttons that open them.
+    fn show_path(&self, id: NoteId) {
+        let parents = self.state.read(|library| library.action_paths().remove(&id));
+        let parents = parent_labels(&self.state, &parents.unwrap_or_default());
+        let markup = if parents.is_empty() {
+            "Top level".to_owned()
+        } else {
+            let links: Vec<String> = parents
+                .iter()
+                .map(|(parent, label)| {
+                    format!("<a href=\"{parent}\">{}</a>", glib::markup_escape_text(label))
+                })
+                .collect();
+            links.join(" › ")
+        };
+        self.path.set_markup(&markup);
+    }
+
+    fn change(&self, change: ActionChange) {
+        if self.loading.get() {
+            return;
+        }
+        let Some(id) = self.current.get() else {
+            return;
+        };
+        if let Err(error) = self.state.write(|library| library.change_action(id, change)) {
+            eprintln!("commonplace: {error}");
+        }
+    }
+
+    fn open(&self, id: NoteId) {
+        if let Some(on_open) = self.on_open.borrow().as_ref() {
+            on_open(id);
+        }
+    }
+
+    /// Closes one date popover when the other opens, and both when the user clicks elsewhere in
+    /// the window.
+    fn connect_date_popovers(self: &Rc<Self>) {
+        let menus = [self.due.button.clone(), self.defer.button.clone()];
+        for (index, menu) in menus.iter().enumerate() {
+            let other = menus[1 - index].clone();
+            menu.connect_active_notify(move |menu| {
+                if menu.is_active() {
+                    other.popdown();
+                }
+            });
+        }
+        let watching = Cell::new(false);
+        self.widget.connect_map(move |widget| {
+            let Some(window) = widget.root().and_downcast::<gtk::Window>() else { return };
+            if watching.replace(true) {
+                return;
+            }
+            let click = gtk::GestureClick::builder()
+                .propagation_phase(gtk::PropagationPhase::Capture)
+                .build();
+            let menus = menus.clone();
+            click.connect_pressed(glib::clone!(
+                #[weak]
+                window,
+                move |_, _, x, y| {
+                    let target = window.pick(x, y, gtk::PickFlags::DEFAULT);
+                    for menu in &menus {
+                        let on_menu = target.as_ref().is_some_and(|target| {
+                            target == menu.upcast_ref::<gtk::Widget>() || target.is_ancestor(menu)
+                        });
+                        if menu.is_active() && !on_menu {
+                            menu.popdown();
+                        }
+                    }
+                }
+            ));
+            window.add_controller(click);
+        });
+    }
+
+    fn connect_signals(self: &Rc<Self>) {
+        self.path.connect_activate_link(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            #[upgrade_or]
+            glib::Propagation::Proceed,
+            move |_, uri| {
+                let handler = panel.on_open.borrow().clone();
+                if let (Ok(id), Some(handler)) = (uri.parse::<NoteId>(), handler) {
+                    // Opening the parent rewrites this label, which GTK can't survive while it's
+                    // still handling the click on one of its links.
+                    glib::idle_add_local_once(move || handler(id));
+                }
+                glib::Propagation::Stop
+            }
+        ));
+        self.connect_date_popovers();
+        self.done.connect_active_notify(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |done| {
+                let state = if done.is_active() { ActionState::Done } else { ActionState::Open };
+                panel.change(ActionChange::State(state));
+            }
+        ));
+        self.archive_button.connect_clicked(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |_| {
+                let id = panel.current.get();
+                let action =
+                    id.and_then(|id| panel.state.read(|l| l.note(id))).and_then(|n| n.action);
+                let archived = action.is_some_and(|action| action.archived.is_some());
+                panel.change(ActionChange::Archived(!archived));
+            }
+        ));
+        self.list.connect_selected_notify(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |list| {
+                let chosen = panel.lists.borrow().get(list.selected() as usize).copied();
+                if let Some(list) = chosen {
+                    panel.change(ActionChange::List(list));
+                }
+            }
+        ));
+        self.project.connect_active_notify(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |project| panel.change(ActionChange::Project(project.is_active()))
+        ));
+        self.planning.connect_toggled(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |planning| panel.change(ActionChange::Planning(planning.is_active()))
+        ));
+        for (button, change) in [
+            (&self.due, ActionChange::Due as fn(Option<Date>) -> ActionChange),
+            (&self.defer, ActionChange::Defer),
+        ] {
+            let menu = button.button.clone();
+            connect_day_clicked(
+                &menu,
+                &button.calendar,
+                glib::clone!(
+                    #[weak(rename_to = panel)]
+                    self,
+                    move |day| panel.change(change(Some(day)))
+                ),
+            );
+            button.clear.connect_clicked(glib::clone!(
+                #[weak(rename_to = panel)]
+                self,
+                #[weak]
+                menu,
+                move |_| {
+                    panel.change(change(None));
+                    menu.popdown();
+                }
+            ));
+        }
+        self.waiting_for.connect_changed(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |_| {
+                if panel.loading.get() {
+                    return;
+                }
+                if let Some(source) = panel.waiting_save.take() {
+                    source.remove();
+                }
+                let source = glib::timeout_add_local_once(
+                    std::time::Duration::from_millis(600),
+                    glib::clone!(
+                        #[weak]
+                        panel,
+                        move || {
+                            panel.waiting_save.take();
+                            panel.save_waiting_for_now();
+                        }
+                    ),
+                );
+                *panel.waiting_save.borrow_mut() = Some(source);
+            }
+        ));
+        self.waiting_for.connect_activate(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |_| panel.save_waiting_for()
+        ));
+        let focus = gtk::EventControllerFocus::new();
+        focus.connect_leave(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |_| panel.save_waiting_for()
+        ));
+        self.waiting_for.add_controller(focus);
+        self.move_button.connect_clicked(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |button| panel.pick_parent(button)
+        ));
+        self.connect_step_drops();
+        let keys = gtk::EventControllerKey::new();
+        keys.connect_key_pressed(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            #[upgrade_or]
+            glib::Propagation::Proceed,
+            move |_, key, _, modifiers| {
+                let modifiers = modifiers & gtk::accelerator_get_default_mod_mask();
+                let up = match key {
+                    gdk::Key::Up => true,
+                    gdk::Key::Down => false,
+                    _ => return glib::Propagation::Proceed,
+                };
+                if modifiers != gdk::ModifierType::ALT_MASK | gdk::ModifierType::SHIFT_MASK {
+                    return glib::Propagation::Proceed;
+                }
+                let focused = panel.steps.focus_child().and_downcast::<gtk::ListBoxRow>();
+                let id = focused
+                    .and_then(|row| panel.step_ids.borrow().get(row.index() as usize).copied());
+                if let Some(id) = id {
+                    panel.step_to_focus.set(Some(id));
+                    let result =
+                        panel.state.write(|library| library.move_action_among_siblings(id, up));
+                    if let Err(error) = result {
+                        eprintln!("commonplace: {error}");
+                    }
+                }
+                glib::Propagation::Stop
+            }
+        ));
+        self.steps.add_controller(keys);
+        self.steps.connect_row_activated(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |_, row| {
+                let id = panel.step_ids.borrow().get(row.index() as usize).copied();
+                if let Some(id) = id {
+                    panel.open(id);
+                }
+            }
+        ));
+        self.step_entry.connect_activate(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |entry| {
+                let text = entry.text().trim().to_owned();
+                let Some(parent) = panel.current.get() else { return };
+                if text.is_empty() {
+                    return;
+                }
+                match panel.state.write(|library| library.create_task(&text, Some(parent))) {
+                    Ok(_) => entry.set_text(""),
+                    Err(error) => eprintln!("commonplace: {error}"),
+                }
+            }
+        ));
+    }
+
+    /// Shows where a dragged step would go: a line between two steps, or a box around the step it
+    /// would go inside. `None` hides both.
+    fn show_drop(&self, target: Option<(i32, Place)>) {
+        let space = self.drop_line.parent();
+        let line = target
+            .zip(space)
+            .and_then(|((index, place), space)| drop_line_y(&self.steps, &space, index, place));
+        if let Some(y) = line {
+            self.drop_line.set_margin_top((y - 1.0).round().max(0.0) as i32);
+        }
+        self.drop_line.set_visible(line.is_some());
+        let mut index = 0;
+        while let Some(row) = self.steps.row_at_index(index) {
+            if let Some(child) = row.child() {
+                let inside = target == Some((index, Place::Inside));
+                if inside {
+                    child.add_css_class("drop-inside")
+                } else {
+                    child.remove_css_class("drop-inside")
+                }
+            }
+            index += 1;
+        }
+    }
+
+    /// Lets the user drop a dragged step onto the steps list, before, after, or inside a step.
+    fn connect_step_drops(self: &Rc<Self>) {
+        let target = gtk::DropTarget::new(DraggedStep::static_type(), gdk::DragAction::MOVE);
+        target.connect_motion(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            #[upgrade_or]
+            gdk::DragAction::empty(),
+            move |_, _, y| {
+                panel.show_drop(locate_drop(&panel.steps, y));
+                gdk::DragAction::MOVE
+            }
+        ));
+        target.connect_leave(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |_| panel.show_drop(None)
+        ));
+        target.connect_drop(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            #[upgrade_or]
+            false,
+            move |_, value, _, y| {
+                panel.show_drop(None);
+                let dragged = value.get::<DraggedStep>().ok().map(|step| step.0);
+                let target = locate_drop(&panel.steps, y).and_then(|(index, place)| {
+                    let id = panel.step_ids.borrow().get(index as usize).copied()?;
+                    Some((id, place))
+                });
+                let (Some(dragged), Some((id, place))) = (dragged, target) else {
+                    return false;
+                };
+                if dragged == id {
+                    return false;
+                }
+                // Moving rebuilds the steps list, which would destroy the dragged row while the
+                // drag is still finishing.
+                glib::idle_add_local_once(glib::clone!(
+                    #[strong(rename_to = state)]
+                    panel.state,
+                    move || {
+                        let result = state.write(|library| match place {
+                            Place::After => library.move_action_beside(dragged, id, true),
+                            Place::Before => library.move_action_beside(dragged, id, false),
+                            Place::Inside => library.move_action(dragged, Some(id), None),
+                        });
+                        if let Err(error) = result {
+                            eprintln!("commonplace: {error}");
+                        }
+                    }
+                ));
+                true
+            }
+        ));
+        self.steps.add_controller(target);
+    }
+
+    fn pick_parent(self: &Rc<Self>, button: &gtk::Button) {
+        let Some(id) = self.current.get() else {
+            return;
+        };
+        let mut exclude = self.state.read(|library| library.action_descendants(id));
+        exclude.push(id);
+        let at = gdk::Rectangle::new(0, 0, button.width(), button.height());
+        self.picker.show(
+            button,
+            &at,
+            Purpose::Parent,
+            exclude,
+            glib::clone!(
+                #[strong(rename_to = state)]
+                self.state,
+                move |choice| {
+                    let parent = match choice {
+                        Choice::Note(parent, _) => Some(parent),
+                        Choice::TopLevel => None,
+                        Choice::CreateAction(_) | Choice::CreateMemo(_) => return,
+                    };
+                    if let Err(error) = state.write(|library| library.move_action(id, parent, None))
+                    {
+                        eprintln!("commonplace: {error}");
+                    }
+                }
+            ),
+        );
+    }
+}

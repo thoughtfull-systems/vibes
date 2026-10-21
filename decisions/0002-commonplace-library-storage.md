@@ -2,10 +2,10 @@
 
 ## Context
 
-Commonplace is a personal knowledge management app. It holds four kinds of notes: memos, tasks,
-curios, and zettels. They link to each other, and a note can change kind over its life. Tasks form a
-hierarchy, zettels form ordered sequences with branches, and every kind can take part in spaced
-repetition, which records a log of reviews.
+Commonplace is a personal knowledge management app. It holds four kinds of notes: memos, actions,
+curios, and zettels. They link to each other. Actions form a hierarchy, zettels form ordered
+sequences with branches, and every kind can take part in spaced repetition, which records a log of
+reviews.
 
 Per [decision 0001](0001-languages-and-technologies.md), each platform gets a native app, and the
 apps share a Rust core. The README requires every app to work offline and to sync between devices
@@ -18,7 +18,7 @@ contract between those apps, so it's the hardest choice in the app to reverse.
 - **Lossless merging.** Concurrent edits on two offline devices merge without losing either side,
   down to edits in the same note's text.
 - **Structure merges well.** Concurrent moves and insertions in hierarchies and ordered sequences
-  merge without cycles or duplicates. The task tree and the zettel sequences depend on this.
+  merge without cycles or duplicates. The action tree and the zettel sequences depend on this.
 - **Every platform.** Rust, Kotlin, TypeScript in a browser, and later Swift can all read and write
   the format, offline.
 - **No server.** Sync needs nothing more than a way to move bytes between devices.
@@ -34,7 +34,7 @@ fields inside the document.
 
 - Note text lives in Loro text containers, which merge concurrent edits character by character.
 - Hierarchies and sequences use Loro's movable tree and fractional-index ordering when the specs for
-  tasks and zettels add them.
+  actions and zettels add them.
 - Attachments, such as PDFs and images, stay out of the document. The document refers to them by
   content hash, and a later decision defines how they're stored and synced.
 - Devices sync by exchanging Loro's binary updates. A later decision defines the transport. Until
@@ -73,7 +73,7 @@ Against the criteria:
 - **A SQLite database with a custom sync protocol.** SQLite runs everywhere and queries fast, but
   merging rows edited on two devices would need custom rules for every table. It fails lossless
   merging and structure merges well unless the app reinvents a CRDT.
-- **One Loro document per note.** Small documents load and sync independently, but moving a task
+- **One Loro document per note.** Small documents load and sync independently, but moving an action
   between projects or a zettel between branches would span documents, with no atomic merge. That
   fails structure merges well, and syncing thousands of version vectors adds work. Loro 1.0 loads
   snapshots lazily, which removes most of the cost of one large document.

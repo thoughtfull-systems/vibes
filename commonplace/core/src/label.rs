@@ -18,8 +18,8 @@ fn strip_heading(line: &str) -> Option<&str> {
 fn strip_list_item(line: &str) -> Option<&str> {
     let rest = line.strip_prefix(['-', '*', '+'])?.strip_prefix(' ')?;
     let trimmed = rest.trim_start();
-    let task = ["[ ]", "[x]", "[X]"].iter().find_map(|box_| trimmed.strip_prefix(box_));
-    Some(task.unwrap_or(rest))
+    let checkbox = ["[ ]", "[x]", "[X]"].iter().find_map(|box_| trimmed.strip_prefix(box_));
+    Some(checkbox.unwrap_or(rest))
 }
 
 #[cfg(test)]
@@ -35,7 +35,7 @@ mod tests {
             ("## Heading", Some("Heading")),
             ("#hashtag", Some("#hashtag")),
             ("- item", Some("item")),
-            ("* [ ] task", Some("task")),
+            ("* [ ] item", Some("item")),
             ("+ [x] done", Some("done")),
             ("> quoted", Some("quoted")),
             ("-not a list", Some("-not a list")),

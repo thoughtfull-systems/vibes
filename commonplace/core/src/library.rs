@@ -5,19 +5,23 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use loro::{LoroDoc, LoroMap, LoroText, LoroValue, UpdateOptions, ValueOrContainer};
 
+use crate::actions::{ACTION, Action};
 use crate::store::Store;
 use crate::{Error, NoteId, label, parse_links};
 
+const SETTINGS: &str = "settings";
+
 const FORMAT: &str = "commonplace-library";
-const VERSION: i64 = 1;
+const VERSION: i64 = 2;
 
 const BODY: &str = "body";
 const CREATED: &str = "created";
 const KIND: &str = "kind";
-const MODIFIED: &str = "modified";
+pub(crate) const MODIFIED: &str = "modified";
 const TRASHED: &str = "trashed";
 
 pub const MEMO: &str = "memo";
+pub(crate) const ACTION_KIND: &str = "action";
 
 /// A copy of a note's contents at one moment.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -27,10 +31,13 @@ pub struct Note {
     pub id: NoteId,
     pub kind: String,
     pub modified: i64,
+    /// The action's fields, for a note whose kind is action.
+    pub action: Option<Action>,
     pub trashed: Option<i64>,
 }
 
 impl Note {
+    /// The note's title, derived from its body.
     pub fn label(&self) -> Option<String> {
         label(&self.body)
     }
@@ -48,7 +55,10 @@ impl Note {
 
 /// One person's collection of notes, stored as the library format spec defines.
 pub struct Library {
-    doc: LoroDoc,
+    /// How many changes this instance has committed, so callers can tell whether a write changed
+    /// anything.
+    commits: u64,
+    pub(crate) doc: LoroDoc,
     read_only: bool,
     store: Option<Store>,
 }
@@ -58,14 +68,14 @@ impl Library {
     pub fn open(dir: &Path) -> Result<Self, Error> {
         let doc = LoroDoc::new();
         let store = Store::open(dir, &doc)?;
-        let mut library = Self { doc, read_only: false, store: Some(store) };
+        let mut library = Self { commits: 0, doc, read_only: false, store: Some(store) };
         library.prepare()?;
         Ok(library)
     }
 
     /// Creates an empty library that's never saved.
     pub fn in_memory() -> Self {
-        let mut library = Self { doc: LoroDoc::new(), read_only: false, store: None };
+        let mut library = Self { commits: 0, doc: LoroDoc::new(), read_only: false, store: None };
         // Without a store, preparing a new library can't fail.
         library.prepare().unwrap();
         library
@@ -98,6 +108,13 @@ impl Library {
 
     pub fn create_memo(&mut self, body: &str) -> Result<NoteId, Error> {
         self.check_writable()?;
+        let id = self.insert_note(body, MEMO)?;
+        self.commit()?;
+        Ok(id)
+    }
+
+    /// Inserts a note with the fields every kind has, without committing.
+    pub(crate) fn insert_note(&mut self, body: &str, kind: &str) -> Result<NoteId, Error> {
         let id = NoteId::generate();
         let now = now();
         let note = self
@@ -107,9 +124,8 @@ impl Library {
         let text = note.insert_container(BODY, LoroText::new()).map_err(loro_error)?;
         text.insert(0, body).map_err(loro_error)?;
         note.insert(CREATED, now).map_err(loro_error)?;
-        note.insert(KIND, MEMO).map_err(loro_error)?;
+        note.insert(KIND, kind).map_err(loro_error)?;
         note.insert(MODIFIED, now).map_err(loro_error)?;
-        self.commit()?;
         Ok(id)
     }
 
@@ -134,17 +150,21 @@ impl Library {
     pub fn set_body(&mut self, id: NoteId, body: &str) -> Result<(), Error> {
         self.check_writable()?;
         let note = self.note_map(id)?;
-        let text = match note.get(BODY) {
-            Some(ValueOrContainer::Container(container)) => container.into_text().ok(),
-            _ => None,
-        }
-        .ok_or(Error::Malformed(id))?;
+        let text = self.body_text(id)?;
         if text.to_string() == body {
             return Ok(());
         }
         text.update(body, UpdateOptions::default()).map_err(loro_error)?;
         note.insert(MODIFIED, now()).map_err(loro_error)?;
         self.commit()
+    }
+
+    fn body_text(&self, id: NoteId) -> Result<LoroText, Error> {
+        match self.note_map(id)?.get(BODY) {
+            Some(ValueOrContainer::Container(container)) => container.into_text().ok(),
+            _ => None,
+        }
+        .ok_or(Error::Malformed(id))
     }
 
     pub fn trash(&mut self, id: NoteId) -> Result<(), Error> {
@@ -156,44 +176,98 @@ impl Library {
         self.commit()
     }
 
+    /// Takes a note out of the trash, with any actions above it that are in the trash, so it shows
+    /// again rather than staying in the trash through one of them.
     pub fn restore(&mut self, id: NoteId) -> Result<(), Error> {
         self.check_writable()?;
-        let note = self.note_map(id)?;
-        note.delete(TRASHED).map_err(loro_error)?;
-        note.insert(MODIFIED, now()).map_err(loro_error)?;
+        let now = now();
+        let ancestors: Vec<NoteId> = self.hierarchy().ancestors(id).collect();
+        for note in std::iter::once(id).chain(ancestors) {
+            if self.note(note).is_some_and(|note| note.is_trashed()) {
+                let map = self.note_map(note)?;
+                map.delete(TRASHED).map_err(loro_error)?;
+                map.insert(MODIFIED, now).map_err(loro_error)?;
+            }
+        }
         self.commit()
     }
 
-    /// Deletes a note for good. The note must be in the trash.
+    /// Deletes a note for good, with its steps if it's an action. The note must be in the trash.
     pub fn delete(&mut self, id: NoteId) -> Result<(), Error> {
         self.check_writable()?;
         let note = self.note(id).ok_or(Error::NotFound(id))?;
-        if !note.is_trashed() {
+        if !self.is_in_trash(id) {
             return Err(Error::NotTrashed(id));
         }
-        self.notes_map().delete(&id.to_string()).map_err(loro_error)?;
+        if note.action.is_some() {
+            self.delete_action_subtree(id)?;
+        } else {
+            self.notes_map().delete(&id.to_string()).map_err(loro_error)?;
+        }
         self.commit()
     }
 
     /// Notes outside the trash whose bodies contain every word of `query`, ignoring case.
     pub fn search(&self, query: &str) -> Vec<Note> {
-        self.notes().into_iter().filter(|note| !note.is_trashed() && note.matches(query)).collect()
+        let in_trash = self.notes_in_trash();
+        self.notes()
+            .into_iter()
+            .filter(|note| !in_trash.contains(&note.id) && note.matches(query))
+            .collect()
     }
 
     /// Notes outside the trash that link to `id`, other than the note itself.
     pub fn backlinks(&self, id: NoteId) -> Vec<Note> {
+        let in_trash = self.notes_in_trash();
         self.notes()
             .into_iter()
-            .filter(|note| note.id != id && !note.is_trashed())
+            .filter(|note| note.id != id && !in_trash.contains(&note.id))
             .filter(|note| parse_links(&note.body).iter().any(|link| link.note == Some(id)))
             .collect()
     }
 
-    fn notes_map(&self) -> LoroMap {
+    /// A whole-number setting, such as a sidebar's width, that follows the owner across devices.
+    pub fn setting(&self, key: &str) -> Option<i64> {
+        match self.doc.get_map(SETTINGS).get(key) {
+            Some(ValueOrContainer::Value(LoroValue::I64(value))) => Some(value),
+            _ => None,
+        }
+    }
+
+    /// Changes a setting, writing nothing if it already has the value.
+    pub fn set_setting(&mut self, key: &str, value: i64) -> Result<(), Error> {
+        self.check_writable()?;
+        if self.setting(key) == Some(value) {
+            return Ok(());
+        }
+        self.doc.get_map(SETTINGS).insert(key, value).map_err(loro_error)?;
+        self.commit()
+    }
+
+    /// A text setting, such as the screen the user last viewed, that follows the owner across
+    /// devices.
+    pub fn text_setting(&self, key: &str) -> Option<String> {
+        match self.doc.get_map(SETTINGS).get(key) {
+            Some(ValueOrContainer::Value(LoroValue::String(value))) => Some(value.to_string()),
+            _ => None,
+        }
+    }
+
+    /// Changes a text setting, writing nothing if it already has the value.
+    pub fn set_text_setting(&mut self, key: &str, value: &str) -> Result<(), Error> {
+        self.check_writable()?;
+        if self.text_setting(key).as_deref() == Some(value) {
+            return Ok(());
+        }
+        self.doc.get_map(SETTINGS).insert(key, value).map_err(loro_error)?;
+        self.commit()
+    }
+
+    pub(crate) fn notes_map(&self) -> LoroMap {
         self.doc.get_map("notes")
     }
 
-    fn note_map(&self, id: NoteId) -> Result<LoroMap, Error> {
+    pub(crate) fn note_map(&self, id: NoteId) -> Result<LoroMap, Error> {
         match self.notes_map().get(&id.to_string()) {
             Some(ValueOrContainer::Container(container)) => {
                 container.into_map().map_err(|_| Error::Malformed(id))
@@ -203,11 +277,17 @@ impl Library {
         }
     }
 
-    fn check_writable(&self) -> Result<(), Error> {
+    pub(crate) fn check_writable(&self) -> Result<(), Error> {
         if self.read_only { Err(Error::ReadOnly) } else { Ok(()) }
     }
 
-    fn commit(&mut self) -> Result<(), Error> {
+    /// How many changes this instance has committed.
+    pub fn commits(&self) -> u64 {
+        self.commits
+    }
+
+    pub(crate) fn commit(&mut self) -> Result<(), Error> {
+        self.commits += 1;
         self.doc.commit();
         match &mut self.store {
             Some(store) => store.save(&self.doc),
@@ -221,49 +301,62 @@ fn note_from_value(id: NoteId, value: &LoroValue) -> Option<Note> {
         return None;
     };
     let created = map.get(CREATED).and_then(|v| integer(v.clone()))?;
+    let kind = map.get(KIND).and_then(|v| string(v.clone())).unwrap_or_else(|| MEMO.to_owned());
     Some(Note {
         body: map.get(BODY).and_then(|v| string(v.clone())).unwrap_or_default(),
         created,
         id,
-        kind: map.get(KIND).and_then(|v| string(v.clone())).unwrap_or_else(|| MEMO.to_owned()),
         modified: map.get(MODIFIED).and_then(|v| integer(v.clone())).unwrap_or(created),
+        action: (kind == ACTION_KIND).then(|| Action::from_value(map.get(ACTION))),
         trashed: map.get(TRASHED).and_then(|v| integer(v.clone())),
+        kind,
     })
 }
 
-fn value(value: ValueOrContainer) -> Option<LoroValue> {
+pub(crate) fn value(value: ValueOrContainer) -> Option<LoroValue> {
     match value {
         ValueOrContainer::Value(value) => Some(value),
         ValueOrContainer::Container(_) => None,
     }
 }
 
-fn string(value: LoroValue) -> Option<String> {
+pub(crate) fn string(value: LoroValue) -> Option<String> {
     match value {
         LoroValue::String(s) => Some(s.to_string()),
         _ => None,
     }
 }
 
-fn integer(value: LoroValue) -> Option<i64> {
+pub(crate) fn integer(value: LoroValue) -> Option<i64> {
     match value {
         LoroValue::I64(i) => Some(i),
         _ => None,
     }
 }
 
-fn now() -> i64 {
+pub(crate) fn now() -> i64 {
     let elapsed = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
     i64::try_from(elapsed.as_millis()).unwrap_or(i64::MAX)
 }
 
-fn loro_error(error: impl ToString) -> Error {
+pub(crate) fn loro_error(error: impl ToString) -> Error {
     Error::Loro(error.to_string())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keeps_settings() {
+        let mut library = Library::in_memory();
+        assert_eq!(library.setting("linux.sidebar.outline"), None);
+        library.set_setting("linux.sidebar.outline", 240).unwrap();
+        assert_eq!(library.setting("linux.sidebar.outline"), Some(240));
+        library.set_text_setting("linux.screen", "memos").unwrap();
+        assert_eq!(library.text_setting("linux.screen").as_deref(), Some("memos"));
+        assert_eq!(library.setting("linux.screen"), None);
+    }
 
     #[test]
     fn creates_and_edits_memos() {
@@ -327,7 +420,7 @@ mod tests {
         let id = a.create_memo("one two").unwrap();
         let b_doc = LoroDoc::new();
         b_doc.import(&a.doc.export(loro::ExportMode::Snapshot).unwrap()).unwrap();
-        let mut b = Library { doc: b_doc, read_only: false, store: None };
+        let mut b = Library { commits: 0, doc: b_doc, read_only: false, store: None };
         a.set_body(id, "zero one two").unwrap();
         b.set_body(id, "one two three").unwrap();
         a.doc.import(&b.doc.export(loro::ExportMode::all_updates()).unwrap()).unwrap();
@@ -341,7 +434,7 @@ mod tests {
         meta.insert("format", FORMAT).unwrap();
         meta.insert("version", VERSION + 1).unwrap();
         doc.commit();
-        let mut library = Library { doc, read_only: false, store: None };
+        let mut library = Library { commits: 0, doc, read_only: false, store: None };
         library.prepare().unwrap();
         assert!(library.is_read_only());
         assert!(matches!(library.create_memo("x"), Err(Error::ReadOnly)));
