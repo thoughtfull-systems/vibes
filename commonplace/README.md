@@ -110,9 +110,14 @@ restart. The samples come from `core/examples/test_library.rs`, which covers eve
 can be in and every kind of formatting the editor renders. Their dates count from the day you run
 it.
 
+To run the working tree on a library of your own instead, set `COMMONPLACE_LIBRARY` to an existing
+directory. The script prints the path, opens that library, and leaves it in place when the app
+quits. Only one copy can open a library at a time, so close any everyday copy that uses it first.
+
 To quick capture into the test copy while it runs, use `commonplace-test-capture` with `memo` or
-`action`, like the `capture` command. It refuses to run without a test copy open, so captures never
-reach your own library. In Sway, a binding in the capture mode can sit beside the everyday ones:
+`action`, like the `capture` command. It refuses to run without a test copy open, so captures go to
+the test copy's library and never start an everyday copy. In Sway, a binding in the capture mode can
+sit beside the everyday ones:
 
 ```text
 bindsym t exec sh -c 'cd ~/vibes && devenv shell -- commonplace-test-capture memo'; mode "default"

@@ -260,15 +260,24 @@ in
   };
 
   scripts.commonplace-test = {
-    description = "Run Commonplace from the working tree on a fresh copy of the test library";
+    description = "Run the working tree on $COMMONPLACE_LIBRARY, or on a fresh test library";
     # The separate app ID keeps the test copy from handing its work to an everyday copy.
     exec = ''
       set -eu
       manifest=${config.devenv.root}/commonplace/Cargo.toml
-      dir=$(mktemp -d -t commonplace-test.XXXXXX)
-      trap 'rm -rf "$dir"' EXIT
-      cargo run --quiet --manifest-path "$manifest" --example test_library -- "$dir/library"
-      COMMONPLACE_LIBRARY="$dir/library" COMMONPLACE_APP_ID=systems.thoughtfull.CommonplaceTest \
+      if [ -n "''${COMMONPLACE_LIBRARY:-}" ]; then
+        if [ ! -d "$COMMONPLACE_LIBRARY" ]; then
+          echo "commonplace-test: no library at $COMMONPLACE_LIBRARY" >&2
+          exit 1
+        fi
+        echo "commonplace-test: running on $COMMONPLACE_LIBRARY" >&2
+      else
+        dir=$(mktemp -d -t commonplace-test.XXXXXX)
+        trap 'rm -rf "$dir"' EXIT
+        cargo run --quiet --manifest-path "$manifest" --example test_library -- "$dir/library"
+        export COMMONPLACE_LIBRARY="$dir/library"
+      fi
+      COMMONPLACE_APP_ID=systems.thoughtfull.CommonplaceTest \
         cargo run --quiet --manifest-path "$manifest" --bin commonplace
     '';
   };
