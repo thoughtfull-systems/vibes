@@ -17,6 +17,7 @@ Crockford('s)?
 devenv
 gitlint
 GTK('s)?
+iCalendar
 interoperate
 Jetpack
 Loro('s)?
@@ -26,6 +27,7 @@ MIT
 monorepo
 Multiplatform
 Nygard
+Org
 Pandoc
 PDFs
 strikethrough
