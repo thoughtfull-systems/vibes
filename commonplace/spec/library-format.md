@@ -141,9 +141,9 @@ identifier. If the note no longer exists, the app opens the Memos tab.
 A note's own `settings` map follows the same rules, for preferences that belong to that note alone
 and go with it when it's deleted. Changing one doesn't change the note's `modified` time. The Linux
 app keeps the height, in pixels, that the owner dragged the panel below the note's text to under
-`linux.bottom.height`. Without it, the panel fits what it shows. It keeps whether an action's list
-of steps shows its done steps under `linux.steps.show_done`: 1 to show them, or 0 to hide them.
-Without it, the list hides them.
+`linux.bottom.height`, and removes it when the owner fits the panel to what it shows again. Without
+it, the panel fits what it shows. It keeps whether an action's list of steps shows its done steps
+under `linux.steps.show_done`: 1 to show them, or 0 to hide them. Without it, the list hides them.
 
 ## Rules for writers
 

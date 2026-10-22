@@ -139,7 +139,7 @@ impl NotePage {
         );
         let word_count = gtk::Label::builder()
             .xalign(1.0)
-            .css_classes(["caption", "dimmed", "numeric"])
+            .css_classes(["dimmed", "numeric", "word-count"])
             .margin_start(12)
             .margin_end(12)
             .margin_top(3)
@@ -163,12 +163,15 @@ impl NotePage {
         view.set_right_margin(48);
         let editor_overlay = gtk::Overlay::builder().child(&editor_scrolled).build();
         editor_overlay.add_overlay(&note_menu_button);
-        let text_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        let text_box = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .css_classes(["view"])
+            .build();
         text_box.append(&editor_overlay);
         text_box.append(&word_count);
         let bottom = gtk::Box::new(gtk::Orientation::Vertical, 0);
         let bottom_pane = BottomPane::new(&text_box, &bottom);
-        editor_box.append(&bottom_pane.paned);
+        editor_box.append(&bottom_pane.widget);
 
         let outline_list = gtk::ListBox::builder().css_classes(["navigation-sidebar"]).build();
         outline_list.set_placeholder(Some(
@@ -496,8 +499,11 @@ impl NotePage {
             move |height| {
                 let Some(id) = this.current.get() else { return };
                 if !this.state.read(|library| library.is_read_only()) {
-                    this.report(this.state.write(|library| {
-                        library.set_note_setting(id, BOTTOM_HEIGHT, i64::from(height))
+                    this.report(this.state.write(|library| match height {
+                        Some(height) => {
+                            library.set_note_setting(id, BOTTOM_HEIGHT, i64::from(height))
+                        }
+                        None => library.remove_note_setting(id, BOTTOM_HEIGHT),
                     }));
                 }
             }

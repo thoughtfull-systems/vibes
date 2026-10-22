@@ -48,7 +48,8 @@ pub struct ActionPanel {
     /// The actions the open action belongs to, outermost first, each a button that opens it.
     path: gtk::Label,
     picker: Rc<LinkPicker>,
-    planning: gtk::CheckButton,
+    planning: gtk::Switch,
+    planning_label: gtk::Label,
     project: gtk::Switch,
     /// The scroll position to put the steps list back to once it's laid out again.
     scroll_back: Cell<Option<f64>>,
@@ -274,28 +275,41 @@ impl ActionPanel {
         let waiting_for =
             gtk::Entry::builder().placeholder_text("Who or what").hexpand(true).build();
         let field_label = |text: &str| {
-            gtk::Label::builder().label(text).xalign(0.0).css_classes(["dimmed"]).build()
+            gtk::Label::builder()
+                .label(text)
+                .use_underline(true)
+                .xalign(0.0)
+                .css_classes(["dimmed"])
+                .build()
         };
-        let waiting_label = field_label("Waiting for");
+        let labelled = |text: &str, widget: &gtk::Widget| {
+            let label = field_label(text);
+            label.set_mnemonic_widget(Some(widget));
+            label
+        };
+        let waiting_label = labelled("Waiting for", waiting_for.upcast_ref());
         let fields = gtk::Grid::builder().column_spacing(12).row_spacing(6).build();
-        fields.attach(&field_label("Done"), 0, -1, 1, 1);
+        fields.attach(&labelled("Done?", done.upcast_ref()), 0, -1, 1, 1);
         fields.attach(&done, 1, -1, 1, 1);
-        fields.attach(&field_label("List"), 0, 0, 1, 1);
+        fields.attach(&labelled("List", list.upcast_ref()), 0, 0, 1, 1);
         fields.attach(&list, 1, 0, 1, 1);
         fields.attach(&waiting_label, 0, 1, 1, 1);
         fields.attach(&waiting_for, 1, 1, 1, 1);
-        fields.attach(&field_label("Project"), 0, 2, 1, 1);
+        fields.attach(&labelled("Project?", project.upcast_ref()), 0, 2, 1, 1);
         fields.attach(&project, 1, 2, 1, 1);
-        fields.attach(&field_label("Starts"), 0, 3, 1, 1);
+        fields.attach(&labelled("Starts", defer.button.upcast_ref()), 0, 3, 1, 1);
         fields.attach(&defer.button, 1, 3, 1, 1);
-        fields.attach(&field_label("Due"), 0, 4, 1, 1);
+        fields.attach(&labelled("Due", due.button.upcast_ref()), 0, 4, 1, 1);
         fields.attach(&due.button, 1, 4, 1, 1);
         fields.attach(&inherited, 0, 5, 2, 1);
-        let planning = gtk::CheckButton::builder()
-            .label("Queue for _planning")
-            .use_underline(true)
+        let planning = gtk::Switch::builder()
+            .halign(gtk::Align::Start)
+            .valign(gtk::Align::Center)
             .tooltip_text("Leave the next tasks until planned")
             .build();
+        let planning_label = labelled("Needs _planning?", planning.upcast_ref());
+        fields.attach(&planning_label, 0, 6, 1, 1);
+        fields.attach(&planning, 1, 6, 1, 1);
         let path = gtk::Label::builder().xalign(0.0).build();
         let move_button = gtk::Button::builder().label("Move…").halign(gtk::Align::Start).build();
         archive_button.set_valign(gtk::Align::End);
@@ -310,7 +324,6 @@ impl ActionPanel {
             .visible(false)
             .build();
         widget.append(&fields);
-        widget.append(&planning);
         widget.append(&archive_button);
 
         let steps =
@@ -349,8 +362,7 @@ impl ActionPanel {
             .tooltip_text("Show the steps that are done")
             .valign(gtk::Align::Center)
             .build();
-        let show_done_label = field_label("Show done?");
-        show_done_label.set_mnemonic_widget(Some(&show_done));
+        let show_done_label = labelled("Show done?", show_done.upcast_ref());
         let steps_header =
             gtk::Box::builder().spacing(6).margin_start(12).margin_end(12).margin_top(6).build();
         steps_header.append(
@@ -402,6 +414,7 @@ impl ActionPanel {
             path,
             picker,
             planning,
+            planning_label,
             project,
             scroll_back: Cell::new(None),
             show_done,
@@ -516,6 +529,7 @@ impl ActionPanel {
         self.project.set_active(action.project);
         self.planning.set_active(action.planning.is_some());
         self.planning.set_visible(action.is_open());
+        self.planning_label.set_visible(action.is_open());
         self.due.show(action.due);
         self.defer.show(action.defer);
         let dates = self.state.read(|library| library.action_dates(today()));
@@ -730,7 +744,7 @@ impl ActionPanel {
             self,
             move |project| panel.change(ActionChange::Project(project.is_active()))
         ));
-        self.planning.connect_toggled(glib::clone!(
+        self.planning.connect_active_notify(glib::clone!(
             #[weak(rename_to = panel)]
             self,
             move |planning| panel.change(ActionChange::Planning(planning.is_active()))
