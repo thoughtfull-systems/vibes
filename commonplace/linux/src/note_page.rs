@@ -703,7 +703,7 @@ impl NotePage {
     fn update_buttons(&self) {
         let note = self.current.get().and_then(|id| self.state.read(|library| library.note(id)));
         if let Some(note) = note.as_ref().filter(|_| self.widget.is_child_visible()) {
-            self.window.set_title(Some(&display_label(note)));
+            self.window.set_title(Some(&crate::window_title(&display_label(note))));
         }
         let in_trash =
             note.as_ref().is_some_and(|note| self.state.read(|l| l.is_in_trash(note.id)));

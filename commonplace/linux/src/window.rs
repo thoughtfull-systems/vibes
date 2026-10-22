@@ -385,7 +385,10 @@ impl Window {
                     self.note.close();
                 }
                 self.main.set_visible_child_name("tabs");
-                self.window.set_title(Some("Commonplace"));
+                let tab = self.tabs.visible_child().and_then(|page| self.tabs.page(&page).title());
+                let title =
+                    tab.map_or_else(|| "Commonplace".to_owned(), |tab| crate::window_title(&tab));
+                self.window.set_title(Some(&title));
             }
             Location::Note(id, _) => {
                 self.main.set_visible_child_name("note");

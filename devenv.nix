@@ -91,6 +91,7 @@ in
         "nix"
         "rust"
         "shell"
+        "svg"
       ];
     };
     # No stock hook checks line length in every file type, and nixfmt doesn't fail on long lines.

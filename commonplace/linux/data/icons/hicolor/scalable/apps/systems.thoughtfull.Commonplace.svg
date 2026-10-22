@@ -1,0 +1,16 @@
+<!-- SPDX-License-Identifier: MPL-2.0-no-copyleft-exception -->
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <rect x="20" y="22" width="88" height="96" rx="9" fill="#63452c"/>
+  <rect x="24" y="18" width="80" height="94" rx="5" fill="#deddda"/>
+  <path d="M24 104h80M24 108h80" stroke="#c0bfbc" stroke-width="2"/>
+  <rect x="90" y="26" width="20" height="14" rx="3" fill="#3584e4"/>
+  <rect x="90" y="44" width="20" height="14" rx="3" fill="#2ec27e"/>
+  <rect x="90" y="62" width="20" height="14" rx="3" fill="#f6d32d"/>
+  <rect x="90" y="80" width="20" height="14" rx="3" fill="#9141ac"/>
+  <rect x="20" y="10" width="82" height="92" rx="9" fill="#986a44"/>
+  <path d="M29 10h-0a9 9 0 0 0 -9 9v74a9 9 0 0 0 9 9h3v-92z" fill="#865e3c"/>
+  <rect x="32" y="10" width="2" height="92" fill="#63452c" opacity="0.5"/>
+  <rect x="46" y="30" width="42" height="26" rx="4" fill="#f6f5f4"/>
+  <path d="M53 40h28M53 47h20" stroke="#9a9996" stroke-width="3" stroke-linecap="round"/>
+  <path d="M74 100h10v24l-5 -5l-5 5z" fill="#e01b24"/>
+</svg>

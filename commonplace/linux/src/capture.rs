@@ -42,7 +42,7 @@ pub fn present(app: &adw::Application, state: Rc<State>, task: bool) -> adw::App
     let window = adw::ApplicationWindow::builder()
         .application(app)
         .name(NAME)
-        .title("Capture")
+        .title(crate::window_title("Capture"))
         .default_width(480)
         .default_height(260)
         .content(&toolbar)

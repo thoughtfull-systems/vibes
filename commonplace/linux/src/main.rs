@@ -36,6 +36,12 @@ const APP_ID: &str = "systems.thoughtfull.Commonplace";
 fn app_id() -> String {
     std::env::var("COMMONPLACE_APP_ID").unwrap_or_else(|_| APP_ID.to_owned())
 }
+
+/// A window title that names the app before the part of it the window shows.
+pub fn window_title(part: &str) -> String {
+    format!("Commonplace: {part}")
+}
+
 const CSS: &str = "
 textview.note-editor, .word-count { font-size: 1.25em; }
 .project-title { font-style: italic; }
@@ -91,6 +97,7 @@ fn main() -> glib::ExitCode {
         #[strong]
         shared,
         move |app| {
+            gtk::Window::set_default_icon_name(APP_ID);
             let css = gtk::CssProvider::new();
             css.load_from_string(CSS);
             if let Some(display) = gtk::gdk::Display::default() {
@@ -99,6 +106,11 @@ fn main() -> glib::ExitCode {
                     &css,
                     gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
                 );
+                // A debug build runs from the source tree, where the icon theme doesn't look.
+                if cfg!(debug_assertions) {
+                    gtk::IconTheme::for_display(&display)
+                        .add_search_path(concat!(env!("CARGO_MANIFEST_DIR"), "/data/icons"));
+                }
             }
             // A copy under another app ID is a test copy, which mustn't touch the everyday library.
             let state = if std::env::var_os("COMMONPLACE_APP_ID").is_some()
