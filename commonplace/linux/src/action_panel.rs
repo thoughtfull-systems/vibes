@@ -307,7 +307,7 @@ impl ActionPanel {
             .valign(gtk::Align::Center)
             .tooltip_text("Leave the next tasks until planned")
             .build();
-        let planning_label = labelled("Needs _planning?", planning.upcast_ref());
+        let planning_label = labelled("_Unclear?", planning.upcast_ref());
         fields.attach(&planning_label, 0, 6, 1, 1);
         fields.attach(&planning, 1, 6, 1, 1);
         let path = gtk::Label::builder().xalign(0.0).build();
