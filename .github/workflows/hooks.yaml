@@ -1,6 +1,10 @@
 ---
 jobs:
   hooks:
+    # A job skipped by its condition counts as passing, which lets a pull request into the merge
+    # queue without running the hooks twice. Without the pull_request trigger, the required check
+    # never reports and no pull request can enter the queue.
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -20,16 +24,14 @@ jobs:
       - run: devenv shell -- prek run --all-files --show-diff-on-failure
       # prek runs only pre-commit hooks, so check the commit messages separately.
       - env:
-          BASE: ${{ github.event.pull_request.base.sha }}
-          HEAD: ${{ github.event.pull_request.head.sha }}
-        if: github.event_name == 'pull_request'
+          BASE: ${{ github.event.merge_group.base_sha }}
+          HEAD: ${{ github.event.merge_group.head_sha }}
+        if: github.event_name == 'merge_group'
         run: devenv shell -- gitlint --config .config/gitlint --commits "$BASE..$HEAD"
 name: Hooks
 "on":
   merge_group:
   pull_request:
-  push:
-    branches: [main]
   workflow_dispatch:
 permissions:
   contents: read
