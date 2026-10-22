@@ -177,23 +177,31 @@ fn project_target_end(list: &gtk::ListBox, row: &gtk::ListBoxRow) -> Option<f64>
     Some(f64::from(leading.x() + leading.width()))
 }
 
-/// Where the line that shows a drop between rows goes, in the coordinates of `space`, the widget
-/// that holds the line. The list's padding makes them differ from the list's own coordinates.
-fn drop_line_y(list: &gtk::ListBox, space: &gtk::Widget, index: i32, place: Place) -> Option<f32> {
+/// Where the line that shows a drop between rows starts, as (x, y) in the coordinates of `space`,
+/// the widget that holds the line. The list's padding makes them differ from the list's own
+/// coordinates. The line starts at the indentation of the step the drop goes beside, so a drop
+/// after a project and a drop before its first step look different.
+fn drop_line_start(
+    list: &gtk::ListBox,
+    space: &gtk::Widget,
+    index: i32,
+    place: Place,
+) -> Option<(f32, f32)> {
     let bounds = |index: i32| list.row_at_index(index).and_then(|row| row.compute_bounds(space));
     let bottom = |rect: gtk::graphene::Rect| rect.y() + rect.height();
-    match place {
+    let row = bounds(index)?;
+    let y = match place {
         Place::After => {
-            let row = bounds(index)?;
-            Some(bounds(index + 1).map_or(bottom(row) + 1.0, |next| (bottom(row) + next.y()) / 2.0))
+            bounds(index + 1).map_or(bottom(row) + 1.0, |next| (bottom(row) + next.y()) / 2.0)
         }
         Place::Before => {
-            let row = bounds(index)?;
             let previous = if index > 0 { bounds(index - 1) } else { None };
-            Some(previous.map_or((row.y() - 1.0).max(1.0), |above| (bottom(above) + row.y()) / 2.0))
+            previous.map_or((row.y() - 1.0).max(1.0), |above| (bottom(above) + row.y()) / 2.0)
         }
-        Place::Inside => None,
-    }
+        Place::Inside => return None,
+    };
+    let content = list.row_at_index(index)?.child()?.compute_bounds(space)?;
+    Some((content.x(), y))
 }
 
 /// A step being dragged. A type of its own, unlike a string, keeps text widgets such as the editor
@@ -318,7 +326,6 @@ impl ActionPanel {
         let drop_line = gtk::Box::builder()
             .height_request(2)
             .valign(gtk::Align::Start)
-            .margin_start(6)
             .margin_end(6)
             .css_classes(["drop-line"])
             .can_target(false)
@@ -751,8 +758,9 @@ impl ActionPanel {
         let space = self.drop_line.parent();
         let line = target
             .zip(space)
-            .and_then(|((index, place), space)| drop_line_y(&self.steps, &space, index, place));
-        if let Some(y) = line {
+            .and_then(|((index, place), space)| drop_line_start(&self.steps, &space, index, place));
+        if let Some((x, y)) = line {
+            self.drop_line.set_margin_start(x.round().max(0.0) as i32);
             self.drop_line.set_margin_top((y - 1.0).round().max(0.0) as i32);
         }
         self.drop_line.set_visible(line.is_some());
