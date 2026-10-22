@@ -43,8 +43,10 @@ Name YAML files with the `.yaml` extension, except under `.config/vale/`, where 
 
 ## Checks
 
-Every commit runs the git hooks in `devenv.nix`. Any failure blocks the commit. To run them all by
-hand:
+Every commit runs the git hooks in `devenv.nix`. Any failure blocks the commit. Commit inside the
+devenv shell, with `devenv shell -- git commit`. The hooks take their environment from the shell
+that runs git, and the `clippy` hook needs devenv's linker, pkg-config, and GTK libraries. To run
+them all by hand:
 
 ```sh
 devenv shell -- prek run --all-files
