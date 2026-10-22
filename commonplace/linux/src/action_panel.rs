@@ -249,11 +249,7 @@ impl ActionPanel {
             .use_underline(true)
             .tooltip_text("Leave the next tasks until planned")
             .build();
-        let path = gtk::Label::builder()
-            .xalign(0.0)
-            .wrap(true)
-            .wrap_mode(gtk::pango::WrapMode::WordChar)
-            .build();
+        let path = gtk::Label::builder().xalign(0.0).build();
         let move_button = gtk::Button::builder().label("Move…").halign(gtk::Align::Start).build();
         archive_button.set_valign(gtk::Align::End);
         archive_button.set_vexpand(true);
@@ -288,10 +284,18 @@ impl ActionPanel {
             .margin_bottom(6)
             .build();
         crumbs.append(&field_label("In"));
-        path.set_hexpand(true);
-        crumbs.append(&path);
+        // A wrapping label would make the panel's width depend on its height, which GtkPaned
+        // measures at heights below the panel's least, so GTK warns. Scrolling keeps every
+        // ancestor's link reachable.
+        crumbs.append(
+            &gtk::ScrolledWindow::builder()
+                .child(&path)
+                .hexpand(true)
+                .vscrollbar_policy(gtk::PolicyType::Never)
+                .propagate_natural_width(true)
+                .build(),
+        );
         crumbs.append(&move_button);
-        steps_section.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
         steps_section.append(&crumbs);
         steps_section.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
         steps_section.append(
@@ -321,6 +325,7 @@ impl ActionPanel {
             .hscrollbar_policy(gtk::PolicyType::Never)
             .propagate_natural_height(true)
             .max_content_height(240)
+            .vexpand(true)
             .build();
         steps_section.append(&steps_scroll);
         steps_section.append(&step_entry);

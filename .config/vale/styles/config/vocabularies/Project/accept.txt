@@ -1,6 +1,7 @@
 [Bb]acklinks?
 [Cc]ommonplace
 [Ll]ibadwaita
+[Mm]ergeable
 [Oo]utliners?
 [Ss]ubtasks?
 [Ss]ubtrees?('s)?
@@ -15,6 +16,7 @@ codec
 Crockford('s)?
 devenv
 gitlint
+GTK('s)?
 interoperate
 Jetpack
 Loro('s)?

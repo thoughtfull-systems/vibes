@@ -44,14 +44,15 @@ safely ignore, such as a new optional key, don't raise the version.
 Each key in `notes` is a note identifier, as the [links spec](links.md#note-identifiers) defines.
 Each value is a map with these keys.
 
-| Key        | Type    | Value                                                          |
-| ---------- | ------- | -------------------------------------------------------------- |
-| `body`     | Text    | The note's content, in [Commonplace Markdown](#body).          |
-| `created`  | Integer | The note's creation time, as [a timestamp](#timestamps).       |
-| `kind`     | String  | The kind of note: `memo` or `action`.                          |
-| `modified` | Integer | When the note last changed, as a timestamp.                    |
-| `action`   | Map     | The [action fields](#action-fields). Present for every action. |
-| `trashed`  | Integer | When the note moved to the trash. Absent for notes not in it.  |
+| Key        | Type    | Value                                                                  |
+| ---------- | ------- | ---------------------------------------------------------------------- |
+| `body`     | Text    | The note's content, in [Commonplace Markdown](#body).                  |
+| `created`  | Integer | The note's creation time, as [a timestamp](#timestamps).               |
+| `kind`     | String  | The kind of note: `memo` or `action`.                                  |
+| `modified` | Integer | When the note last changed, as a timestamp.                            |
+| `action`   | Map     | The [action fields](#action-fields). Present for every action.         |
+| `trashed`  | Integer | When the note moved to the trash. Absent for notes not in it.          |
+| `settings` | Map     | Preferences about this note alone, as [settings](#settings) describes. |
 
 Later versions use the names `curio` and `zettel` for the kinds they add, so version 2 reserves
 them. An implementation shows a note of a kind it doesn't know as a memo, and leaves its `kind`
@@ -136,6 +137,11 @@ The string `linux.screen` holds the screen the owner last viewed, so the app ope
 device: `memos`, `all`, `trash`, or `actions.` followed by `execute`, `plan`, `review`, or `inbox`.
 With a note open, a slash and the note's identifier follow, such as `memos/` and then the
 identifier. If the note no longer exists, the app opens the Memos tab.
+
+A note's own `settings` map follows the same rules, for preferences that belong to that note alone
+and go with it when it's deleted. Changing one doesn't change the note's `modified` time. The Linux
+app keeps the height, in pixels, that the owner dragged the panel below the note's text to under
+`linux.bottom.height`. Without it, the panel fits what it shows.
 
 ## Rules for writers
 

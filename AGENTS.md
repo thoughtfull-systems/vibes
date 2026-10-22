@@ -176,6 +176,41 @@ breaks.
 the app on. When a Commonplace feature is ready to ship, add samples that exercise it. Don't add
 samples for a feature that's still changing.
 
+## Commonplace test runs
+
+The owner runs two copies of Commonplace: the installed app, with the app ID
+`systems.thoughtfull.Commonplace` on their own library, and `commonplace-test`, with
+`systems.thoughtfull.CommonplaceTest`, which can also run on that library. Commonplace runs one
+instance per app ID, so a launch, a URI, or a capture command under either ID goes to the owner's
+running copy. Never use either ID. Don't open windows on the owner's display either, because they
+take keyboard focus while the owner types.
+
+Instead, run the app headless on GTK's Broadway backend, which draws windows to a web page, on a
+library in a temporary directory built with the test library example. Give each test session its own
+app ID under `systems.thoughtfull.CommonplaceAgent`, Broadway display, and port, so sessions running
+at the same time don't hand their work to each other. The commands below derive the ID from the
+temporary directory and pick a random display. If the daemon reports that the display or port is in
+use, pick another number. Run these commands inside `devenv shell`, so the daemon comes from the
+same GTK build as the app. A daemon from another build refuses the connection.
+
+```sh
+dir=$(mktemp -d)
+cargo run --manifest-path commonplace/Cargo.toml --example test_library -- "$dir/library"
+id=systems.thoughtfull.CommonplaceAgent.$(basename "$dir" | tr -cd '[:alnum:]')
+display=$((RANDOM % 900 + 100))
+gtk4-broadwayd -a 127.0.0.1 -p $((8000 + display)) ":$display" &
+GDK_BACKEND=broadway BROADWAY_DISPLAY=":$display" COMMONPLACE_APP_ID="$id" \
+  COMMONPLACE_LIBRARY="$dir/library" commonplace/target/debug/commonplace
+```
+
+Open `127.0.0.1` at that port in a browser to see and drive the window. GTK warnings go to standard
+error.
+
+- Broadway clicks wherever the pointer last moved, so hover over a spot before clicking it.
+- The page can lag behind the window. Move the pointer to make it redraw before trusting a
+  screenshot.
+- The app keeps running after its window closes. Stop it by its process ID when the test ends.
+
 ## Sorted files
 
 A hook sorts the lines of `.gitignore` and the vocabulary files, ignoring case. Every line takes
