@@ -4,6 +4,7 @@ mod action_panel;
 mod bottom_pane;
 mod browse;
 mod capture;
+mod drag_scroll;
 mod editor;
 mod highlight;
 mod inbox;

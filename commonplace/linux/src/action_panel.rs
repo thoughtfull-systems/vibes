@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: MPL-2.0-no-copyleft-exception
 
 use std::cell::{Cell, RefCell};
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 use adw::prelude::*;
 use commonplace_core::{ActionChange, ActionList, ActionState, Date, Note, NoteId};
 use gtk::{gdk, glib};
 
+use crate::drag_scroll::DragScroll;
 use crate::link_picker::{Choice, LinkPicker, Purpose};
 use crate::rows::{connect_day_clicked, format_date, note_row, parent_labels, today};
 use crate::state::State;
@@ -46,12 +47,15 @@ pub struct ActionPanel {
     picker: Rc<LinkPicker>,
     planning: gtk::CheckButton,
     project: gtk::Switch,
+    /// Where the steps list shows a dragged step would go, if anywhere.
+    shown_drop: Cell<Option<(i32, Place)>>,
     state: Rc<State>,
     step_entry: gtk::Entry,
     step_ids: RefCell<Vec<NoteId>>,
     /// A step to focus after the steps list is rebuilt, because it just moved.
     step_to_focus: Cell<Option<NoteId>>,
     steps: gtk::ListBox,
+    steps_drag_scroll: Rc<DragScroll>,
     steps_scroll: gtk::ScrolledWindow,
     /// The steps list and the entry for new steps.
     pub steps_section: gtk::Box,
@@ -349,7 +353,7 @@ impl ActionPanel {
         steps_section.append(&steps_scroll);
         steps_section.append(&step_entry);
 
-        let panel = Rc::new(Self {
+        let panel = Rc::new_cyclic(|panel: &Weak<Self>| Self {
             current: Cell::new(None),
             defer,
             done,
@@ -366,11 +370,25 @@ impl ActionPanel {
             picker,
             planning,
             project,
+            shown_drop: Cell::new(None),
             state,
             step_entry,
             step_ids: RefCell::default(),
             step_to_focus: Cell::new(None),
             steps,
+            steps_drag_scroll: DragScroll::attach(
+                &steps_scroll,
+                DraggedStep::static_type(),
+                glib::clone!(
+                    #[strong]
+                    panel,
+                    move |pointer| {
+                        if let Some(panel) = panel.upgrade() {
+                            panel.show_drop_after_scroll(pointer);
+                        }
+                    }
+                ),
+            ),
             steps_scroll,
             steps_section,
             waiting_for,
@@ -481,6 +499,8 @@ impl ActionPanel {
         self.show_path(note.id);
         let steps = self.state.read(|library| library.action_subtree(note.id, today()));
         self.steps.remove_all();
+        self.shown_drop.set(None);
+        self.drop_line.set_visible(false);
         for step in &steps {
             let row = note_row(&self.state, step, false);
             make_draggable(&row, step.note.id);
@@ -760,6 +780,9 @@ impl ActionPanel {
     /// Shows where a dragged step would go: a line between two steps, or a box around the step it
     /// would go inside. `None` hides both.
     fn show_drop(&self, target: Option<(i32, Place)>) {
+        if self.shown_drop.replace(target) == target {
+            return;
+        }
         let space = self.drop_line.parent();
         let line = target
             .zip(space)
@@ -807,6 +830,7 @@ impl ActionPanel {
             #[upgrade_or]
             false,
             move |_, value, x, y| {
+                panel.steps_drag_scroll.stop();
                 panel.show_drop(None);
                 let dragged = value.get::<DraggedStep>().ok().map(|step| step.0);
                 let target = locate_drop(&panel.steps, x, y).and_then(|(index, place)| {
@@ -839,6 +863,16 @@ impl ActionPanel {
             }
         ));
         self.steps.add_controller(target);
+    }
+
+    /// Moves the drop indicator with the steps as they scroll under a pointer at `pointer` in the
+    /// coordinates of their view.
+    fn show_drop_after_scroll(&self, pointer: Option<gtk::graphene::Point>) {
+        let point = pointer.and_then(|point| self.steps_scroll.compute_point(&self.steps, &point));
+        if let Some(point) = point {
+            let (x, y) = (f64::from(point.x()), f64::from(point.y()));
+            self.show_drop(locate_drop(&self.steps, x, y));
+        }
     }
 
     fn pick_parent(self: &Rc<Self>, button: &gtk::Button) {
