@@ -26,6 +26,7 @@ jobs:
         run: devenv shell -- gitlint --config .config/gitlint --commits "$BASE..$HEAD"
 name: Hooks
 "on":
+  merge_group:
   pull_request:
   push:
     branches: [main]
