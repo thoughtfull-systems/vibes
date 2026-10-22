@@ -41,6 +41,7 @@ textview.note-editor { font-size: 1.25em; }
 .project-title { font-style: italic; }
 .step-list:drop(active) { box-shadow: none; outline: none; }
 .drop-line { background-color: @accent_color; border-radius: 1px; }
+.done { text-decoration-line: line-through; }
 .drop-inside { box-shadow: inset 0 0 0 2px @accent_color; border-radius: 6px; }
 ";
 

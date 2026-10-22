@@ -20,6 +20,8 @@ const LISTS: [(&str, ActionList); 5] = [
     ("Maybe", ActionList::Maybe),
 ];
 
+const SHOW_DONE: &str = "linux.steps.show_done";
+
 type OpenHandler = Rc<dyn Fn(NoteId)>;
 
 /// The fields of the open action, shown above its text, and its steps, shown below.
@@ -47,6 +49,8 @@ pub struct ActionPanel {
     picker: Rc<LinkPicker>,
     planning: gtk::CheckButton,
     project: gtk::Switch,
+    show_done: gtk::Switch,
+    show_done_label: gtk::Label,
     /// Where the steps list shows a dragged step would go, if anywhere.
     shown_drop: Cell<Option<(i32, Place)>>,
     state: Rc<State>,
@@ -172,13 +176,17 @@ fn locate_drop(list: &gtk::ListBox, x: f64, y: f64) -> Option<(i32, Place)> {
     previous.map(|last| (last, Place::After))
 }
 
-/// Where, in `list`'s coordinates, the target for dropping a step inside `row` ends: the right edge
-/// of the row's leading widget. The target reaches from there to the list's left edge, so it takes
-/// in the row's indentation. A target this narrow keeps a drop meant to go beside a step from
-/// making that step a project.
+/// How far, in pixels, the target for dropping a step inside another reaches past the other step's
+/// checkbox: about a word or two of its title.
+const PROJECT_TARGET_REACH: f32 = 60.0;
+
+/// Where, in `list`'s coordinates, the target for dropping a step inside `row` ends: a little past
+/// the row's leading widget. The target reaches from there to the list's left edge, so it takes in
+/// the row's indentation. Its width stays fixed in a wider window, and the rest of the row is left
+/// for drops beside the step, so they don't make it a project by accident.
 fn project_target_end(list: &gtk::ListBox, row: &gtk::ListBoxRow) -> Option<f64> {
     let leading = row.child()?.first_child()?.compute_bounds(list)?;
-    Some(f64::from(leading.x() + leading.width()))
+    Some(f64::from(leading.x() + leading.width() + PROJECT_TARGET_REACH))
 }
 
 /// Where the line that shows a drop between rows starts, as (x, y) in the coordinates of `space`,
@@ -322,15 +330,25 @@ impl ActionPanel {
         crumbs.append(&move_button);
         steps_section.append(&crumbs);
         steps_section.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
-        steps_section.append(
+        let show_done = gtk::Switch::builder()
+            .tooltip_text("Show the steps that are done")
+            .valign(gtk::Align::Center)
+            .build();
+        let show_done_label = field_label("Show done?");
+        show_done_label.set_mnemonic_widget(Some(&show_done));
+        let steps_header =
+            gtk::Box::builder().spacing(6).margin_start(12).margin_end(12).margin_top(6).build();
+        steps_header.append(
             &gtk::Label::builder()
                 .label("Steps")
                 .xalign(0.0)
+                .hexpand(true)
                 .css_classes(["heading"])
-                .margin_start(12)
-                .margin_top(6)
                 .build(),
         );
+        steps_header.append(&show_done_label);
+        steps_header.append(&show_done);
+        steps_section.append(&steps_header);
         let drop_line = gtk::Box::builder()
             .height_request(2)
             .valign(gtk::Align::Start)
@@ -370,6 +388,8 @@ impl ActionPanel {
             picker,
             planning,
             project,
+            show_done,
+            show_done_label,
             shown_drop: Cell::new(None),
             state,
             step_entry,
@@ -497,7 +517,28 @@ impl ActionPanel {
         self.waiting_label.set_visible(waiting);
         self.waiting_for.set_visible(waiting);
         self.show_path(note.id);
-        let steps = self.state.read(|library| library.action_subtree(note.id, today()));
+        let show_done =
+            self.state.read(|library| library.note_setting(note.id, SHOW_DONE)) == Some(1);
+        self.show_done.set_active(show_done);
+        let mut steps = self.state.read(|library| library.action_subtree(note.id, today()));
+        self.show_done.set_visible(!steps.is_empty());
+        self.show_done_label.set_visible(!steps.is_empty());
+        if !show_done {
+            // Steps under a hidden step go with it. Shown alone, they would look like steps of
+            // the step above.
+            let mut hidden_below = None;
+            steps.retain(|step| {
+                if hidden_below.is_some_and(|depth| step.depth > depth) {
+                    return false;
+                }
+                let done = step.note.action.as_ref().is_some_and(|a| a.state == ActionState::Done);
+                hidden_below = done.then_some(step.depth);
+                !done
+            });
+        }
+        // Rebuilding the list empties it for a moment, which scrolls it back to the top.
+        let scroll = self.steps_scroll.vadjustment();
+        let kept = scroll.value();
         self.steps.remove_all();
         self.shown_drop.set(None);
         self.drop_line.set_visible(false);
@@ -507,6 +548,7 @@ impl ActionPanel {
             self.steps.append(&row);
         }
         *self.step_ids.borrow_mut() = steps.iter().map(|step| step.note.id).collect();
+        glib::idle_add_local_once(move || scroll.set_value(kept));
         self.steps_scroll.set_visible(!steps.is_empty());
         if let Some(moved) = self.step_to_focus.take()
             && let Some(index) = steps.iter().position(|step| step.note.id == moved)
@@ -718,6 +760,22 @@ impl ActionPanel {
             self,
             move |button| panel.pick_parent(button)
         ));
+        self.show_done.connect_active_notify(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |show_done| {
+                if panel.loading.get() {
+                    return;
+                }
+                let Some(id) = panel.current.get() else { return };
+                let value = i64::from(show_done.is_active());
+                let result =
+                    panel.state.write(|library| library.set_note_setting(id, SHOW_DONE, value));
+                if let Err(error) = result {
+                    eprintln!("commonplace: {error}");
+                }
+            }
+        ));
         self.connect_step_drops();
         let keys = gtk::EventControllerKey::new();
         keys.connect_key_pressed(glib::clone!(
@@ -770,8 +828,36 @@ impl ActionPanel {
                     return;
                 }
                 match panel.state.write(|library| library.create_task(&text, Some(parent))) {
-                    Ok(_) => entry.set_text(""),
+                    Ok(id) => {
+                        entry.set_text("");
+                        panel.reveal_step(id);
+                    }
                     Err(error) => eprintln!("commonplace: {error}"),
+                }
+            }
+        ));
+    }
+
+    /// Scrolls the steps list until the step `id` is in view.
+    fn reveal_step(self: &Rc<Self>, id: NoteId) {
+        // This idle callback runs after the list lays out its new rows and restores its scroll
+        // position.
+        glib::idle_add_local_once(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move || {
+                let index = panel.step_ids.borrow().iter().position(|&step| step == id);
+                let bounds = index
+                    .and_then(|index| panel.steps.row_at_index(index as i32))
+                    .and_then(|row| row.compute_bounds(&panel.steps));
+                let Some(bounds) = bounds else { return };
+                let (top, bottom) =
+                    (f64::from(bounds.y()), f64::from(bounds.y() + bounds.height()));
+                let scroll = panel.steps_scroll.vadjustment();
+                if bottom > scroll.value() + scroll.page_size() {
+                    scroll.set_value(bottom - scroll.page_size());
+                } else if top < scroll.value() {
+                    scroll.set_value(top);
                 }
             }
         ));

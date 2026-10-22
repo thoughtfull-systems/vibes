@@ -228,6 +228,10 @@ fn stamped_note_row(
         if action.project {
             title.add_css_class("project-title");
         }
+        if action.state == ActionState::Done {
+            title.add_css_class("done");
+            row.add_css_class("dimmed");
+        }
     }
     match entry.dates.status {
         ActionStatus::DueSoon => {
