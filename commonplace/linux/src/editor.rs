@@ -329,6 +329,12 @@ fn add_preview_tags(table: &gtk::TextTagTable) {
         gtk::TextTag::builder()
             .name(style_tag(Style::ListPrefix).unwrap())
             .family("monospace")
+            // GTK's GL renderer leaves a faint ghost of a marker that moves or goes, such as when
+            // Tab indents an item, because it redraws too little around the old marker. A
+            // background makes it redraw the marker's whole cell. A fully transparent one renders
+            // black. Cairo and GSK_DEBUG=full-redraw never show the ghost, so check a change here
+            // against them.
+            .background_rgba(&gdk::RGBA::new(0.5, 0.5, 0.5, 0.01))
             .build(),
         gtk::TextTag::builder().name(HIDDEN).invisible(true).build(),
     ] {

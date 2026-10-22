@@ -8,7 +8,8 @@ use pulldown_cmark::{Event, Options, Parser, Tag};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ListKey {
-    /// Starts a new item, or moves a blank item out a level, or ends the list.
+    /// Starts a new item, or moves a blank item out a level, or ends the list. Before the marker of
+    /// a list's first item, it inserts a blank line above the list.
     Enter,
     /// Starts a continuation line in the current item.
     ShiftEnter,
@@ -227,6 +228,10 @@ fn enter(
     cursor: usize,
 ) -> Option<Edit> {
     let line = lines[current];
+    let list_top = current == 0 || self::owner(lines, current - 1).is_none();
+    if current == owner && list_top && cursor <= line.start + item.indent {
+        return Some(Edit { cursor: cursor + 1, range: line.start..line.start, text: "\n".into() });
+    }
     if current == owner && line.text[item.content_start..].trim().is_empty() {
         if item.indent > 0 {
             let indent = parent_indent(lines, owner, item);
@@ -337,7 +342,16 @@ mod tests {
             ("- [x] done|", "- [x] done\n- [ ] |"),
             ("- split| here", "- split\n- |here"),
             ("- |text", "- \n- |text"),
-            ("|- text", "- \n|- text"),
+            ("|- text", "\n|- text"),
+            ("text\n|- a", "text\n\n|- a"),
+            ("- a\n\n|- b", "- a\n\n\n|- b"),
+            ("- a\n|- b", "- a\n- \n|- b"),
+            ("- a\n|  - b", "- a\n  - \n|  - b"),
+            ("- a\n | - b", "- a\n  - \n | - b"),
+            ("- a\n  |- b", "- a\n  - \n  |- b"),
+            ("|1. a", "\n|1. a"),
+            ("|- [ ] a", "\n|- [ ] a"),
+            ("|- ", "\n|- "),
             ("- one\n  more|", "- one\n  more\n- |"),
             ("- one|\n  more", "- one\n  more\n- |"),
             ("- parent|\n  - child", "- parent\n  - |\n  - child"),
