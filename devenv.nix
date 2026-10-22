@@ -182,7 +182,7 @@ in
     };
     vale-config = {
       enable = true;
-      entry = "${lib.getExe pkgs.vale} ls-config";
+      entry = "${lib.getExe pkgs.vale} --config .config/vale/vale.ini ls-config";
       files = "^\\.config/vale/";
       name = "vale-config";
       pass_filenames = false;
