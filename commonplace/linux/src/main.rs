@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0-no-copyleft-exception
 
 mod action_panel;
+mod bottom_pane;
 mod browse;
 mod capture;
 mod editor;

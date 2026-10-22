@@ -9,11 +9,13 @@ use commonplace_core::{Error, Link, Note, NoteId, label, note_uri, outline, wiki
 use gtk::{gdk, gio, glib};
 
 use crate::action_panel::ActionPanel;
+use crate::bottom_pane::BottomPane;
 use crate::editor;
 use crate::link_picker::{Choice, LinkPicker, Purpose};
 use crate::rows::{display_label, entry, note_row, today};
 use crate::state::State;
 
+const BOTTOM_HEIGHT: &str = "linux.bottom.height";
 const SAVE_DELAY: Duration = Duration::from_millis(500);
 /// The narrowest the details sidebar gets.
 const DETAILS_MIN: i32 = 200;
@@ -28,6 +30,7 @@ pub struct NotePage {
     backlinks_section: gtk::Box,
     /// Divides the outline from the rest.
     body: gtk::Paned,
+    bottom: Rc<BottomPane>,
     copy_link: gio::SimpleAction,
     current: Cell<Option<NoteId>>,
     delete_button: gtk::Button,
@@ -122,7 +125,8 @@ impl NotePage {
             .margin_top(6)
             .build();
         let backlinks_section = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        backlinks_section.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+        let backlinks_separator = gtk::Separator::new(gtk::Orientation::Horizontal);
+        backlinks_section.append(&backlinks_separator);
         backlinks_section.append(&backlinks_heading);
         backlinks_section.append(
             &gtk::ScrolledWindow::builder()
@@ -130,6 +134,7 @@ impl NotePage {
                 .hscrollbar_policy(gtk::PolicyType::Never)
                 .propagate_natural_height(true)
                 .max_content_height(200)
+                .vexpand(true)
                 .build(),
         );
         let word_count = gtk::Label::builder()
@@ -158,9 +163,12 @@ impl NotePage {
         view.set_right_margin(48);
         let editor_overlay = gtk::Overlay::builder().child(&editor_scrolled).build();
         editor_overlay.add_overlay(&note_menu_button);
-        editor_box.append(&editor_overlay);
-        editor_box.append(&word_count);
-        editor_box.append(&backlinks_section);
+        let text_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        text_box.append(&editor_overlay);
+        text_box.append(&word_count);
+        let bottom = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        let bottom_pane = BottomPane::new(&text_box, &bottom);
+        editor_box.append(&bottom_pane.paned);
 
         let outline_list = gtk::ListBox::builder().css_classes(["navigation-sidebar"]).build();
         outline_list.set_placeholder(Some(
@@ -343,12 +351,35 @@ impl NotePage {
         for action in [&copy_link, &trash_note] {
             window.add_action(action);
         }
-        editor_box.insert_child_after(&action_panel.steps_section, Some(&word_count));
+        bottom.append(&action_panel.steps_section);
+        bottom.append(&backlinks_section);
+        // The pane shows its handle only while the panel shows, and the handle stands in for the
+        // separator above whichever section comes first.
+        let update_bottom = glib::clone!(
+            #[weak]
+            bottom,
+            #[weak(rename_to = steps)]
+            action_panel.steps_section,
+            #[weak]
+            backlinks_section,
+            #[weak]
+            backlinks_separator,
+            move || {
+                bottom.set_visible(steps.get_visible() || backlinks_section.get_visible());
+                backlinks_separator.set_visible(steps.get_visible());
+            }
+        );
+        for section in [&action_panel.steps_section, &backlinks_section] {
+            let update = update_bottom.clone();
+            section.connect_visible_notify(move |_| update());
+        }
+        update_bottom();
         let this = Rc::new(Self {
             backlink_ids: RefCell::default(),
             backlinks,
             backlinks_section,
             body,
+            bottom: bottom_pane,
             copy_link,
             current: Cell::new(None),
             delete_button,
@@ -449,6 +480,7 @@ impl NotePage {
         self.highlight_links();
         self.action_panel.refresh();
         self.update_buttons();
+        self.bottom.update();
     }
 
     pub fn insert_link(self: &Rc<Self>) {
@@ -458,6 +490,18 @@ impl NotePage {
     }
 
     fn connect_signals(self: &Rc<Self>) {
+        self.bottom.connect_resized(glib::clone!(
+            #[weak(rename_to = this)]
+            self,
+            move |height| {
+                let Some(id) = this.current.get() else { return };
+                if !this.state.read(|library| library.is_read_only()) {
+                    this.report(this.state.write(|library| {
+                        library.set_note_setting(id, BOTTOM_HEIGHT, i64::from(height))
+                    }));
+                }
+            }
+        ));
         self.outline_list.connect_row_activated(glib::clone!(
             #[weak(rename_to = this)]
             self,
@@ -642,6 +686,10 @@ impl NotePage {
         self.update_buttons();
         self.highlight_links();
         self.refresh_backlinks();
+        let height = note.as_ref().and_then(|note| {
+            self.state.read(|library| library.note_setting(note.id, BOTTOM_HEIGHT))
+        });
+        self.bottom.show(height.and_then(|height| i32::try_from(height).ok()));
     }
 
     /// Names the window after the open note while the view shows, and shows the buttons that apply

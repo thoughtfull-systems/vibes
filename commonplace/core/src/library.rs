@@ -228,10 +228,7 @@ impl Library {
 
     /// A whole-number setting, such as a sidebar's width, that follows the owner across devices.
     pub fn setting(&self, key: &str) -> Option<i64> {
-        match self.doc.get_map(SETTINGS).get(key) {
-            Some(ValueOrContainer::Value(LoroValue::I64(value))) => Some(value),
-            _ => None,
-        }
+        int_value(&self.doc.get_map(SETTINGS), key)
     }
 
     /// Changes a setting, writing nothing if it already has the value.
@@ -260,6 +257,32 @@ impl Library {
             return Ok(());
         }
         self.doc.get_map(SETTINGS).insert(key, value).map_err(loro_error)?;
+        self.commit()
+    }
+
+    /// A whole-number setting that belongs to one note, such as the height of a panel below its
+    /// text, and goes with the note when it's deleted.
+    pub fn note_setting(&self, id: NoteId, key: &str) -> Option<i64> {
+        let settings =
+            self.note_map(id).ok()?.get(SETTINGS)?.into_container().ok()?.into_map().ok()?;
+        int_value(&settings, key)
+    }
+
+    /// Changes a note's setting, writing nothing if it already has the value. The note's
+    /// modification time stays, since its content doesn't change.
+    pub fn set_note_setting(&mut self, id: NoteId, key: &str, value: i64) -> Result<(), Error> {
+        self.check_writable()?;
+        if self.note_setting(id, key) == Some(value) {
+            return Ok(());
+        }
+        let note = self.note_map(id)?;
+        let settings = match note.get(SETTINGS) {
+            Some(ValueOrContainer::Container(container)) => {
+                container.into_map().map_err(|_| Error::Malformed(id))?
+            }
+            _ => note.insert_container(SETTINGS, LoroMap::new()).map_err(loro_error)?,
+        };
+        settings.insert(key, value).map_err(loro_error)?;
         self.commit()
     }
 
@@ -293,6 +316,13 @@ impl Library {
             Some(store) => store.save(&self.doc),
             None => Ok(()),
         }
+    }
+}
+
+fn int_value(map: &LoroMap, key: &str) -> Option<i64> {
+    match map.get(key) {
+        Some(ValueOrContainer::Value(LoroValue::I64(value))) => Some(value),
+        _ => None,
     }
 }
 
@@ -382,6 +412,22 @@ mod tests {
         library.delete(id).unwrap();
         assert_eq!(library.note(id), None);
         assert!(library.notes().is_empty());
+    }
+
+    #[test]
+    fn keeps_note_settings_without_modifying_notes() {
+        let mut library = Library::in_memory();
+        let id = library.create_memo("x").unwrap();
+        let modified = library.note(id).unwrap().modified;
+        assert_eq!(library.note_setting(id, "linux.height"), None);
+        library.set_note_setting(id, "linux.height", 300).unwrap();
+        assert_eq!(library.note_setting(id, "linux.height"), Some(300));
+        assert_eq!(library.note(id).unwrap().modified, modified);
+        assert_eq!(library.setting("linux.height"), None);
+        library.trash(id).unwrap();
+        library.delete(id).unwrap();
+        assert_eq!(library.note_setting(id, "linux.height"), None);
+        assert!(library.set_note_setting(id, "linux.height", 1).is_err());
     }
 
     #[test]
