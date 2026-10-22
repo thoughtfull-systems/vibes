@@ -12,6 +12,7 @@
 
 let
   desktopEntry = "linux/data/systems.thoughtfull.Commonplace.desktop";
+  icons = "linux/data/icons";
   workspace = ../.;
 in
 rustPlatform.buildRustPackage {
@@ -57,7 +58,11 @@ rustPlatform.buildRustPackage {
 
   pname = "commonplace";
 
-  postInstall = "install -Dm644 ${desktopEntry} -t $out/share/applications";
+  # Installing the desktop entry creates share/, which cp needs.
+  postInstall = lib.concatLines [
+    "install -Dm644 ${desktopEntry} -t $out/share/applications"
+    "cp -r ${icons} $out/share"
+  ];
 
   src = lib.fileset.toSource {
     root = workspace;
