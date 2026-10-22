@@ -136,10 +136,10 @@ enum Place {
     Inside,
 }
 
-/// Finds where a step dropped at `y` in `list` would go: the index of a row and the place beside
-/// or inside it. Over a row, its thirds decide the place. In a gap between rows, the step goes
-/// after the row above.
-fn locate_drop(list: &gtk::ListBox, y: f64) -> Option<(i32, Place)> {
+/// Finds where a step dropped at (`x`, `y`) in `list` would go: the index of a row and the place
+/// beside or inside it. Over a row's project target, the step goes inside it. Elsewhere over a
+/// row, its halves decide the place. In a gap between rows, the step goes after the row above.
+fn locate_drop(list: &gtk::ListBox, x: f64, y: f64) -> Option<(i32, Place)> {
     let mut previous = None;
     let mut index = 0;
     while let Some(row) = list.row_at_index(index) {
@@ -151,10 +151,13 @@ fn locate_drop(list: &gtk::ListBox, y: f64) -> Option<(i32, Place)> {
                 );
             }
             if y <= top + height {
-                let place = match (y - top) / height {
-                    part if part < 1.0 / 3.0 => Place::Before,
-                    part if part > 2.0 / 3.0 => Place::After,
-                    _ => Place::Inside,
+                let over_target = project_target_end(list, &row).is_some_and(|end| x <= end);
+                let place = if over_target {
+                    Place::Inside
+                } else if y - top < height / 2.0 {
+                    Place::Before
+                } else {
+                    Place::After
                 };
                 return Some((index, place));
             }
@@ -165,23 +168,40 @@ fn locate_drop(list: &gtk::ListBox, y: f64) -> Option<(i32, Place)> {
     previous.map(|last| (last, Place::After))
 }
 
-/// Where the line that shows a drop between rows goes, in the coordinates of `space`, the widget
-/// that holds the line. The list's padding makes them differ from the list's own coordinates.
-fn drop_line_y(list: &gtk::ListBox, space: &gtk::Widget, index: i32, place: Place) -> Option<f32> {
+/// Where, in `list`'s coordinates, the target for dropping a step inside `row` ends: the right edge
+/// of the row's leading widget. The target reaches from there to the list's left edge, so it takes
+/// in the row's indentation. A target this narrow keeps a drop meant to go beside a step from
+/// making that step a project.
+fn project_target_end(list: &gtk::ListBox, row: &gtk::ListBoxRow) -> Option<f64> {
+    let leading = row.child()?.first_child()?.compute_bounds(list)?;
+    Some(f64::from(leading.x() + leading.width()))
+}
+
+/// Where the line that shows a drop between rows starts, as (x, y) in the coordinates of `space`,
+/// the widget that holds the line. The list's padding makes them differ from the list's own
+/// coordinates. The line starts at the indentation of the step the drop goes beside, so a drop
+/// after a project and a drop before its first step look different.
+fn drop_line_start(
+    list: &gtk::ListBox,
+    space: &gtk::Widget,
+    index: i32,
+    place: Place,
+) -> Option<(f32, f32)> {
     let bounds = |index: i32| list.row_at_index(index).and_then(|row| row.compute_bounds(space));
     let bottom = |rect: gtk::graphene::Rect| rect.y() + rect.height();
-    match place {
+    let row = bounds(index)?;
+    let y = match place {
         Place::After => {
-            let row = bounds(index)?;
-            Some(bounds(index + 1).map_or(bottom(row) + 1.0, |next| (bottom(row) + next.y()) / 2.0))
+            bounds(index + 1).map_or(bottom(row) + 1.0, |next| (bottom(row) + next.y()) / 2.0)
         }
         Place::Before => {
-            let row = bounds(index)?;
             let previous = if index > 0 { bounds(index - 1) } else { None };
-            Some(previous.map_or((row.y() - 1.0).max(1.0), |above| (bottom(above) + row.y()) / 2.0))
+            previous.map_or((row.y() - 1.0).max(1.0), |above| (bottom(above) + row.y()) / 2.0)
         }
-        Place::Inside => None,
-    }
+        Place::Inside => return None,
+    };
+    let content = list.row_at_index(index)?.child()?.compute_bounds(space)?;
+    Some((content.x(), y))
 }
 
 /// A step being dragged. A type of its own, unlike a string, keeps text widgets such as the editor
@@ -310,7 +330,6 @@ impl ActionPanel {
         let drop_line = gtk::Box::builder()
             .height_request(2)
             .valign(gtk::Align::Start)
-            .margin_start(6)
             .margin_end(6)
             .css_classes(["drop-line"])
             .can_target(false)
@@ -744,8 +763,9 @@ impl ActionPanel {
         let space = self.drop_line.parent();
         let line = target
             .zip(space)
-            .and_then(|((index, place), space)| drop_line_y(&self.steps, &space, index, place));
-        if let Some(y) = line {
+            .and_then(|((index, place), space)| drop_line_start(&self.steps, &space, index, place));
+        if let Some((x, y)) = line {
+            self.drop_line.set_margin_start(x.round().max(0.0) as i32);
             self.drop_line.set_margin_top((y - 1.0).round().max(0.0) as i32);
         }
         self.drop_line.set_visible(line.is_some());
@@ -771,8 +791,8 @@ impl ActionPanel {
             self,
             #[upgrade_or]
             gdk::DragAction::empty(),
-            move |_, _, y| {
-                panel.show_drop(locate_drop(&panel.steps, y));
+            move |_, x, y| {
+                panel.show_drop(locate_drop(&panel.steps, x, y));
                 gdk::DragAction::MOVE
             }
         ));
@@ -786,10 +806,10 @@ impl ActionPanel {
             self,
             #[upgrade_or]
             false,
-            move |_, value, _, y| {
+            move |_, value, x, y| {
                 panel.show_drop(None);
                 let dragged = value.get::<DraggedStep>().ok().map(|step| step.0);
-                let target = locate_drop(&panel.steps, y).and_then(|(index, place)| {
+                let target = locate_drop(&panel.steps, x, y).and_then(|(index, place)| {
                     let id = panel.step_ids.borrow().get(index as usize).copied()?;
                     Some((id, place))
                 });
