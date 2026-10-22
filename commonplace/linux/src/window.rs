@@ -14,7 +14,7 @@ use crate::note_page::NotePage;
 use crate::rows::{NoteList, Section, today};
 use crate::state::State;
 
-/// How long a closed action stays in the review's recently completed section.
+/// How long a closed action stays in the review's recently done section.
 const RECENT_DAYS: i64 = 7;
 
 /// The ways to work with actions, each a list in the actions tab.
@@ -703,8 +703,8 @@ impl Window {
                     "Projects, and waiting, scheduled, someday, and maybe actions show up here",
                 );
                 let since = glib::real_time() / 1000 - RECENT_DAYS * 24 * 60 * 60 * 1000;
-                let mut completed = view(ActionView::Closed);
-                completed.retain(|entry| {
+                let mut done = view(ActionView::Closed);
+                done.retain(|entry| {
                     entry.note.action.as_ref().and_then(|action| action.closed) >= Some(since)
                 });
                 // An action in the planning queue waits in Plan instead.
@@ -722,7 +722,7 @@ impl Window {
                     section("Scheduled", unqueued(ActionView::Scheduled), true),
                     section("Someday", unqueued(ActionView::Someday), true),
                     section("Maybe", unqueued(ActionView::Maybe), true),
-                    section("Recently Completed", completed, false),
+                    section("Recently Done", done, false),
                 ]
             }
         };
