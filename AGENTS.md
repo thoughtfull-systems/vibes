@@ -54,6 +54,9 @@ Some hooks fix files in place and then fail: trailing whitespace, final newlines
 sorted files. Review the change, stage it, and commit again. Don't bypass the hooks with
 `--no-verify`.
 
+The `Hooks` GitHub Actions workflow runs the same hooks on every pull request and push to `main`,
+and checks each commit message in a pull request with gitlint.
+
 Links can break without a commit, so a GitHub Actions workflow checks them on every push and pull
 request, and once a week. To check them by hand:
 
