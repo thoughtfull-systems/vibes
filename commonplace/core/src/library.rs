@@ -286,6 +286,21 @@ impl Library {
         self.commit()
     }
 
+    /// Removes a note's setting, writing nothing if it has none. The note's modification time
+    /// stays, since its content doesn't change.
+    pub fn remove_note_setting(&mut self, id: NoteId, key: &str) -> Result<(), Error> {
+        self.check_writable()?;
+        if self.note_setting(id, key).is_none() {
+            return Ok(());
+        }
+        let Some(ValueOrContainer::Container(container)) = self.note_map(id)?.get(SETTINGS) else {
+            return Err(Error::Malformed(id));
+        };
+        let settings = container.into_map().map_err(|_| Error::Malformed(id))?;
+        settings.delete(key).map_err(loro_error)?;
+        self.commit()
+    }
+
     pub(crate) fn notes_map(&self) -> LoroMap {
         self.doc.get_map("notes")
     }
@@ -428,6 +443,20 @@ mod tests {
         library.delete(id).unwrap();
         assert_eq!(library.note_setting(id, "linux.height"), None);
         assert!(library.set_note_setting(id, "linux.height", 1).is_err());
+    }
+
+    #[test]
+    fn removes_note_settings_without_modifying_notes() {
+        let mut library = Library::in_memory();
+        let id = library.create_memo("x").unwrap();
+        let modified = library.note(id).unwrap().modified;
+        library.remove_note_setting(id, "linux.height").unwrap();
+        library.set_note_setting(id, "linux.height", 300).unwrap();
+        library.set_note_setting(id, "linux.width", 200).unwrap();
+        library.remove_note_setting(id, "linux.height").unwrap();
+        assert_eq!(library.note_setting(id, "linux.height"), None);
+        assert_eq!(library.note_setting(id, "linux.width"), Some(200));
+        assert_eq!(library.note(id).unwrap().modified, modified);
     }
 
     #[test]

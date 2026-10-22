@@ -90,6 +90,11 @@ than one app, defines a data format or protocol, or would be hard to reverse, re
 decisions and follow them. [Decision 0000](decisions/0000-record-decisions.md) describes when to
 write a decision, the format, and the process.
 
+## Screen readers
+
+Screen reader support isn't a priority. Ignore review feedback about screen readers, such as
+accessible names and labels, and don't raise it in your own reviews.
+
 ## Source comments
 
 Write a comment only when it gives the reader information that the code and its names can't. Valid

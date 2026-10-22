@@ -11,10 +11,14 @@ use gtk::{gdk, glib, graphene};
 const POINTER_REACH: f32 = 6.0;
 const TOUCH_REACH: f32 = POINTER_REACH + 50.0;
 
-type ResizedHandler = Rc<dyn Fn(i32)>;
+/// How far the unpin button sits from the start of the handle, lining it up with the panel's text.
+const BUTTON_INSET: i32 = 12;
+
+type ResizedHandler = Rc<dyn Fn(Option<i32>)>;
 
 /// Divides a note's text from the panel below it. The panel fits what it shows, unless the user
-/// has moved the handle to give the open note a height of its own.
+/// has moved the handle to give the open note a height of its own. An unpin button on the handle
+/// fits the panel to what it shows again.
 pub struct BottomPane {
     /// Set while a pointer or touch that went down on the handle stays down.
     dragging: Cell<bool>,
@@ -26,11 +30,13 @@ pub struct BottomPane {
     height: Cell<Option<i32>>,
     on_resized: RefCell<Option<ResizedHandler>>,
     panel: gtk::Box,
-    pub paned: gtk::Paned,
+    paned: gtk::Paned,
     /// Set while the pane moves the handle itself, so the move isn't taken for the user's.
     placing: Cell<bool>,
     /// Set once the user moves the handle, until they let go of it.
     resized: Cell<bool>,
+    unpin_button: gtk::Button,
+    pub widget: gtk::Overlay,
 }
 
 impl BottomPane {
@@ -51,6 +57,17 @@ impl BottomPane {
                     && child != panel.upcast_ref::<gtk::Widget>()
             })
             .expect("GtkPaned has a handle");
+        let unpin_button = gtk::Button::builder()
+            .icon_name("view-pin-symbolic")
+            .tooltip_text("Unpin Panel Height")
+            .halign(gtk::Align::Start)
+            .valign(gtk::Align::Start)
+            .css_classes(["unpin"])
+            .visible(false)
+            .build();
+        unpin_button.update_property(&[gtk::accessible::Property::Label("Unpin Panel Height")]);
+        let widget = gtk::Overlay::builder().child(&paned).build();
+        widget.add_overlay(&unpin_button);
         let this = Rc::new(Self {
             dragging: Cell::new(false),
             focus_start: Cell::new(None),
@@ -61,7 +78,21 @@ impl BottomPane {
             paned,
             placing: Cell::new(false),
             resized: Cell::new(false),
+            unpin_button,
+            widget,
         });
+        this.widget.connect_get_child_position(glib::clone!(
+            #[weak]
+            this,
+            #[upgrade_or]
+            None,
+            move |_, child| this.place_button(child)
+        ));
+        this.unpin_button.connect_clicked(glib::clone!(
+            #[weak]
+            this,
+            move |_| this.unpin()
+        ));
         this.paned.connect_max_position_notify(glib::clone!(
             #[weak]
             this,
@@ -102,8 +133,9 @@ impl BottomPane {
         this
     }
 
-    /// Calls `f` with the height the user moves the panel to, once they let go of the handle.
-    pub fn connect_resized(&self, f: impl Fn(i32) + 'static) {
+    /// Calls `f` with the height the user moves the panel to, once they let go of the handle, or
+    /// with `None` once they fit the panel to what it shows again.
+    pub fn connect_resized(&self, f: impl Fn(Option<i32>) + 'static) {
         *self.on_resized.borrow_mut() = Some(Rc::new(f));
     }
 
@@ -114,8 +146,19 @@ impl BottomPane {
         self.update();
     }
 
+    fn unpin(&self) {
+        self.height.set(None);
+        self.resized.set(false);
+        self.update();
+        let handler = self.on_resized.borrow().clone();
+        if let Some(handler) = handler {
+            handler(None);
+        }
+    }
+
     /// Places the handle again, after what the panel shows changes.
     pub fn update(&self) {
+        self.unpin_button.set_visible(self.height.get().is_some() && self.panel.get_visible());
         if !self.ready() || self.dragging.get() || self.focus_start.get().is_some() {
             return;
         }
@@ -134,9 +177,16 @@ impl BottomPane {
 
     fn moved(&self) {
         let by_user = self.dragging.get() || self.focus_start.get().is_some();
+        // GtkOverlay places the button only when it's allocated, which a move of the handle
+        // doesn't cause. GtkPaned's own moves happen while the overlay allocates it, before the
+        // overlay places the button, and queuing another allocation then would lay out twice.
+        if by_user || self.placing.get() {
+            self.widget.queue_allocate();
+        }
         if by_user && !self.placing.get() && self.ready() {
             self.height.set(Some(self.paned.max_position() + self.min() - self.paned.position()));
             self.resized.set(true);
+            self.unpin_button.set_visible(true);
         }
     }
 
@@ -156,6 +206,7 @@ impl BottomPane {
         if self.paned.position() == position {
             self.height.set(height);
             self.resized.set(false);
+            self.unpin_button.set_visible(height.is_some());
         } else {
             self.finish_resize();
         }
@@ -167,7 +218,7 @@ impl BottomPane {
             && let Some(height) = self.height.get()
             && let Some(handler) = handler
         {
-            handler(height);
+            handler(Some(height));
         }
     }
 
@@ -185,6 +236,18 @@ impl BottomPane {
         };
         let reach = if touch { TOUCH_REACH } else { POINTER_REACH };
         (bounds.y() - reach..=bounds.y() + bounds.height() + reach).contains(&point.y())
+    }
+
+    fn place_button(&self, button: &gtk::Widget) -> Option<gdk::Rectangle> {
+        let bounds = self.handle.compute_bounds(&self.widget)?;
+        let (_, width, _, _) = button.measure(gtk::Orientation::Horizontal, -1);
+        let (_, height, _, _) = button.measure(gtk::Orientation::Vertical, width);
+        let x = match self.widget.direction() {
+            gtk::TextDirection::Rtl => self.widget.width() - width - BUTTON_INSET,
+            _ => BUTTON_INSET,
+        };
+        let y = (bounds.y() + bounds.height() / 2.0).round() as i32 - height / 2;
+        Some(gdk::Rectangle::new(x, y, width, height))
     }
 
     /// Whether the panel shows and the pane knows its own height. Until the pane's first

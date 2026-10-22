@@ -37,9 +37,14 @@ fn app_id() -> String {
     std::env::var("COMMONPLACE_APP_ID").unwrap_or_else(|_| APP_ID.to_owned())
 }
 const CSS: &str = "
-textview.note-editor { font-size: 1.25em; }
+textview.note-editor, .word-count { font-size: 1.25em; }
 .project-title { font-style: italic; }
 .step-list:drop(active) { box-shadow: none; outline: none; }
+button.unpin {
+  min-width: 0; min-height: 0; padding: 2px; -gtk-icon-size: 12px;
+  background: none; box-shadow: none;
+}
+button.unpin:hover { color: @accent_color; }
 .drop-line { background-color: @accent_color; border-radius: 1px; }
 .done { text-decoration-line: line-through; }
 .dragged { opacity: 0.55; }
