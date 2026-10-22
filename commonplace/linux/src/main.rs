@@ -64,6 +64,7 @@ Usage:
   commonplace capture action          Open the quick capture window for an action
   commonplace capture memo TEXT…      Save TEXT as a memo, and print its URI
   commonplace capture action TEXT…    Save TEXT as an action in the inbox, and print its URI
+  commonplace print URI               Print the action at URI, after the projects it's part of
   commonplace URI                     Open the note at a commonplace: URI
 
 The library lives in $COMMONPLACE_LIBRARY, or in $XDG_DATA_HOME/commonplace if that's unset.
@@ -199,6 +200,19 @@ fn run(
             });
             match created {
                 Ok(id) => command_line.print_literal(&format!("{}\n", note_uri(id))),
+                Err(error) => {
+                    command_line.printerr_literal(&format!("commonplace: {error}\n"));
+                    return glib::ExitCode::FAILURE;
+                }
+            }
+        }
+        ["print", uri] => {
+            let Some(id) = parse_note_uri(uri) else {
+                command_line.printerr_literal(&format!("commonplace: {uri} isn't a note URI\n"));
+                return glib::ExitCode::FAILURE;
+            };
+            match state.read(|library| library.action_brief(id)) {
+                Ok(brief) => command_line.print_literal(&brief),
                 Err(error) => {
                     command_line.printerr_literal(&format!("commonplace: {error}\n"));
                     return glib::ExitCode::FAILURE;
