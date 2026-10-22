@@ -57,6 +57,8 @@ The Linux app covers memos and actions:
 - Keep the sidebar widths and the screen you last viewed in the library, so they follow you to other
   devices, and the app opens where you left off.
 - Open notes from `commonplace:` links.
+- Print an action with the bodies of the projects it belongs to, outermost first, with
+  `commonplace print URI`, to hand it to a coding agent as a prompt.
 
 Curios, zettels, spaced repetition, sync, Android, and the web come next.
 

@@ -450,6 +450,27 @@ pub fn code_blocks(body: &str) -> Vec<CodeBlock> {
     blocks
 }
 
+/// The fence that closes a fenced code block left open at the end of `body`, which would otherwise
+/// swallow whatever text follows `body`.
+pub(crate) fn open_fence(body: &str) -> Option<String> {
+    // Checking whether a block runs into appended text leaves pulldown-cmark to decide where block
+    // quotes and list items end the blocks inside them.
+    let probe = format!("{body}\n\nx");
+    Parser::new_ext(&probe, Options::ENABLE_TASKLISTS).into_offset_iter().find_map(
+        |(event, range)| {
+            let Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(_))) = event else {
+                return None;
+            };
+            if range.end < probe.len() {
+                return None;
+            }
+            let opening = probe[range].trim_start();
+            let marker = opening.chars().next()?;
+            Some(opening.chars().take_while(|&c| c == marker).collect())
+        },
+    )
+}
+
 fn list_prefixes(body: &str) -> Vec<Span> {
     let mut prefixes = Vec::new();
     let mut depth = 0;
@@ -810,5 +831,15 @@ mod tests {
         assert!(span.touches(&(5..5)));
         assert!(!span.touches(&(6..6)));
         assert!(span.touches(&(0..3)));
+    }
+
+    #[test]
+    fn finds_open_fences() {
+        assert_eq!(open_fence("Text\n\n```sh\nls"), Some("```".to_owned()));
+        assert_eq!(open_fence("  ~~~~\ncode\n~~~"), Some("~~~~".to_owned()));
+        assert_eq!(open_fence("```\ncode\n```"), None);
+        assert_eq!(open_fence("> ```\n> code"), None);
+        assert_eq!(open_fence("- ```\n  code"), None);
+        assert_eq!(open_fence("Text"), None);
     }
 }

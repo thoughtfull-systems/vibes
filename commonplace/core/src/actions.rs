@@ -9,6 +9,7 @@ use std::str::FromStr;
 use loro::{LoroMap, LoroTree, LoroValue, TreeID, TreeParentId, ValueOrContainer};
 
 use crate::library::{ACTION_KIND, MODIFIED, integer, loro_error, now, string, value};
+use crate::markup::open_fence;
 use crate::{Error, Library, Note, NoteId};
 
 pub(crate) const ACTION: &str = "action";
@@ -616,6 +617,23 @@ impl Library {
         self.hierarchy().descendants(id)
     }
 
+    /// The bodies of the action's projects, outermost first, each in a `<project>` element, then
+    /// the action's own body in an `<action>` element, to hand the action to someone along with
+    /// what it's part of. Projects with empty bodies are left out.
+    pub fn action_brief(&self, id: NoteId) -> Result<String, Error> {
+        let note = self.note(id).ok_or(Error::NotFound(id))?;
+        if note.action.is_none() {
+            return Err(Error::NotAnAction(id));
+        }
+        let projects =
+            self.hierarchy().path(id).into_iter().filter_map(|ancestor| self.note(ancestor));
+        let mut elements: Vec<String> =
+            projects.filter_map(|project| brief_element("project", &project.body)).collect();
+        let action = brief_element("action", &note.body);
+        elements.push(action.unwrap_or_else(|| "<action>\n</action>".to_owned()));
+        Ok(format!("{}\n", elements.join("\n\n")))
+    }
+
     /// Whether the note is in the trash, itself or through an action it belongs to.
     pub fn is_in_trash(&self, id: NoteId) -> bool {
         let hierarchy = self.hierarchy();
@@ -1097,6 +1115,17 @@ fn node_note(tree: &LoroTree, node: TreeID) -> Option<NoteId> {
     meta.get(NOTE).and_then(value).and_then(string)?.parse().ok()
 }
 
+/// `body` in an element named `name`, with blank lines around it so Markdown reads the tags as
+/// HTML blocks of their own, or `None` if the body is blank. The first line keeps its indentation,
+/// which can make it code.
+fn brief_element(name: &str, body: &str) -> Option<String> {
+    let first = body.find(|c: char| !c.is_whitespace())?;
+    let start = body[..first].rfind('\n').map_or(0, |newline| newline + 1);
+    let body = body[start..].trim_end();
+    let close = open_fence(body).map(|fence| format!("\n{fence}")).unwrap_or_default();
+    Some(format!("<{name}>\n\n{body}{close}\n\n</{name}>"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1133,6 +1162,37 @@ mod tests {
         assert!(library.note(project).unwrap().action.unwrap().project);
         assert_eq!(library.action_parent(step), Some(project));
         assert_eq!(library.action_children(project)[0].id, step);
+    }
+
+    #[test]
+    fn briefs_an_action_with_its_projects() {
+        let mut library = Library::in_memory();
+        let project = library.create_task("\nPaint the shed\n\n---\n\nUse green.\n", None).unwrap();
+        let step = library.create_task(" \n", Some(project)).unwrap();
+        let task = library.create_task("Buy sandpaper\n\n```sh\norder 120", Some(step)).unwrap();
+        let project_element = "<project>\n\nPaint the shed\n\n---\n\nUse green.\n\n</project>\n\n";
+        let action_element = "<action>\n\nBuy sandpaper\n\n```sh\norder 120\n```\n\n</action>\n";
+        let brief = format!("{project_element}{action_element}");
+        assert_eq!(library.action_brief(task).unwrap(), brief);
+        let empty = format!("{project_element}<action>\n</action>\n");
+        assert_eq!(library.action_brief(step).unwrap(), empty);
+        library.trash(project).unwrap();
+        library.trash(task).unwrap();
+        assert_eq!(library.action_brief(task).unwrap(), brief);
+        let memo = library.create_memo("x").unwrap();
+        assert!(matches!(library.action_brief(memo), Err(Error::NotAnAction(_))));
+        library.trash(memo).unwrap();
+        library.delete(memo).unwrap();
+        assert!(matches!(library.action_brief(memo), Err(Error::NotFound(_))));
+    }
+
+    #[test]
+    fn brief_elements_keep_indentation_and_skip_blank_bodies() {
+        assert_eq!(
+            brief_element("action", "\n \n    code\n").unwrap(),
+            "<action>\n\n    code\n\n</action>"
+        );
+        assert_eq!(brief_element("action", " \n\t"), None);
     }
 
     #[test]
