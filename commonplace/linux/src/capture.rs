@@ -70,7 +70,9 @@ pub fn present(app: &adw::Application, state: Rc<State>, task: bool) -> adw::App
     let window = adw::ApplicationWindow::builder()
         .application(app)
         .name(NAME)
-        .title(crate::window_title("Capture"))
+        // The README's Sway rule floats this window by its exact title. Keep it unlike any
+        // `window_title`, which the main window shows for notes of any label.
+        .title("Quick Capture")
         .default_width(480)
         .default_height(260)
         .content(&toolbar)
