@@ -42,6 +42,8 @@ fn app_id() -> String {
 }
 
 /// A window title that names the app before the part of it the window shows.
+// The README's Sway rule floats the capture window by its exact title. Keep the prefix, so that no
+// note's label gives the main window that title.
 pub fn window_title(part: &str) -> String {
     format!("Commonplace: {part}")
 }

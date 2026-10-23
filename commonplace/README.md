@@ -223,7 +223,9 @@ start Commonplace if it isn't running, and work the same from inside the app.
 In Sway, for example, these lines make the window float and bind a key sequence to each command:
 press `$mod+c`, then `m` for a memo or `a` for an action. Escape backs out. Sway has no syntax for a
 sequence of keys, so the first key enters a binding mode, and each binding in the mode returns to
-the default mode.
+the default mode. Sway matches a title as a regular expression anywhere in the window's title. The
+main window's title always starts with `Commonplace`, so with the anchors no note's label can make
+it float.
 
 ```text
 set $capture "capture: (m)emo (a)ction"
@@ -233,7 +235,7 @@ mode $capture {
     bindsym Escape mode "default"
 }
 bindsym $mod+c mode $capture
-for_window [app_id="systems.thoughtfull.Commonplace" title="Capture"] floating enable
+for_window [app_id="systems.thoughtfull.Commonplace" title="^Quick Capture$"] floating enable
 ```
 
 [0001]: ../decisions/0001-languages-and-technologies.md
