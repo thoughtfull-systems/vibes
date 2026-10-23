@@ -118,6 +118,7 @@ pub fn start(
     let menu = node.lookup_interface("com.canonical.dbusmenu").expect("the XML declares it");
     let event = Rc::new(event);
     let icon_theme_path = icon_theme_path();
+    let id = crate::app_id();
     connection
         .register_object(ITEM_PATH, &item)
         .method_call(glib::clone!(
@@ -130,7 +131,7 @@ pub fn start(
                 invocation.return_value(None);
             }
         ))
-        .property(move |_, _, _, _, property| item_property(property, &icon_theme_path))
+        .property(move |_, _, _, _, property| item_property(property, &icon_theme_path, &id))
         .build()?;
     connection
         .register_object(MENU_PATH, &menu)
@@ -178,13 +179,13 @@ pub fn start(
     Ok(())
 }
 
-fn item_property(property: &str, icon_theme_path: &str) -> glib::Variant {
+fn item_property(property: &str, icon_theme_path: &str, id: &str) -> glib::Variant {
     let no_pixmaps: Vec<(i32, i32, Vec<u8>)> = Vec::new();
     match property {
         "Category" => "ApplicationStatus".to_variant(),
         "IconName" => crate::APP_ID.to_variant(),
         "IconThemePath" => icon_theme_path.to_variant(),
-        "Id" => crate::app_id().to_variant(),
+        "Id" => id.to_variant(),
         "ItemIsMenu" => false.to_variant(),
         "Menu" => {
             glib::variant::ObjectPath::try_from(MENU_PATH).expect("the path is valid").to_variant()
@@ -284,14 +285,14 @@ fn item_properties(label: &str) -> HashMap<String, glib::Variant> {
 /// so the path names the icon's own folder, where GTK finds icons that belong to no theme. That
 /// folder holds the small icon, drawn for the size a tray shows.
 fn icon_theme_path() -> String {
-    const APPS: &str = "icons/hicolor/16x16/apps";
+    const APPS: &str = "hicolor/16x16/apps";
     if cfg!(debug_assertions) {
-        return format!("{}/data/{APPS}", env!("CARGO_MANIFEST_DIR"));
+        return format!("{}/{APPS}", crate::SOURCE_ICONS);
     }
     let icon = format!("{}.svg", crate::APP_ID);
     std::iter::once(glib::user_data_dir())
         .chain(glib::system_data_dirs())
-        .map(|dir| dir.join(APPS))
+        .map(|dir| dir.join("icons").join(APPS))
         .find(|dir| dir.join(&icon).is_file())
         .map(|dir| dir.to_string_lossy().into_owned())
         .unwrap_or_default()

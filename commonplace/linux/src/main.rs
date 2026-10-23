@@ -46,6 +46,8 @@ pub fn window_title(part: &str) -> String {
     format!("Commonplace: {part}")
 }
 
+const SOURCE_ICONS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/data/icons");
+
 const CSS: &str = "
 textview.note-editor, .word-count { font-size: 1.25em; }
 .project-title { font-style: italic; }
@@ -117,8 +119,7 @@ fn main() -> glib::ExitCode {
                 );
                 // A debug build runs from the source tree, where the icon theme doesn't look.
                 if cfg!(debug_assertions) {
-                    gtk::IconTheme::for_display(&display)
-                        .add_search_path(concat!(env!("CARGO_MANIFEST_DIR"), "/data/icons"));
+                    gtk::IconTheme::for_display(&display).add_search_path(SOURCE_ICONS);
                 }
             }
             // A copy under another app ID is a test copy, which mustn't touch the everyday library.
