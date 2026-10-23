@@ -6,10 +6,11 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use adw::prelude::*;
-use commonplace_core::{ActionChange, ActionList, ActionState, ActionView, Error, Library, NoteId};
+use commonplace_core::{ActionChange, ActionList, ActionState, ActionView, Error, NoteId, Spaces};
 use gtk::{gdk, glib};
 
 use crate::editor;
+use crate::libraries;
 use crate::link_picker::{Choice, LinkPicker, Purpose};
 use crate::rows::{connect_day_clicked, day_picker, format_date, parent_labels, today};
 use crate::state::State;
@@ -390,7 +391,7 @@ impl InboxView {
 
     /// Saves the action on show and applies `sort` to it, which takes it out of the inbox, so the
     /// next action takes its place.
-    fn sort(&self, sort: impl FnOnce(&mut Library, NoteId) -> Result<(), Error>) {
+    fn sort(&self, sort: impl FnOnce(&mut Spaces, NoteId) -> Result<(), Error>) {
         let Some(id) = self.current.get() else {
             return;
         };
@@ -424,7 +425,12 @@ impl InboxView {
                         Choice::TopLevel => None,
                         Choice::CreateAction(_) | Choice::CreateMemo(_) => return,
                     };
-                    view.report(view.state.write(|library| library.move_action(id, parent, None)));
+                    let report = glib::clone!(
+                        #[weak]
+                        view,
+                        move |result| view.report(result)
+                    );
+                    libraries::move_action(&view.state, &view.widget, id, parent, report);
                 }
             ),
         );

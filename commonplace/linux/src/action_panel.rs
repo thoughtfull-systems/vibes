@@ -9,6 +9,7 @@ use commonplace_core::{ActionChange, ActionList, ActionState, Date, Note, NoteId
 use gtk::{gdk, glib};
 
 use crate::drag_scroll::DragScroll;
+use crate::libraries;
 use crate::link_picker::{Choice, LinkPicker, Purpose};
 use crate::rows::{connect_day_clicked, format_date, note_row, parent_labels, today};
 use crate::state::State;
@@ -888,7 +889,7 @@ impl ActionPanel {
                 if text.is_empty() {
                     return;
                 }
-                match panel.state.write(|library| library.create_task(&text, Some(parent))) {
+                match panel.state.write(|library| library.create_task(&text, parent)) {
                     Ok(id) => {
                         entry.set_text("");
                         panel.reveal_step(id);
@@ -1067,16 +1068,19 @@ impl ActionPanel {
             glib::clone!(
                 #[strong(rename_to = state)]
                 self.state,
+                #[weak(rename_to = widget)]
+                self.widget,
                 move |choice| {
                     let parent = match choice {
                         Choice::Note(parent, _) => Some(parent),
                         Choice::TopLevel => None,
                         Choice::CreateAction(_) | Choice::CreateMemo(_) => return,
                     };
-                    if let Err(error) = state.write(|library| library.move_action(id, parent, None))
-                    {
-                        eprintln!("commonplace: {error}");
-                    }
+                    libraries::move_action(&state, &widget, id, parent, |result| {
+                        if let Err(error) = result {
+                            eprintln!("commonplace: {error}");
+                        }
+                    });
                 }
             ),
         );

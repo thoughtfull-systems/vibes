@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0-no-copyleft-exception
 
-//! Builds a library of sample memos and actions for trying the apps by hand:
+//! Builds two libraries of sample memos and actions, Personal and Work, for trying the apps by
+//! hand:
 //!
 //! ```sh
 //! cargo run --example test_library -- DIRECTORY
@@ -10,11 +11,12 @@
 //! count from the day it runs, so overdue, due-soon, and upcoming actions stay that way. When a
 //! feature is ready to ship, add samples of it here.
 
+use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use commonplace_core::{
-    ActionChange, ActionList, ActionState, Date, Error, Library, NoteId, wikilink,
+    ActionChange, ActionList, ActionState, Date, Error, Library, NoteId, Spaces, wikilink,
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -26,14 +28,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("test_library: {} already exists", dir.display());
         std::process::exit(1);
     }
-    let mut library = Library::open(&dir)?;
+    let mut spaces = Spaces::open(&dir)?;
+    let personal = spaces.keys().remove(0);
+    let work = spaces.create()?;
     let today = today();
-    memos(&mut library)?;
-    actions(&mut library, today)?;
+    let trip = memos(spaces.library_mut(&personal)?)?;
+    actions(spaces.library_mut(&personal)?, today)?;
+    work_notes(spaces.library_mut(&work)?, trip, today)?;
+    // The Linux app keeps the names it gives libraries in its device settings.
+    fs::write(dir.join("device.ini"), format!("[names]\n{personal}=Personal\n{work}=Work\n"))?;
     Ok(())
 }
 
-fn memos(library: &mut Library) -> Result<(), Error> {
+fn work_notes(library: &mut Library, trip: NoteId, today: Date) -> Result<(), Error> {
+    library.create_memo(&format!(
+        "Time off\n\nAway for {}, so hand the release to the team before then.\n",
+        wikilink(trip, Some("the trip, in the Personal library"))
+    ))?;
+    library.create_inbox_task("Answer the survey from HR")?;
+    let report = library.create_task("Write the quarterly report", None)?;
+    library.change_action(report, ActionChange::Due(Some(today.add_days(4))))?;
+    library.create_task("Gather the numbers", Some(report))?;
+    library.create_task("Draft the summary", Some(report))?;
+    library.create_task("Review pull requests", None)?;
+    Ok(())
+}
+
+fn memos(library: &mut Library) -> Result<NoteId, Error> {
     let trip = library.create_memo(
         "Trip to Portugal\n\n# Places\n\nLisbon, then Porto by train.\n\n## Lisbon\n\n\
           - Alfama\n- Belém\n  - The tower\n  - The pastry shop\n\n## Porto\n\n\
@@ -78,7 +99,7 @@ fn memos(library: &mut Library) -> Result<(), Error> {
     library.create_memo("")?;
     let trashed = library.create_memo("A trashed memo\n\nRestore it or delete it for good.\n")?;
     library.trash(trashed)?;
-    Ok(())
+    Ok(trip)
 }
 
 fn actions(library: &mut Library, today: Date) -> Result<(), Error> {

@@ -13,6 +13,10 @@ and spaced repetition.
 A library is one [Loro] document. Implementations exchange it, whole or in part, in Loro's binary
 encoding: a snapshot for the whole document, or updates for the changes since a version.
 
+A device can hold more than one library and show them together as spaces, as
+[decision 0007](../../decisions/0007-commonplace-spaces.md) describes. Each library is a document of
+its own, and syncs on its own.
+
 Each running instance of an implementation uses a fresh, random Loro peer identifier, as Loro does
 by default. Two instances that write at the same time must never share one.
 
@@ -120,6 +124,10 @@ period, such as `linux.sidebar.outline`. Each value is a whole number or a strin
 a key wins. Readers ignore keys they don't know, and a missing key means the implementation's
 default.
 
+The Linux app keeps no settings here. Its preferences describe one device, so it keeps them on the
+device, under the keys below. Versions before spaces kept them in the library, and the Linux app
+copies them from there once, when it moves that library into a folder of its own.
+
 The Linux app keeps the widths of its sidebars, in pixels, under `linux.sidebar.actions`,
 `linux.sidebar.details`, and `linux.sidebar.outline`. It keeps the filters of its Memos, All Notes,
 and Trash tabs under `linux.filter.memos`, `linux.filter.all`, and `linux.filter.trash`, each
@@ -133,10 +141,10 @@ followed by one of these names:
 
 For example, `linux.filter.all.from` holds `20261024` to start All Notes from October 24, 2026.
 
-The string `linux.screen` holds the screen the owner last viewed, so the app opens there on any
-device: `memos`, `all`, `trash`, or `actions.` followed by `execute`, `plan`, `review`, or `inbox`.
-With a note open, a slash and the note's identifier follow, such as `memos/` and then the
-identifier. If the note no longer exists, the app opens the Memos tab.
+The string `linux.screen` holds the screen the owner last viewed, so the app opens there: `memos`,
+`all`, `trash`, or `actions.` followed by `execute`, `plan`, `review`, or `inbox`. With a note open,
+a slash and the note's identifier follow, such as `memos/` and then the identifier. If the note no
+longer exists, the app opens the Memos tab.
 
 A note's own `settings` map follows the same rules, for preferences that belong to that note alone
 and go with it when it's deleted. Changing one doesn't change the note's `modified` time. The Linux
