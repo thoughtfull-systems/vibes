@@ -11,9 +11,10 @@ use gtk::{gdk, gio, glib};
 use crate::action_panel::ActionPanel;
 use crate::bottom_pane::BottomPane;
 use crate::editor;
+use crate::libraries;
 use crate::link_picker::{Choice, LinkPicker, Purpose};
 use crate::rows::{display_label, entry, note_row, today};
-use crate::state::State;
+use crate::state::{Space, State};
 
 const BOTTOM_HEIGHT: &str = "linux.bottom.height";
 const SAVE_DELAY: Duration = Duration::from_millis(500);
@@ -56,6 +57,11 @@ pub struct NotePage {
     picker: Rc<LinkPicker>,
     action_panel: Rc<ActionPanel>,
     restore_button: gtk::Button,
+    /// A button for each library, the one that holds the note on, to move the note to another.
+    space_row: adw::WrapBox,
+    /// The note, the libraries, and the note's library that the space buttons last showed. The
+    /// buttons move the note they were built for, so a different note needs new ones.
+    space_row_shown: RefCell<Option<(NoteId, Vec<Space>, String)>>,
     state: Rc<State>,
     toasts: adw::ToastOverlay,
     /// Offers to restore or delete a note in the trash.
@@ -244,10 +250,21 @@ impl NotePage {
 
         let picker = LinkPicker::new(state.clone(), &editor_box);
         let action_panel = ActionPanel::new(state.clone(), picker.clone());
-        details_scrolled.set_child(Some(&action_panel.widget));
+        let space_row = adw::WrapBox::builder()
+            .child_spacing(6)
+            .line_spacing(6)
+            .margin_start(12)
+            .margin_end(12)
+            .margin_top(6)
+            .visible(false)
+            .build();
+        let details_content = gtk::Box::new(gtk::Orientation::Vertical, 6);
+        details_content.append(&space_row);
+        details_content.append(&action_panel.widget);
+        details_scrolled.set_child(Some(&details_content));
 
-        // Whether the user, or the window's width, leaves each sidebar shown. Only actions have
-        // details to show.
+        // Whether the user, or the window's width, leaves each sidebar shown. Only actions, and
+        // notes with libraries to move between, have details to show.
         let outline_shown = Rc::new(Cell::new(true));
         let details_shown = Rc::new(Cell::new(true));
         let outline_width = Rc::new(Cell::new(0));
@@ -271,6 +288,8 @@ impl NotePage {
             details_hidden_bar,
             #[weak(rename_to = panel)]
             action_panel.widget,
+            #[weak]
+            space_row,
             move || {
                 if outline_box.get_visible() && outline_box.width() > 0 {
                     outline_width.set(outline_box.width());
@@ -280,9 +299,9 @@ impl NotePage {
                 }
                 outline_box.set_visible(outline_shown.get());
                 hidden_bar.set_visible(!outline_shown.get());
-                let action = panel.get_visible();
-                details.set_visible(action && details_shown.get());
-                details_hidden_bar.set_visible(action && !details_shown.get());
+                let any = panel.get_visible() || space_row.get_visible();
+                details.set_visible(any && details_shown.get());
+                details_hidden_bar.set_visible(any && !details_shown.get());
             }
         ));
         for (button, flag, shown) in [
@@ -298,11 +317,13 @@ impl NotePage {
                 update();
             });
         }
-        action_panel.widget.connect_visible_notify(glib::clone!(
-            #[strong]
-            update_sidebars,
-            move |_| update_sidebars()
-        ));
+        for details in [action_panel.widget.upcast_ref::<gtk::Widget>(), space_row.upcast_ref()] {
+            details.connect_visible_notify(glib::clone!(
+                #[strong]
+                update_sidebars,
+                move |_| update_sidebars()
+            ));
+        }
         // libadwaita applies only the last matching breakpoint, so the narrow one hides both
         // sidebars itself. The outline gives way first, since the details matter more.
         for (width, hides_details) in [(1000.0, false), (700.0, true)] {
@@ -403,6 +424,8 @@ impl NotePage {
             picker,
             action_panel,
             restore_button,
+            space_row,
+            space_row_shown: RefCell::default(),
             state,
             toasts,
             trash_bar,
@@ -454,12 +477,12 @@ impl NotePage {
         *self.on_open.borrow_mut() = Some(Rc::new(f));
     }
 
-    pub fn show(&self, id: NoteId) {
+    pub fn show(self: &Rc<Self>, id: NoteId) {
         self.show_note(Some(id));
     }
 
     /// Saves the open note and forgets it, once the view is gone.
-    pub fn close(&self) {
+    pub fn close(self: &Rc<Self>) {
         self.show_note(None);
     }
 
@@ -475,10 +498,11 @@ impl NotePage {
     }
 
     /// Shows the open note again, after the library changes.
-    pub fn refresh(&self) {
+    pub fn refresh(self: &Rc<Self>) {
         if self.current.get().is_none() {
             return;
         }
+        self.refresh_space_row();
         self.refresh_backlinks();
         self.highlight_links();
         self.action_panel.refresh();
@@ -673,7 +697,7 @@ impl NotePage {
         self.widget.add_controller(escape);
     }
 
-    fn show_note(&self, id: Option<NoteId>) {
+    fn show_note(self: &Rc<Self>, id: Option<NoteId>) {
         self.save_now();
         let note = id.and_then(|id| self.state.read(|library| library.note(id)));
         self.current.set(note.as_ref().map(|note| note.id));
@@ -689,6 +713,7 @@ impl NotePage {
         }
         self.loading.set(false);
         self.action_panel.show(note.as_ref(), self.view.is_editable());
+        self.refresh_space_row();
         self.update_buttons();
         self.highlight_links();
         self.refresh_backlinks();
@@ -719,6 +744,72 @@ impl NotePage {
             "In the trash with a project above it, which restoring brings back too"
         });
         self.note_menu_button.set_visible(note.is_some() && !in_trash);
+    }
+
+    /// Shows a button for each library while there's more than one and the note can move, with
+    /// the note's own library on. Turning another on moves the note there.
+    fn refresh_space_row(self: &Rc<Self>) {
+        let id = self.current.get();
+        let spaces = self.state.spaces();
+        let space = id.and_then(|id| self.state.read(|s| s.space_of(id).map(str::to_owned)));
+        let movable =
+            id.is_some_and(|id| !self.state.read(|s| s.is_in_trash(id) || s.is_read_only()));
+        let shown = id
+            .zip(space)
+            .filter(|_| movable && spaces.len() > 1)
+            .map(|(id, space)| (id, spaces, space));
+        if *self.space_row_shown.borrow() == shown {
+            return;
+        }
+        self.space_row_shown.replace(shown.clone());
+        self.space_row.remove_all();
+        let Some((id, spaces, space)) = shown else {
+            self.space_row.set_visible(false);
+            return;
+        };
+        let mut buttons: Vec<gtk::ToggleButton> = Vec::new();
+        for choice in spaces {
+            let button = gtk::ToggleButton::builder()
+                .label(&choice.name)
+                .active(choice.key == space)
+                .tooltip_text(format!("Move to {}", choice.name))
+                .build();
+            button.set_group(buttons.first());
+            button.connect_toggled(glib::clone!(
+                #[weak(rename_to = this)]
+                self,
+                move |button| {
+                    let here = this.state.read(|s| s.space_of(id).map(str::to_owned));
+                    if !button.is_active() || here.as_deref() == Some(choice.key.as_str()) {
+                        return;
+                    }
+                    let key = choice.key.clone();
+                    libraries::confirm_move(
+                        &this.window,
+                        &choice.name,
+                        glib::clone!(
+                            #[weak]
+                            this,
+                            move || {
+                                this.save_now();
+                                this.report(this.state.write(|s| s.move_to_space(id, &key)));
+                            }
+                        ),
+                        glib::clone!(
+                            #[weak]
+                            this,
+                            move || {
+                                this.space_row_shown.take();
+                                this.refresh_space_row();
+                            }
+                        ),
+                    );
+                }
+            ));
+            self.space_row.append(&button);
+            buttons.push(button);
+        }
+        self.space_row.set_visible(true);
     }
 
     fn refresh_outline(&self) {
@@ -888,8 +979,19 @@ impl NotePage {
             Choice::Note(id, label) => (id, label),
             Choice::CreateAction(ref text) | Choice::CreateMemo(ref text) => {
                 let action = matches!(choice, Choice::CreateAction(_));
-                let created = self.state.write(|library| {
-                    if action { library.create_inbox_task(text) } else { library.create_memo(text) }
+                let Some(space) = self
+                    .current
+                    .get()
+                    .and_then(|id| self.state.read(|s| s.space_of(id).map(str::to_owned)))
+                else {
+                    return;
+                };
+                let created = self.state.write(|spaces| {
+                    if action {
+                        spaces.create_inbox_task(&space, text)
+                    } else {
+                        spaces.create_memo(&space, text)
+                    }
                 });
                 match created {
                     Ok(id) => (id, label(text)),

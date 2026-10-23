@@ -9,6 +9,7 @@ mod library;
 mod links;
 mod lists;
 mod markup;
+mod spaces;
 mod store;
 mod words;
 
@@ -27,6 +28,7 @@ pub use markup::{
     CodeBlock, Heading, Piece, Span, Style, code_blocks, inline_pieces, outline, spans,
     toggle_checkbox,
 };
+pub use spaces::Spaces;
 pub use words::word_count;
 
 #[derive(Debug, thiserror::Error)]
@@ -35,6 +37,8 @@ pub enum Error {
     CyclicMove(NoteId),
     #[error(transparent)]
     Io(#[from] std::io::Error),
+    #[error("a device keeps at least one library")]
+    LastLibrary,
     #[error("another program has the library in {0} open")]
     Locked(PathBuf),
     #[error("the library is corrupt: {0}")]
@@ -43,6 +47,8 @@ pub enum Error {
     Malformed(NoteId),
     #[error("not a Commonplace library: its format is {0:?}")]
     NotALibrary(String),
+    #[error("there's no library {0}")]
+    NoSuchLibrary(String),
     #[error("note {0} isn't an action")]
     NotAnAction(NoteId),
     #[error("note {0} doesn't exist")]
@@ -51,4 +57,6 @@ pub enum Error {
     NotTrashed(NoteId),
     #[error("a newer version of Commonplace wrote this library, so it's read-only")]
     ReadOnly,
+    #[error("a library can't merge into itself")]
+    SameLibrary,
 }

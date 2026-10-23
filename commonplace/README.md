@@ -52,10 +52,14 @@ The Linux app covers memos and actions:
 - Browse memos in the Memos tab, every note in All Notes, and the trash in Trash. Order them by
   creation, change, or trash date, and in All Notes by the due or start dates of actions, or by
   archive date, which lists only the archive. Pick a day to start from, and the list runs forward or
-  back from it in the order's direction. The filters follow you to other devices, and Reset returns
-  a tab to its defaults.
-- Keep the sidebar widths and the screen you last viewed in the library, so they follow you to other
-  devices, and the app opens where you left off.
+  back from it in the order's direction. Reset returns a tab to its defaults.
+- Keep the filters, the sidebar widths, and the screen you last viewed on the device, so the app
+  opens where you left off.
+- Keep separate libraries as spaces, such as Work and Personal, and show them together. A button for
+  each library in the top bar hides or shows its notes, and so does Alt with the library's number.
+  Capture saves into the library you pick, starting with the last one, and a note's sidebar moves it
+  to another library, with its steps. The Libraries dialog adds, names, merges, and deletes
+  libraries, and the names belong to the device. With one library, none of this shows.
 - Open notes from `commonplace:` links.
 - Print an action with the bodies of the projects it belongs to, outermost first, with
   `commonplace print URI`, to hand it to a coding agent as a prompt.
@@ -75,6 +79,7 @@ These decisions explain the choices behind them:
 - [0002 Commonplace library storage][0002]
 - [0003 Commonplace note identity and links][0003]
 - [0004 Commonplace actions][0004]
+- [0007 Commonplace spaces][0007]
 
 ## Layout
 
@@ -232,4 +237,5 @@ for_window [app_id="systems.thoughtfull.Commonplace" title="Capture"] floating e
 [0002]: ../decisions/0002-commonplace-library-storage.md
 [0003]: ../decisions/0003-commonplace-note-identity-and-links.md
 [0004]: ../decisions/0004-commonplace-actions.md
+[0007]: ../decisions/0007-commonplace-spaces.md
 [xremap]: https://github.com/xremap/xremap

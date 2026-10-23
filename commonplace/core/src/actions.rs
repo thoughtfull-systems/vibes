@@ -362,7 +362,7 @@ impl Hierarchy {
         self.children.get(&parent).map_or(&[], Vec::as_slice)
     }
 
-    fn parent(&self, id: NoteId) -> Option<NoteId> {
+    pub(crate) fn parent(&self, id: NoteId) -> Option<NoteId> {
         self.parents.get(&id).copied().flatten()
     }
 
@@ -379,7 +379,7 @@ impl Hierarchy {
         path
     }
 
-    fn descendants(&self, id: NoteId) -> Vec<NoteId> {
+    pub(crate) fn descendants(&self, id: NoteId) -> Vec<NoteId> {
         let mut found = Vec::new();
         let mut stack: Vec<NoteId> = self.children(Some(id)).iter().rev().copied().collect();
         let mut seen = HashSet::from([id]);
@@ -820,7 +820,11 @@ impl Library {
     }
 
     /// Creates a node for an action as the last child of `parent`'s node, or at the top level.
-    fn place_node(&mut self, id: NoteId, parent: Option<NoteId>) -> Result<TreeID, Error> {
+    pub(crate) fn place_node(
+        &mut self,
+        id: NoteId,
+        parent: Option<NoteId>,
+    ) -> Result<TreeID, Error> {
         let parent_node = match parent {
             Some(parent) => match self.hierarchy().nodes.get(&parent) {
                 Some(&node) => Some(node),
@@ -917,7 +921,7 @@ impl Library {
 /// How an action ranks in a list, before outline order breaks ties: overdue first, then due within
 /// a week, both soonest due first; then started or undated, with a due date before none; then
 /// starting within a week, and last starting later, both soonest start first.
-fn order_key(dates: &ActionDates, today: Date) -> Rank {
+pub(crate) fn order_key(dates: &ActionDates, today: Date) -> Rank {
     let due = dates.due.map(|due| due.date);
     let start = dates.start.map(|start| start.date);
     let (rank, first) = match dates.status {
@@ -953,7 +957,7 @@ fn order_as_outline(
     order_subtree(&mut groups, None, 0)
 }
 
-type Rank = (u8, Option<Date>, bool, Option<Date>);
+pub(crate) type Rank = (u8, Option<Date>, bool, Option<Date>);
 
 /// Records, for each action under `parent`, the most pressing rank among it and the actions under
 /// it, and returns the most pressing among them all.

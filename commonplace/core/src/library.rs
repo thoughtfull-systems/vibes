@@ -3,7 +3,9 @@
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use loro::{LoroDoc, LoroMap, LoroText, LoroValue, UpdateOptions, ValueOrContainer};
+use loro::{
+    Container, LoroDoc, LoroList, LoroMap, LoroText, LoroValue, UpdateOptions, ValueOrContainer,
+};
 
 use crate::actions::{ACTION, Action};
 use crate::store::Store;
@@ -260,6 +262,12 @@ impl Library {
         self.commit()
     }
 
+    /// The keys of every setting in the library, so an implementation can carry its settings off
+    /// to wherever it keeps them now.
+    pub fn setting_keys(&self) -> Vec<String> {
+        self.doc.get_map(SETTINGS).keys().map(|key| key.to_string()).collect()
+    }
+
     /// A whole-number setting that belongs to one note, such as the height of a panel below its
     /// text, and goes with the note when it's deleted.
     pub fn note_setting(&self, id: NoteId, key: &str) -> Option<i64> {
@@ -315,6 +323,22 @@ impl Library {
         }
     }
 
+    /// Writes a copy of `note`, a note's map from any document, as note `id`, without committing.
+    pub(crate) fn insert_copy(&mut self, id: NoteId, note: &LoroMap) -> Result<(), Error> {
+        let copy = self
+            .notes_map()
+            .insert_container(&id.to_string(), LoroMap::new())
+            .map_err(loro_error)?;
+        copy_map(note, &copy)
+    }
+
+    /// Merges another document's changes into the library, as a sync does.
+    pub(crate) fn import(&mut self, bytes: &[u8]) -> Result<(), Error> {
+        self.check_writable()?;
+        self.doc.import(bytes).map_err(loro_error)?;
+        self.commit()
+    }
+
     pub(crate) fn check_writable(&self) -> Result<(), Error> {
         if self.read_only { Err(Error::ReadOnly) } else { Ok(()) }
     }
@@ -332,6 +356,58 @@ impl Library {
             None => Ok(()),
         }
     }
+}
+
+fn copy_map(from: &LoroMap, to: &LoroMap) -> Result<(), Error> {
+    let mut entries = Vec::new();
+    from.for_each(|key, value| entries.push((key.to_owned(), value)));
+    for (key, value) in entries {
+        match value {
+            ValueOrContainer::Value(value) => to.insert(&key, value).map_err(loro_error)?,
+            ValueOrContainer::Container(Container::Map(map)) => {
+                copy_map(&map, &to.insert_container(&key, LoroMap::new()).map_err(loro_error)?)?
+            }
+            ValueOrContainer::Container(Container::Text(text)) => to
+                .insert_container(&key, LoroText::new())
+                .map_err(loro_error)?
+                .insert(0, &text.to_string())
+                .map_err(loro_error)?,
+            ValueOrContainer::Container(Container::List(list)) => {
+                copy_list(&list, &to.insert_container(&key, LoroList::new()).map_err(loro_error)?)?
+            }
+            // The spec puts no other kind of container in a note, so a plain value keeps what an
+            // unknown one holds.
+            ValueOrContainer::Container(other) => to
+                .insert(&key, ValueOrContainer::Container(other).get_deep_value())
+                .map_err(loro_error)?,
+        }
+    }
+    Ok(())
+}
+
+fn copy_list(from: &LoroList, to: &LoroList) -> Result<(), Error> {
+    let mut items = Vec::new();
+    from.for_each(|value| items.push(value));
+    for value in items {
+        match value {
+            ValueOrContainer::Value(value) => to.push(value).map_err(loro_error)?,
+            ValueOrContainer::Container(Container::Map(map)) => {
+                copy_map(&map, &to.push_container(LoroMap::new()).map_err(loro_error)?)?
+            }
+            ValueOrContainer::Container(Container::Text(text)) => to
+                .push_container(LoroText::new())
+                .map_err(loro_error)?
+                .insert(0, &text.to_string())
+                .map_err(loro_error)?,
+            ValueOrContainer::Container(Container::List(list)) => {
+                copy_list(&list, &to.push_container(LoroList::new()).map_err(loro_error)?)?
+            }
+            ValueOrContainer::Container(other) => {
+                to.push(ValueOrContainer::Container(other).get_deep_value()).map_err(loro_error)?
+            }
+        }
+    }
+    Ok(())
 }
 
 fn int_value(map: &LoroMap, key: &str) -> Option<i64> {

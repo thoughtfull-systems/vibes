@@ -122,8 +122,7 @@ impl Order {
 }
 
 /// A tab's notes that match the search, ordered by one of their dates. With a day picked, the
-/// list starts there and runs in the order's direction. The filters follow the user through the
-/// library's settings.
+/// list starts there and runs in the order's direction. The device keeps the filters.
 pub struct Browser {
     /// The day the list starts from, if the user picked one.
     from: Cell<Option<Date>>,
@@ -233,11 +232,11 @@ impl Browser {
         orders.get(self.order.selected() as usize).copied().unwrap_or(orders[0])
     }
 
-    /// Shows the filters saved in the library, or the defaults.
+    /// Shows the filters saved on the device, or the defaults.
     fn load(&self) {
         let setting = |name: &str| {
             let key = format!("{}.{name}", self.scope.settings());
-            self.state.read(|library| library.setting(&key))
+            self.state.device().setting(&key)
         };
         let order = setting("order")
             .and_then(|code| self.scope.orders().iter().copied().find(|o| o.code() == code))
@@ -274,20 +273,16 @@ impl Browser {
         if self.loading.get() {
             return;
         }
-        if !self.state.read(|library| library.is_read_only()) {
-            let from = self.from.get().map_or(0, |day| {
-                i64::from(day.year()) * 10_000 + i64::from(day.month()) * 100 + i64::from(day.day())
-            });
-            for (name, value) in [
-                ("from", from),
-                ("newest_first", i64::from(self.newest_first.is_active())),
-                ("order", self.selected_order().code()),
-            ] {
-                let key = format!("{}.{name}", self.scope.settings());
-                if let Err(error) = self.state.write(|library| library.set_setting(&key, value)) {
-                    eprintln!("commonplace: couldn't save the filters: {error}");
-                }
-            }
+        let from = self.from.get().map_or(0, |day| {
+            i64::from(day.year()) * 10_000 + i64::from(day.month()) * 100 + i64::from(day.day())
+        });
+        for (name, value) in [
+            ("from", from),
+            ("newest_first", i64::from(self.newest_first.is_active())),
+            ("order", self.selected_order().code()),
+        ] {
+            let key = format!("{}.{name}", self.scope.settings());
+            self.state.device().set_setting(&key, value);
         }
         self.show();
     }

@@ -4,11 +4,13 @@ mod action_panel;
 mod bottom_pane;
 mod browse;
 mod capture;
+mod device;
 mod drag_scroll;
 mod editor;
 mod highlight;
 mod inbox;
 mod layout;
+mod libraries;
 mod link_picker;
 mod note_page;
 mod rows;
@@ -23,9 +25,10 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use adw::prelude::*;
-use commonplace_core::{Library, note_uri, parse_note_uri};
+use commonplace_core::{Spaces, note_uri, parse_note_uri};
 use gtk::{gio, glib};
 
+use crate::device::Device;
 use crate::state::State;
 use crate::window::Window;
 
@@ -64,10 +67,11 @@ Usage:
   commonplace capture action          Open the quick capture window for an action
   commonplace capture memo TEXT…      Save TEXT as a memo, and print its URI
   commonplace capture action TEXT…    Save TEXT as an action in the inbox, and print its URI
+                                      (both in the library that capture last saved into)
   commonplace print URI               Print the action at URI, after the projects it's part of
   commonplace URI                     Open the note at a commonplace: URI
 
-The library lives in $COMMONPLACE_LIBRARY, or in $XDG_DATA_HOME/commonplace if that's unset.
+The libraries live in $COMMONPLACE_LIBRARY, or in $XDG_DATA_HOME/commonplace if that's unset.
 Set $COMMONPLACE_APP_ID to run a separate copy beside the one already running.
 ";
 
@@ -119,8 +123,9 @@ fn main() -> glib::ExitCode {
             {
                 Err("COMMONPLACE_APP_ID needs COMMONPLACE_LIBRARY too".to_owned())
             } else {
-                Library::open(&library_dir())
-                    .map(|library| Rc::new(State::new(library)))
+                let dir = library_dir();
+                Spaces::open(&dir)
+                    .map(|spaces| Rc::new(State::new(spaces, Device::open(&dir))))
                     .map_err(|error| error.to_string())
             };
             shared.borrow_mut().state = Some(state);
@@ -154,6 +159,12 @@ fn main() -> glib::ExitCode {
             ];
             for (action, accels) in accels {
                 app.set_accels_for_action(action, accels);
+            }
+            for digit in 1..=9 {
+                app.set_accels_for_action(
+                    &format!("win.toggle-space({digit})"),
+                    &[&format!("<Alt>{digit}")],
+                );
             }
         }
     ));
@@ -195,8 +206,13 @@ fn run(
         ["capture", kind @ ("memo" | "action"), ref words @ ..] => {
             let task = kind == "action";
             let text = words.join(" ");
-            let created = state.write(|library| {
-                if task { library.create_inbox_task(&text) } else { library.create_memo(&text) }
+            let space = state.capture_space();
+            let created = state.write(|spaces| {
+                if task {
+                    spaces.create_inbox_task(&space, &text)
+                } else {
+                    spaces.create_memo(&space, &text)
+                }
             });
             match created {
                 Ok(id) => command_line.print_literal(&format!("{}\n", note_uri(id))),

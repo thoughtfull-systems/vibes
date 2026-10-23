@@ -10,9 +10,10 @@ use gtk::{gdk, gio, glib};
 use crate::browse::{Browser, Scope};
 use crate::inbox::InboxView;
 use crate::layout;
+use crate::libraries;
 use crate::note_page::NotePage;
 use crate::rows::{NoteList, Section, today};
-use crate::state::State;
+use crate::state::{Space, State};
 
 /// How long a closed action stays in the review's recently done section.
 const RECENT_DAYS: i64 = 7;
@@ -132,6 +133,10 @@ pub struct Window {
     /// Whether the search bar holds text.
     searching: Cell<bool>,
     sidebar_button: gtk::ToggleButton,
+    /// A button for each library, which shows or hides its notes.
+    spaces_bar: gtk::Box,
+    /// The libraries the space buttons stand for, as they last showed.
+    spaces_shown: RefCell<Vec<Space>>,
     state: Rc<State>,
     switcher: adw::ViewSwitcher,
     tabs: adw::ViewStack,
@@ -211,11 +216,14 @@ impl Window {
             .active(true)
             .build();
         sidebar_button.bind_property("active", &modes_pane, "visible").sync_create().build();
+        // Hiding the button would shift the space buttons beside it, so it only fades.
         let back_button = gtk::Button::builder()
             .icon_name("go-previous-symbolic")
             .tooltip_text("Back")
-            .visible(false)
+            .opacity(0.0)
+            .sensitive(false)
             .build();
+        let spaces_bar = gtk::Box::builder().spacing(6).visible(false).build();
         let switcher =
             adw::ViewSwitcher::builder().stack(&tabs).policy(adw::ViewSwitcherPolicy::Wide).build();
         let search = gtk::SearchEntry::builder().placeholder_text("Search").hexpand(true).build();
@@ -228,7 +236,18 @@ impl Window {
             )
             .build();
         header.pack_start(&back_button);
+        header.pack_start(&spaces_bar);
         header.pack_start(&sidebar_button);
+        let menu = gio::Menu::new();
+        menu.append(Some("_Libraries"), Some("win.libraries"));
+        header.pack_end(
+            &gtk::MenuButton::builder()
+                .icon_name("open-menu-symbolic")
+                .tooltip_text("Main Menu")
+                .menu_model(&menu)
+                .primary(true)
+                .build(),
+        );
 
         let note = NotePage::new(state.clone(), window.clone(), toasts.clone());
         let main = gtk::Stack::new();
@@ -278,6 +297,8 @@ impl Window {
             search,
             searching: Cell::new(false),
             sidebar_button,
+            spaces_bar,
+            spaces_shown: RefCell::default(),
             state,
             switcher,
             tabs,
@@ -395,23 +416,18 @@ impl Window {
                 self.note.show(id);
             }
         }
-        self.back_button.set_visible(!self.showing("tabs"));
+        let back = !self.showing("tabs");
+        self.back_button.set_opacity(if back { 1.0 } else { 0.0 });
+        self.back_button.set_sensitive(back);
         self.location.set(location);
         self.restoring.set(false);
-        if !self.state.read(|library| library.is_read_only()) {
-            let screen = location.encode();
-            if let Err(error) =
-                self.state.write(|library| library.set_text_setting(SCREEN, &screen))
-            {
-                eprintln!("commonplace: couldn't save the screen: {error}");
-            }
-        }
+        self.state.device().set_text_setting(SCREEN, &location.encode());
     }
 
-    /// Returns to the screen the user last viewed, on this device or another, or to the memos if
-    /// that screen's note is gone.
+    /// Returns to the screen the user last viewed on this device, or to the memos if that screen's
+    /// note is gone.
     fn restore_screen(&self) {
-        let saved = self.state.read(|library| library.text_setting(SCREEN));
+        let saved = self.state.device().text_setting(SCREEN);
         let location = saved
             .and_then(|text| Location::decode(&text))
             .filter(|location| match location {
@@ -629,9 +645,78 @@ impl Window {
             self,
             move |_, _| _ = this.search.grab_focus()
         ));
-        for action in [insert_link, save, search] {
+        let toggle_space = gio::SimpleAction::new("toggle-space", Some(glib::VariantTy::INT32));
+        toggle_space.connect_activate(glib::clone!(
+            #[weak(rename_to = this)]
+            self,
+            move |_, parameter| {
+                let index = parameter.and_then(|value| value.get::<i32>()).unwrap_or(0) - 1;
+                let spaces = this.state.spaces();
+                if spaces.len() > 1
+                    && let Some(space) = usize::try_from(index).ok().and_then(|i| spaces.get(i))
+                {
+                    this.state.set_shown(&space.key, !space.shown);
+                }
+            }
+        ));
+        let libraries = gio::SimpleAction::new("libraries", None);
+        libraries.connect_activate(glib::clone!(
+            #[weak(rename_to = this)]
+            self,
+            move |_, _| libraries::present_dialog(&this.state, &this.window)
+        ));
+        for action in [insert_link, libraries, save, search, toggle_space] {
             self.window.add_action(&action);
         }
+    }
+
+    /// Shows a button for each library while there's more than one, and asks for the name of any
+    /// library this device hasn't named.
+    fn refresh_spaces(self: &Rc<Self>) {
+        let spaces = self.state.spaces();
+        if *self.spaces_shown.borrow() == spaces {
+            return;
+        }
+        let named = |list: &[Space]| -> Vec<(String, String)> {
+            list.iter().map(|space| (space.key.clone(), space.name.clone())).collect()
+        };
+        let same_buttons = named(&self.spaces_shown.borrow()) == named(&spaces);
+        *self.spaces_shown.borrow_mut() = spaces.clone();
+        if same_buttons {
+            let mut child = self.spaces_bar.first_child();
+            for space in &spaces {
+                if let Some(button) =
+                    child.as_ref().and_then(|c| c.downcast_ref::<gtk::ToggleButton>())
+                {
+                    button.set_active(space.shown);
+                }
+                child = child.and_then(|c| c.next_sibling());
+            }
+            return;
+        }
+        while let Some(child) = self.spaces_bar.first_child() {
+            self.spaces_bar.remove(&child);
+        }
+        for (index, space) in spaces.iter().enumerate() {
+            let button = gtk::ToggleButton::builder()
+                .label(&space.name)
+                .active(space.shown)
+                .tooltip_text(format!("Show or Hide {} (Alt+{})", space.name, index + 1))
+                .build();
+            let key = space.key.clone();
+            button.connect_toggled(glib::clone!(
+                #[weak(rename_to = this)]
+                self,
+                move |button| {
+                    if this.state.read(|spaces| spaces.is_shown(&key)) != button.is_active() {
+                        this.state.set_shown(&key, button.is_active());
+                    }
+                }
+            ));
+            self.spaces_bar.append(&button);
+        }
+        self.spaces_bar.set_visible(spaces.len() > 1);
+        libraries::name_unnamed(&self.state, &self.window);
     }
 
     fn update_sidebar_button(&self) {
@@ -651,7 +736,8 @@ impl Window {
         MODES.get(index as usize).map_or(Mode::Execute, |(_, _, mode)| *mode)
     }
 
-    fn refresh(&self) {
+    fn refresh(self: &Rc<Self>) {
+        self.refresh_spaces();
         self.refresh_actions();
         self.refresh_search();
     }
