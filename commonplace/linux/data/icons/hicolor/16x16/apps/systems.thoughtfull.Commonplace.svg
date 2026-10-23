@@ -1,0 +1,8 @@
+<!-- SPDX-License-Identifier: MPL-2.0-no-copyleft-exception -->
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+  <rect x="2" y="2" width="13" height="13" rx="1.5" fill="#63452c"/>
+  <rect x="3" y="2" width="11" height="12" rx="0.5" fill="#deddda"/>
+  <rect x="2" y="1" width="11" height="11" rx="1.5" fill="#986a44"/>
+  <rect x="5" y="5" width="5" height="1" fill="#f6f5f4"/>
+  <path d="M9 11h2v5l-1 -1l-1 1z" fill="#e01b24"/>
+</svg>

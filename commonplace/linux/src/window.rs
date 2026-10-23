@@ -332,6 +332,33 @@ impl Window {
         self.window.present();
     }
 
+    /// Closes the window, which hides it instead while the app runs in the tray.
+    pub fn close(&self) {
+        self.window.close();
+    }
+
+    pub fn set_hide_on_close(&self, hide: bool) {
+        self.window.set_hide_on_close(hide);
+    }
+
+    /// Hides the window if it has the focus on the current workspace, and otherwise shows it there.
+    pub fn toggle(&self) {
+        // Not every compositor reports a window on another workspace as suspended, but none
+        // leaves it focused, and a click on the tray doesn't take the focus from the window.
+        let focused = self
+            .window
+            .surface()
+            .and_downcast::<gdk::Toplevel>()
+            .is_some_and(|toplevel| toplevel.state().contains(gdk::ToplevelState::FOCUSED));
+        if self.window.is_visible() && focused {
+            self.window.close();
+            return;
+        }
+        // Compositors put a window that maps again on the current workspace.
+        self.window.set_visible(false);
+        self.window.present();
+    }
+
     pub fn connect_destroy(&self, f: impl Fn() + 'static) {
         self.window.connect_destroy(move |_| f());
     }

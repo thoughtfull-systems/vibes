@@ -60,6 +60,9 @@ The Linux app covers memos and actions:
   Capture saves into the library you pick, starting with the last one, and a note's sidebar moves it
   to another library, with its steps. The Libraries dialog adds, names, merges, and deletes
   libraries, and the names belong to the device. With one library, none of this shows.
+- Keep running in the system tray. Clicking the icon hides the window, or brings it to the current
+  workspace when it's hidden or on another one. Closing the window or pressing Ctrl+Q hides it, and
+  the icon's menu captures an action or a memo, or quits. Without a tray, Ctrl+Q quits.
 - Open notes from `commonplace:` links.
 - Print an action with the bodies of the projects it belongs to, outermost first, with
   `commonplace print URI`, to hand it to a coding agent as a prompt.
@@ -179,7 +182,7 @@ that a typical remapping produces for it, shown in the Emacs column.
 | Alt+Right or Forward      |              | Go forward again                         |
 | Escape                    | C-g          | Discard the capture                      |
 | Ctrl+F4                   | C-x k        | Close the window                         |
-| Ctrl+Q                    | C-x C-c      | Quit, or discard the capture             |
+| Ctrl+Q                    | C-x C-c      | Hide in the tray, or discard the capture |
 
 In a list item, some keys edit the list the way an outliner such as Workflowy does:
 

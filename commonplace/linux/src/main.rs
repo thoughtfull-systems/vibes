@@ -15,6 +15,7 @@ mod link_picker;
 mod note_page;
 mod rows;
 mod state;
+mod tray;
 mod window;
 
 use std::cell::RefCell;
@@ -78,7 +79,10 @@ Set $COMMONPLACE_APP_ID to run a separate copy beside the one already running.
 /// What the primary instance holds for the rest of its life.
 #[derive(Default)]
 struct App {
+    /// Keeps the app running without windows once its icon is in the tray.
+    hold: Option<gio::ApplicationHoldGuard>,
     state: Option<Result<Rc<State>, String>>,
+    tray_started: bool,
     window: Option<Rc<Window>>,
 }
 
@@ -129,22 +133,25 @@ fn main() -> glib::ExitCode {
                     .map_err(|error| error.to_string())
             };
             shared.borrow_mut().state = Some(state);
-            // Closing each window, unlike Application::quit, saves any pending edits.
             let quit = gio::ActionEntry::builder("quit")
-                .activate(|app: &adw::Application, _, _| {
-                    if let Some(window) = app.active_window().filter(capture::is_capture) {
-                        window.close();
-                        return;
-                    }
-                    // Quitting from the main window keeps whatever an open capture holds.
-                    for window in app.windows() {
-                        if capture::is_capture(&window) {
-                            let _ = window.activate_action("win.save", None);
-                        } else {
+                .activate(glib::clone!(
+                    #[strong]
+                    shared,
+                    move |app: &adw::Application, _, _| {
+                        if let Some(window) = app.active_window().filter(capture::is_capture) {
                             window.close();
+                            return;
+                        }
+                        let (window, in_tray) = {
+                            let shared = shared.borrow();
+                            (shared.window.clone(), shared.hold.is_some())
+                        };
+                        match window {
+                            Some(window) if in_tray => window.close(),
+                            _ => quit(app, &shared),
                         }
                     }
-                })
+                ))
                 .build();
             app.add_action_entries([quit]);
             // Keep Emacs keys free. Emacs users remap them system-wide into standard keys, such as
@@ -322,8 +329,77 @@ fn main_window(app: &adw::Application, state: &Rc<State>, shared: &Rc<RefCell<Ap
             shared.borrow_mut().window = None;
         }
     ));
+    window.set_hide_on_close(shared.borrow().hold.is_some());
     shared.borrow_mut().window = Some(window.clone());
+    if !std::mem::replace(&mut shared.borrow_mut().tray_started, true) {
+        start_tray(app, state, shared);
+    }
     window
+}
+
+/// Closes every window, which saves what each holds, and lets the app exit.
+fn quit(app: &adw::Application, shared: &Rc<RefCell<App>>) {
+    let (window, hold) = {
+        let mut shared = shared.borrow_mut();
+        (shared.window.clone(), shared.hold.take())
+    };
+    if let Some(window) = window {
+        window.set_hide_on_close(false);
+    }
+    // Closing each window, unlike Application::quit, saves any pending edits. Quitting keeps
+    // whatever an open capture holds.
+    for window in app.windows() {
+        if capture::is_capture(&window) {
+            let _ = window.activate_action("win.save", None);
+        } else {
+            window.close();
+        }
+    }
+    drop(hold);
+}
+
+/// Puts Commonplace's icon in the tray. Once a tray shows it, closing the main window hides it,
+/// and the app keeps running until the icon's menu quits it.
+fn start_tray(app: &adw::Application, state: &Rc<State>, shared: &Rc<RefCell<App>>) {
+    let Some(connection) = app.dbus_connection() else {
+        return;
+    };
+    let shown = glib::clone!(
+        #[weak]
+        app,
+        #[weak]
+        shared,
+        move || {
+            let mut shared = shared.borrow_mut();
+            if shared.hold.is_none() {
+                shared.hold = Some(app.hold());
+                if let Some(window) = &shared.window {
+                    window.set_hide_on_close(true);
+                }
+            }
+        }
+    );
+    let event = glib::clone!(
+        #[weak]
+        app,
+        #[weak]
+        shared,
+        #[strong]
+        state,
+        move |event| match event {
+            tray::Event::Activate => main_window(&app, &state, &shared).toggle(),
+            tray::Event::CaptureAction => {
+                capture::present(&app, state.clone(), true);
+            }
+            tray::Event::CaptureMemo => {
+                capture::present(&app, state.clone(), false);
+            }
+            tray::Event::Quit => quit(&app, &shared),
+        }
+    );
+    if let Err(error) = tray::start(&connection, shown, event) {
+        eprintln!("commonplace: couldn't put the icon in the tray: {error}");
+    }
 }
 
 fn library_dir() -> PathBuf {
