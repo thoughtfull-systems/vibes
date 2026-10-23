@@ -205,26 +205,18 @@ fn stamped_note_row(
     } else {
         String::new()
     };
-    let text = gtk::Box::builder().orientation(gtk::Orientation::Vertical).spacing(2).build();
-    text.append(&title);
-    for line in [summary, path].into_iter().filter(|line| !line.is_empty()) {
-        text.append(
-            &gtk::Label::builder()
-                .label(line)
-                .xalign(0.0)
-                .ellipsize(gtk::pango::EllipsizeMode::End)
-                .css_classes(["caption", "dimmed"])
-                .build(),
-        );
-    }
     let row = gtk::Box::builder()
         .spacing(8)
         .margin_top(6)
         .margin_bottom(6)
         .margin_start(16 * entry.depth as i32)
         .build();
+    // A checkbox has no baseline, so a grid row centers it on the title's line instead.
+    let text = gtk::Grid::builder().column_spacing(8).row_spacing(2).build();
+    let mut column = 0;
     if let Some(action) = &note.action {
-        row.append(&action_check(state, note.id, action));
+        text.attach(&action_check(state, note.id, action), 0, 0, 1, 1);
+        column = 1;
         if action.project {
             title.add_css_class("project-title");
         }
@@ -232,6 +224,16 @@ fn stamped_note_row(
             title.add_css_class("done");
             row.add_css_class("dimmed");
         }
+    }
+    text.attach(&title, column, 0, 1, 1);
+    for (line, index) in [summary, path].into_iter().filter(|line| !line.is_empty()).zip(1..) {
+        let label = gtk::Label::builder()
+            .label(line)
+            .xalign(0.0)
+            .ellipsize(gtk::pango::EllipsizeMode::End)
+            .css_classes(["caption", "dimmed"])
+            .build();
+        text.attach(&label, column, index, 1, 1);
     }
     match entry.dates.status {
         ActionStatus::DueSoon => {
@@ -255,6 +257,7 @@ fn action_check(state: &Rc<State>, id: NoteId, action: &Action) -> gtk::CheckBut
         .active(action.state == ActionState::Done)
         .valign(gtk::Align::Center)
         .tooltip_text("Done")
+        .css_classes(["row-check"])
         .build();
     let open = action.is_open();
     check.connect_toggled(glib::clone!(

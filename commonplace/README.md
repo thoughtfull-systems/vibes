@@ -167,22 +167,24 @@ you change it, because planning can take more than one sitting.
 
 ### Keys
 
-The shortcuts avoid Emacs key bindings, for people who remap those bindings system-wide, for example
-with [xremap]. Where an Emacs command has an equivalent in the app, its shortcut is the standard key
-that a typical remapping produces for it, shown in the Emacs column.
+People who use Emacs key bindings can remap them system-wide into standard keys, for example with
+[xremap]. Where an Emacs command has an equivalent in the app, its shortcut is the standard key that
+a typical remapping produces for it, shown in the Emacs column.
 
-| Keys                      | Emacs        | Action                                   |
-| ------------------------- | ------------ | ---------------------------------------- |
-| Ctrl+F or Ctrl+O          | C-s, C-x C-f | Search memos and actions                 |
-| Ctrl+S                    | C-x C-s      | Save now, or save and close a capture    |
-| Alt+\[, or type `[[`      |              | Link to a note                           |
-| Ctrl+Return or Ctrl+click |              | Follow a link, or add or tick a checkbox |
-| Escape                    | C-g          | Leave the note for the list              |
-| Alt+Left or Back          |              | Go back to the previous note or listing  |
-| Alt+Right or Forward      |              | Go forward again                         |
-| Escape                    | C-g          | Discard the capture                      |
-| Ctrl+F4                   | C-x k        | Close the window                         |
-| Ctrl+Q                    | C-x C-c      | Hide in the tray, or discard the capture |
+| Keys                 | Emacs   | Action                                                     |
+| -------------------- | ------- | ---------------------------------------------------------- |
+| Ctrl+F               | C-s     | Search memos and actions                                   |
+| Ctrl+S               | C-x C-s | Save now                                                   |
+| Ctrl+Return          |         | Save and close a capture, or add or tick a list's checkbox |
+| Alt+\[, or type `[[` |         | Link to a note                                             |
+| Ctrl+O               |         | Follow the link at the cursor                              |
+| Ctrl+click           |         | Follow a link, or add or tick a checkbox                   |
+| Escape               | C-g     | Leave the note for the list                                |
+| Alt+Left or Back     |         | Go back to the previous note or listing                    |
+| Alt+Right or Forward |         | Go forward again                                           |
+| Escape               | C-g     | Discard the capture                                        |
+| Ctrl+F4              | C-x k   | Close the window                                           |
+| Ctrl+Q               | C-x C-c | Hide in the tray, or discard the capture                   |
 
 In a list item, some keys edit the list the way an outliner such as Workflowy does:
 

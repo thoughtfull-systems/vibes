@@ -650,6 +650,16 @@ impl Window {
     }
 
     fn add_actions(self: &Rc<Self>) {
+        let follow_link = gio::SimpleAction::new("follow-link", None);
+        follow_link.connect_activate(glib::clone!(
+            #[weak(rename_to = this)]
+            self,
+            move |_, _| {
+                if this.showing("note") {
+                    this.note.follow_link_at_cursor();
+                }
+            }
+        ));
         let insert_link = gio::SimpleAction::new("insert-link", None);
         insert_link.connect_activate(glib::clone!(
             #[weak(rename_to = this)]
@@ -672,6 +682,16 @@ impl Window {
             self,
             move |_, _| _ = this.search.grab_focus()
         ));
+        let toggle_checkbox = gio::SimpleAction::new("toggle-checkbox", None);
+        toggle_checkbox.connect_activate(glib::clone!(
+            #[weak(rename_to = this)]
+            self,
+            move |_, _| {
+                if this.showing("note") {
+                    this.note.toggle_checkbox_at_cursor();
+                }
+            }
+        ));
         let toggle_space = gio::SimpleAction::new("toggle-space", Some(glib::VariantTy::INT32));
         toggle_space.connect_activate(glib::clone!(
             #[weak(rename_to = this)]
@@ -692,7 +712,9 @@ impl Window {
             self,
             move |_, _| libraries::present_dialog(&this.state, &this.window)
         ));
-        for action in [insert_link, libraries, save, search, toggle_space] {
+        for action in
+            [follow_link, insert_link, libraries, save, search, toggle_checkbox, toggle_space]
+        {
             self.window.add_action(&action);
         }
     }

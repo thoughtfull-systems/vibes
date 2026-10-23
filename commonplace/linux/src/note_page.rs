@@ -658,25 +658,6 @@ impl NotePage {
             }
         ));
         self.view.add_controller(click);
-        let keys = gtk::EventControllerKey::builder()
-            .propagation_phase(gtk::PropagationPhase::Capture)
-            .build();
-        keys.connect_key_pressed(glib::clone!(
-            #[weak(rename_to = this)]
-            self,
-            #[upgrade_or]
-            glib::Propagation::Proceed,
-            move |_, key, _, modifiers| {
-                let control_return = modifiers.contains(gdk::ModifierType::CONTROL_MASK)
-                    && matches!(key, gdk::Key::Return | gdk::Key::KP_Enter);
-                if !control_return {
-                    return glib::Propagation::Proceed;
-                }
-                this.activate_at(this.view.buffer().cursor_position());
-                glib::Propagation::Stop
-            }
-        ));
-        self.view.add_controller(keys);
         // In the bubble phase, an open popover, such as the link picker, uses Escape first.
         let escape = gtk::EventControllerKey::new();
         escape.connect_key_pressed(glib::clone!(
@@ -1015,6 +996,25 @@ impl NotePage {
 
     /// Follows the link at the character `offset`, or else toggles the checkbox of the list item
     /// there, adding one if it has none.
+    /// Follows the link at the cursor while the note's text has focus.
+    pub fn follow_link_at_cursor(&self) {
+        let buffer = self.view.buffer();
+        if self.view.has_focus()
+            && let Some(link) = editor::link_at(&buffer, buffer.cursor_position())
+        {
+            self.follow(&link);
+        }
+    }
+
+    /// Ticks the checkbox of the list item at the cursor, or adds one, while the note's text has
+    /// focus.
+    pub fn toggle_checkbox_at_cursor(&self) {
+        let buffer = self.view.buffer();
+        if self.view.has_focus() && self.view.is_editable() {
+            editor::toggle_checkbox_at(&buffer, buffer.cursor_position());
+        }
+    }
+
     fn activate_at(&self, offset: i32) {
         if let Some(link) = editor::link_at(&self.view.buffer(), offset) {
             self.follow(&link);

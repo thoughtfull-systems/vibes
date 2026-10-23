@@ -53,6 +53,7 @@ const SOURCE_ICONS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/data/icons");
 const CSS: &str = "
 textview.note-editor, .word-count { font-size: 1.25em; }
 .project-title { font-style: italic; }
+checkbutton.row-check { padding: 0; }
 .step-list:drop(active) { box-shadow: none; outline: none; }
 button.unpin {
   min-width: 0; min-height: 0; padding: 2px; -gtk-icon-size: 12px;
@@ -157,19 +158,22 @@ fn main() -> glib::ExitCode {
                 ))
                 .build();
             app.add_action_entries([quit]);
-            // Keep Emacs keys free. Emacs users remap them system-wide into standard keys, such as
-            // C-s into Control+F and C-x C-c into Control+Q, so shortcuts use either those standard
-            // keys or keys that Emacs leaves unbound.
-            let accels: [(&str, &[&str]); 5] = [
+            // Emacs users remap Emacs keys system-wide into standard keys, such as C-s into
+            // Control+F and C-x C-c into Control+Q. Where an Emacs command has an equivalent here,
+            // its shortcut is the standard key that the remapping produces.
+            let accels: [(&str, &[&str]); 7] = [
                 ("app.quit", &["<Control>q"]),
+                ("win.follow-link", &["<Control>o"]),
                 ("win.insert-link", &["<Alt>bracketleft"]),
                 ("win.save", &["<Control>s"]),
-                ("win.search", &["<Control>f", "<Control>o"]),
+                ("win.search", &["<Control>f"]),
+                ("win.toggle-checkbox", &["<Control>Return", "<Control>KP_Enter"]),
                 ("window.close", &["<Control>F4"]),
             ];
             for (action, accels) in accels {
                 app.set_accels_for_action(action, accels);
             }
+            capture::add_accels(app);
             for digit in 1..=9 {
                 app.set_accels_for_action(
                     &format!("win.toggle-space({digit})"),
@@ -353,7 +357,9 @@ fn quit(app: &adw::Application, shared: &Rc<RefCell<App>>) {
     // whatever an open capture holds.
     for window in app.windows() {
         if capture::is_capture(&window) {
-            let _ = window.activate_action("win.save", None);
+            if let Err(error) = capture::save(&window) {
+                eprintln!("commonplace: couldn’t save the capture: {error}");
+            }
         } else {
             window.close();
         }
