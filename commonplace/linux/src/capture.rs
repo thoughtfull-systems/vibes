@@ -40,26 +40,32 @@ pub fn save(window: &gtk::Window) -> Result<(), glib::BoolError> {
 pub fn present(app: &adw::Application, state: Rc<State>, task: bool) -> adw::ApplicationWindow {
     let view = editor::new_view();
     let scrolled = gtk::ScrolledWindow::builder().child(&view).build();
-    let discard = gtk::Button::builder().label("_Discard").use_underline(true).build();
+    let discard = gtk::Button::builder()
+        .label("_Discard")
+        .use_underline(true)
+        .tooltip_text("Discard (Escape)")
+        .build();
     let save = gtk::Button::builder()
         .label("_Save")
         .use_underline(true)
+        .tooltip_text("Save (Ctrl+Return)")
         .css_classes(["suggested-action"])
         .build();
     let kind = if task { "Action" } else { "Memo" };
     let header = adw::HeaderBar::builder()
-        .title_widget(&adw::WindowTitle::new(&format!("New {kind}"), ""))
         .show_start_title_buttons(false)
         .show_end_title_buttons(false)
         .build();
-    header.pack_start(&discard);
-    header.pack_end(&save);
+    let actions = gtk::ActionBar::new();
+    actions.pack_start(&discard);
+    actions.pack_end(&save);
     let toolbar = adw::ToolbarView::new();
     toolbar.add_top_bar(&header);
+    toolbar.add_bottom_bar(&actions);
     toolbar.set_content(Some(&scrolled));
     let space = Rc::new(RefCell::new(state.capture_space()));
     let spaces = state.spaces();
-    let bar = gtk::Box::builder().spacing(6).margin_start(6).margin_end(6).margin_bottom(6).build();
+    let bar = gtk::Box::builder().spacing(6).build();
     let mut buttons: Vec<gtk::ToggleButton> = Vec::new();
     for (index, choice) in spaces.iter().enumerate() {
         let button = gtk::ToggleButton::builder()
@@ -81,8 +87,13 @@ pub fn present(app: &adw::Application, state: Rc<State>, task: bool) -> adw::App
         bar.append(&button);
         buttons.push(button);
     }
+    let title = adw::WindowTitle::new(&format!("New {kind}"), "");
     if spaces.len() > 1 {
-        toolbar.add_top_bar(&bar);
+        header.pack_start(&bar);
+        header.pack_end(&title);
+        header.set_show_title(false);
+    } else {
+        header.set_title_widget(Some(&title));
     }
     let window = adw::ApplicationWindow::builder()
         .application(app)
