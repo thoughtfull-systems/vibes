@@ -12,9 +12,26 @@ use crate::state::State;
 /// The widget name that marks a capture window.
 const NAME: &str = "capture";
 
+/// The window action that saves a capture and closes its window.
+const SAVE_ACTION: &str = "capture";
+
 /// Whether `window` is a capture window.
 pub fn is_capture(window: &gtk::Window) -> bool {
     window.widget_name() == NAME
+}
+
+/// Gives the capture window's save its keys. They're the same as `win.toggle-checkbox`, which
+/// only the main window has.
+pub fn add_accels(app: &adw::Application) {
+    app.set_accels_for_action(
+        &format!("win.{SAVE_ACTION}"),
+        &["<Control>Return", "<Control>KP_Enter"],
+    );
+}
+
+/// Saves the text in the capture window `window` and closes it.
+pub fn save(window: &gtk::Window) -> Result<(), glib::BoolError> {
+    window.activate_action(&format!("win.{SAVE_ACTION}"), None)
 }
 
 /// Opens a small window that saves its text as a new memo, or a new task in the inbox if `task` is
@@ -132,7 +149,8 @@ pub fn present(app: &adw::Application, state: Rc<State>, task: bool) -> adw::App
         save_and_close,
         move |_| save_and_close()
     ));
-    let save_action = gio::SimpleAction::new("save", None);
+    // It isn't named `save`, because Control+S activates `win.save` and mustn't save a capture.
+    let save_action = gio::SimpleAction::new(SAVE_ACTION, None);
     save_action.connect_activate(glib::clone!(
         #[strong]
         save_and_close,
