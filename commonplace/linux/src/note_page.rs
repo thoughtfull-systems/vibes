@@ -44,7 +44,6 @@ pub struct NotePage {
     loading: Cell<bool>,
     on_leave: RefCell<Option<Handler>>,
     note_menu_button: gtk::MenuButton,
-    on_trashed: RefCell<Option<Handler>>,
     on_open: RefCell<Option<OpenHandler>>,
     outline_box: gtk::Box,
     outline_list: gtk::ListBox,
@@ -413,7 +412,6 @@ impl NotePage {
             loading: Cell::new(false),
             on_leave: RefCell::default(),
             note_menu_button,
-            on_trashed: RefCell::default(),
             on_open: RefCell::default(),
             outline_box,
             outline_list,
@@ -448,11 +446,6 @@ impl NotePage {
     /// to show.
     pub fn connect_leave(&self, f: impl Fn() + 'static) {
         *self.on_leave.borrow_mut() = Some(Rc::new(f));
-    }
-
-    /// Calls `f` when the user moves the open note to the trash.
-    pub fn connect_trashed(&self, f: impl Fn() + 'static) {
-        *self.on_trashed.borrow_mut() = Some(Rc::new(f));
     }
 
     /// The widths of the outline and the details, as they show now or last showed.
@@ -499,9 +492,12 @@ impl NotePage {
 
     /// Shows the open note again, after the library changes.
     pub fn refresh(self: &Rc<Self>) {
-        if self.current.get().is_none() {
+        let Some(id) = self.current.get() else {
             return;
-        }
+        };
+        let writable = self.writable(id);
+        self.view.set_editable(writable);
+        self.action_panel.set_editable(writable);
         self.refresh_space_row();
         self.refresh_backlinks();
         self.highlight_links();
@@ -577,7 +573,6 @@ impl NotePage {
             move |_| {
                 if let Some(id) = this.current.get() {
                     this.report(this.state.write(|library| library.restore(id)));
-                    this.show_note(Some(id));
                 }
             }
         ));
@@ -678,6 +673,10 @@ impl NotePage {
         self.widget.add_controller(escape);
     }
 
+    fn writable(&self, id: NoteId) -> bool {
+        !self.state.read(|library| library.is_in_trash(id) || library.is_read_only())
+    }
+
     fn show_note(self: &Rc<Self>, id: Option<NoteId>) {
         self.save_now();
         let note = id.and_then(|id| self.state.read(|library| library.note(id)));
@@ -687,8 +686,7 @@ impl NotePage {
             Some(note) => {
                 self.view.buffer().set_text(&note.body);
                 self.view.buffer().place_cursor(&self.view.buffer().start_iter());
-                let writable = !self.state.read(|l| l.is_in_trash(note.id) || l.is_read_only());
-                self.view.set_editable(writable);
+                self.view.set_editable(self.writable(note.id));
             }
             None => self.view.buffer().set_text(""),
         }
@@ -733,8 +731,7 @@ impl NotePage {
         let id = self.current.get();
         let spaces = self.state.spaces();
         let space = id.and_then(|id| self.state.read(|s| s.space_of(id).map(str::to_owned)));
-        let movable =
-            id.is_some_and(|id| !self.state.read(|s| s.is_in_trash(id) || s.is_read_only()));
+        let movable = id.is_some_and(|id| self.writable(id));
         let shown = id
             .zip(space)
             .filter(|_| movable && spaces.len() > 1)
@@ -894,11 +891,6 @@ impl NotePage {
         self.save_now();
         if let Err(error) = self.state.write(|library| library.trash(id)) {
             self.report_error(&error);
-            return;
-        }
-        let handler = self.on_trashed.borrow().clone();
-        if let Some(handler) = handler {
-            handler();
         }
     }
 

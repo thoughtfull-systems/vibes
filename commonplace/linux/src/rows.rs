@@ -221,7 +221,6 @@ fn stamped_note_row(
             title.add_css_class("project-title");
         }
         if action.state == ActionState::Done {
-            title.add_css_class("done");
             row.add_css_class("dimmed");
         }
     }
