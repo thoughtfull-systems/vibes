@@ -24,6 +24,16 @@ const DETAILS_MIN: i32 = 200;
 type Handler = Rc<dyn Fn()>;
 type OpenHandler = Rc<dyn Fn(NoteId)>;
 
+/// What the space buttons show. The buttons move the note they were built for, so a different
+/// note needs new ones.
+#[derive(Clone, PartialEq)]
+struct SpaceRow {
+    id: NoteId,
+    movable: bool,
+    space: String,
+    spaces: Vec<Space>,
+}
+
 /// The view that edits one note, with its outline beside it and its backlinks below.
 pub struct NotePage {
     backlink_ids: RefCell<Vec<NoteId>>,
@@ -58,9 +68,7 @@ pub struct NotePage {
     restore_button: gtk::Button,
     /// A button for each library, the one that holds the note on, to move the note to another.
     space_row: adw::WrapBox,
-    /// The note, the libraries, and the note's library that the space buttons last showed. The
-    /// buttons move the note they were built for, so a different note needs new ones.
-    space_row_shown: RefCell<Option<(NoteId, Vec<Space>, String)>>,
+    space_row_shown: RefCell<Option<SpaceRow>>,
     state: Rc<State>,
     toasts: adw::ToastOverlay,
     /// Offers to restore or delete a note in the trash.
@@ -497,11 +505,10 @@ impl NotePage {
         };
         let writable = self.writable(id);
         self.view.set_editable(writable);
-        self.action_panel.set_editable(writable);
         self.refresh_space_row();
         self.refresh_backlinks();
         self.highlight_links();
-        self.action_panel.refresh();
+        self.action_panel.refresh(writable);
         self.update_buttons();
         self.bottom.update();
     }
@@ -725,33 +732,38 @@ impl NotePage {
         self.note_menu_button.set_visible(note.is_some() && !in_trash);
     }
 
-    /// Shows a button for each library while there's more than one and the note can move, with
-    /// the note's own library on. Turning another on moves the note there.
+    /// Shows a button for each library while there's more than one and the libraries can change,
+    /// with the note's own library on. Turning another on moves the note there. A note in the
+    /// trash shows its library, but can't move.
     fn refresh_space_row(self: &Rc<Self>) {
         let id = self.current.get();
         let spaces = self.state.spaces();
         let space = id.and_then(|id| self.state.read(|s| s.space_of(id).map(str::to_owned)));
+        let read_only = self.state.read(|library| library.is_read_only());
         let movable = id.is_some_and(|id| self.writable(id));
         let shown = id
             .zip(space)
-            .filter(|_| movable && spaces.len() > 1)
-            .map(|(id, space)| (id, spaces, space));
+            .filter(|_| !read_only && spaces.len() > 1)
+            .map(|(id, space)| SpaceRow { id, movable, space, spaces });
         if *self.space_row_shown.borrow() == shown {
             return;
         }
         self.space_row_shown.replace(shown.clone());
         self.space_row.remove_all();
-        let Some((id, spaces, space)) = shown else {
+        let Some(SpaceRow { id, movable, space, spaces }) = shown else {
             self.space_row.set_visible(false);
             return;
         };
+        self.space_row.set_sensitive(movable);
         let mut buttons: Vec<gtk::ToggleButton> = Vec::new();
         for choice in spaces {
             let button = gtk::ToggleButton::builder()
                 .label(&choice.name)
                 .active(choice.key == space)
-                .tooltip_text(format!("Move to {}", choice.name))
                 .build();
+            if movable {
+                button.set_tooltip_text(Some(&format!("Move to {}", choice.name)));
+            }
             button.set_group(buttons.first());
             button.connect_toggled(glib::clone!(
                 #[weak(rename_to = this)]
