@@ -36,6 +36,7 @@ pub struct ActionPanel {
     /// A line over the steps list that shows where a dragged step would go between two steps.
     drop_line: gtk::Box,
     due: DateButton,
+    editable: Cell<bool>,
     /// Names the projects whose start or due dates apply, if they aren't the action's own.
     inherited: gtk::Label,
     /// Set while the panel changes its widgets itself, so their signals don't echo back.
@@ -70,11 +71,14 @@ pub struct ActionPanel {
     /// A step to scroll into view once the steps list is laid out again, because it's new.
     step_to_reveal: Cell<Option<NoteId>>,
     steps: gtk::ListBox,
+    /// The steps list, its header, and the entry for new steps, which an action that can't
+    /// change and has no steps leaves out.
+    steps_box: gtk::Box,
     steps_drag_scroll: Rc<DragScroll>,
     /// The action whose steps the list shows.
     steps_of: Cell<Option<NoteId>>,
     steps_scroll: gtk::ScrolledWindow,
-    /// The steps list and the entry for new steps.
+    /// The projects the action belongs to, and its steps.
     pub steps_section: gtk::Box,
     waiting_for: gtk::Entry,
     /// A pending save of the waiting-for text, which waits for a pause in typing.
@@ -358,7 +362,9 @@ impl ActionPanel {
         );
         crumbs.append(&move_button);
         steps_section.append(&crumbs);
-        steps_section.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+        let steps_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        steps_section.append(&steps_box);
+        steps_box.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
         let show_done = gtk::Switch::builder()
             .tooltip_text("Show the steps that are done")
             .valign(gtk::Align::Center)
@@ -376,7 +382,7 @@ impl ActionPanel {
         );
         steps_header.append(&show_done_label);
         steps_header.append(&show_done);
-        steps_section.append(&steps_header);
+        steps_box.append(&steps_header);
         let drop_line = gtk::Box::builder()
             .height_request(2)
             .valign(gtk::Align::Start)
@@ -396,8 +402,8 @@ impl ActionPanel {
             .max_content_height(240)
             .vexpand(true)
             .build();
-        steps_section.append(&steps_scroll);
-        steps_section.append(&step_entry);
+        steps_box.append(&steps_scroll);
+        steps_box.append(&step_entry);
 
         let panel = Rc::new_cyclic(|panel: &Weak<Self>| Self {
             current: Cell::new(None),
@@ -406,6 +412,7 @@ impl ActionPanel {
             archive_button,
             drop_line,
             due,
+            editable: Cell::new(false),
             inherited,
             loading: Cell::new(false),
             list,
@@ -429,6 +436,7 @@ impl ActionPanel {
             step_to_focus: Cell::new(None),
             step_to_reveal: Cell::new(None),
             steps,
+            steps_box,
             steps_drag_scroll: DragScroll::attach(
                 &steps_scroll,
                 DraggedStep::static_type(),
@@ -493,12 +501,17 @@ impl ActionPanel {
         )));
         self.loading.set(false);
         *self.lists.borrow_mut() = lists.into_iter().map(|(_, list)| list).collect();
-        self.refresh();
-        self.set_editable(editable);
+        self.refresh(editable);
     }
 
-    /// Lets the user change the action, or only look at it.
-    pub fn set_editable(&self, editable: bool) {
+    /// Shows the open action's fields and steps again, after the library changes, letting the
+    /// user change the action or only look at it.
+    pub fn refresh(self: &Rc<Self>, editable: bool) {
+        self.editable.set(editable);
+        self.show_current();
+    }
+
+    fn set_sensitive(&self, editable: bool) {
         self.widget.set_sensitive(editable);
         // The show done switch stays usable, since it only changes the view.
         for widget in [
@@ -511,8 +524,9 @@ impl ActionPanel {
         self.step_entry.set_visible(editable);
     }
 
-    /// Shows the open action's fields and steps again, after the library changes.
-    pub fn refresh(self: &Rc<Self>) {
+    fn show_current(self: &Rc<Self>) {
+        let editable = self.editable.get();
+        self.set_sensitive(editable);
         let note = self.current.get().and_then(|id| self.state.read(|library| library.note(id)));
         let Some((note, action)) =
             note.and_then(|note| note.action.clone().map(|action| (note, action)))
@@ -570,6 +584,7 @@ impl ActionPanel {
         });
         self.show_done.set_active(show_done);
         let mut steps = self.state.read(|library| library.action_subtree(note.id, today()));
+        self.steps_box.set_visible(editable || !steps.is_empty());
         self.show_done.set_visible(!steps.is_empty());
         self.show_done_label.set_visible(!steps.is_empty());
         if !show_done {
@@ -831,7 +846,7 @@ impl ActionPanel {
                 let Some(id) = panel.current.get() else { return };
                 if panel.state.read(|library| library.is_read_only()) {
                     panel.show_done_unsaved.borrow_mut().insert(id, show_done.is_active());
-                    panel.refresh();
+                    panel.show_current();
                     return;
                 }
                 let value = i64::from(show_done.is_active());
