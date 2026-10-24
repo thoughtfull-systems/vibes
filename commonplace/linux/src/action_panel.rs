@@ -1092,7 +1092,7 @@ impl ActionPanel {
                 self.widget,
                 move |choice| {
                     let parent = match choice {
-                        Choice::Note(parent, _) => Some(parent),
+                        Choice::Note(parent) => Some(parent),
                         Choice::TopLevel => None,
                         Choice::CreateAction(_) | Choice::CreateMemo(_) => return,
                     };

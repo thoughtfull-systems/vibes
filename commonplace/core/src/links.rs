@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0-no-copyleft-exception
 
+use std::collections::HashMap;
 use std::ops::Range;
 
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
@@ -66,13 +67,205 @@ pub fn parse_note_uri(uri: &str) -> Option<NoteId> {
 
 /// Formats the wikilink an editor inserts for a note.
 pub fn wikilink(id: NoteId, label: Option<&str>) -> String {
-    match label {
-        Some(label) => {
-            let label = label.replace("]]", " ").replace(['|', '\n', '\r'], " ");
-            format!("[[{id}|{}]]", label.trim())
+    format!("[[{id}{}]]", label_part(label))
+}
+
+/// The part of a wikilink after its target and before its closing brackets: a `|` and the label,
+/// escaped, or nothing.
+fn label_part(label: Option<&str>) -> String {
+    let Some(label) = label else {
+        return String::new();
+    };
+    let mut part = String::from("|");
+    for c in link_label(label).chars() {
+        if ESCAPABLE.contains(&c) {
+            part.push('\\');
         }
-        None => format!("[[{id}]]"),
+        part.push(c);
     }
+    part
+}
+
+/// Turns `text` into a wikilink's label, which can't hold a line break.
+pub fn link_label(text: &str) -> String {
+    text.replace(['\n', '\r'], " ").trim().to_owned()
+}
+
+/// The characters a backslash escapes inside a wikilink.
+const ESCAPABLE: [char; 3] = ['\\', ']', '|'];
+
+/// The byte offsets of the backslashes in `text` that escape the character after them.
+fn escapes(text: &str) -> Vec<usize> {
+    let mut found = Vec::new();
+    let mut chars = text.char_indices().peekable();
+    while let Some((i, c)) = chars.next() {
+        if c == '\\' && chars.next_if(|(_, next)| ESCAPABLE.contains(next)).is_some() {
+            found.push(i);
+        }
+    }
+    found
+}
+
+/// Finds the first `pattern` in `text` that doesn't start with an escaped character.
+fn find_unescaped(text: &str, pattern: &str) -> Option<usize> {
+    let mut i = 0;
+    while let Some(rest) = text.get(i..).filter(|rest| !rest.is_empty()) {
+        if rest.starts_with('\\') && rest[1..].starts_with(ESCAPABLE) {
+            i += 2;
+        } else if rest.starts_with(pattern) {
+            return Some(i);
+        } else {
+            i += rest.chars().next().map_or(1, char::len_utf8);
+        }
+    }
+    None
+}
+
+fn unescape(text: &str) -> String {
+    let escapes = escapes(text);
+    text.char_indices().filter(|(i, _)| !escapes.contains(i)).map(|(_, c)| c).collect()
+}
+
+/// The byte offset in `body` of the `|` that starts the label of `link`, a wikilink, if it has
+/// one.
+pub fn label_separator(body: &str, link: &Link) -> Option<usize> {
+    let inner = link.range.start + 2..link.range.end - 2;
+    find_unescaped(&body[inner.clone()], "|").map(|i| inner.start + i)
+}
+
+/// The byte offsets in `body` of the backslashes that escape characters inside `link`, a
+/// wikilink.
+pub(crate) fn wikilink_escapes(body: &str, link: &Link) -> Vec<usize> {
+    let inner = link.range.start + 2..link.range.end - 2;
+    escapes(&body[inner.clone()]).into_iter().map(|i| inner.start + i).collect()
+}
+
+/// Gives each wikilink to a note that has no label the title that `title` returns for the note,
+/// so the text shows the title.
+pub fn expand_links(text: &str, mut title: impl FnMut(NoteId) -> Option<String>) -> String {
+    replace_wikilinks(text, |link| {
+        let id = link.note.filter(|_| link.label.is_none())?;
+        let label = link_label(&title(id)?);
+        (!label.is_empty()).then(|| wikilink(id, Some(&label)))
+    })
+}
+
+/// Removes the label of each wikilink to a note whose label `is_title` accepts as a title the
+/// text showed for the note.
+pub fn collapse_links(text: &str, mut is_title: impl FnMut(NoteId, &str) -> bool) -> String {
+    replace_wikilinks(text, |link| {
+        let id = link.note?;
+        is_title(id, link.label.as_deref()?).then(|| wikilink(id, None))
+    })
+}
+
+/// The titles an editor fills into the links of the note it shows, as the links spec describes, so
+/// it can store the note without them. `title` arguments return a note's title, or `None` if it
+/// has none.
+#[derive(Debug, Default)]
+pub struct ShownTitles(HashMap<NoteId, Vec<String>>);
+
+impl ShownTitles {
+    /// The text to show for `body`, with each wikilink that has no label showing its note's title.
+    pub fn expand(
+        &mut self,
+        body: &str,
+        mut title: impl FnMut(NoteId) -> Option<String>,
+    ) -> String {
+        self.0.clear();
+        expand_links(body, |id| {
+            let title = shown_title(title(id))?;
+            self.remember(id, &title);
+            Some(title)
+        })
+    }
+
+    /// The text to store for the editor's `text`, without the titles the editor showed. A label
+    /// counts as a shown title if it's the note's current title or one the editor showed for it
+    /// since `expand`, so undoing an update to a title still stores the link without it.
+    pub fn collapse(&self, text: &str, mut title: impl FnMut(NoteId) -> Option<String>) -> String {
+        collapse_links(text, |id, label| {
+            shown_title(title(id)).as_deref() == Some(label)
+                || self.0.get(&id).is_some_and(|shown| shown.iter().any(|t| t == label))
+        })
+    }
+
+    /// The edits that bring the titles in `text` up to date: each byte range to replace, from the
+    /// end of a wikilink's target to its closing brackets, with its replacement. A wikilink
+    /// without a label gets its note's title, and one that shows an old title gets the current
+    /// one, or none if the note has lost its title. Custom labels stay.
+    pub fn updates(
+        &mut self,
+        text: &str,
+        mut title: impl FnMut(NoteId) -> Option<String>,
+    ) -> Vec<(Range<usize>, String)> {
+        let mut titles: HashMap<NoteId, Option<String>> = HashMap::new();
+        let mut updates = Vec::new();
+        if !text.contains("[[") {
+            return updates;
+        }
+        for link in parse_links(text).into_iter().filter(|link| link.syntax == LinkSyntax::Wiki) {
+            let Some(id) = link.note else { continue };
+            let current = titles.entry(id).or_insert_with(|| shown_title(title(id))).clone();
+            let stale = match link.label.as_deref() {
+                None => current.is_some(),
+                Some(label) => {
+                    current.as_deref() != Some(label)
+                        && self.0.get(&id).is_some_and(|shown| shown.iter().any(|t| t == label))
+                }
+            };
+            if !stale {
+                continue;
+            }
+            if let Some(current) = &current {
+                self.remember(id, current);
+            }
+            let inner_end = link.range.end - 2;
+            let label_start = label_separator(text, &link).unwrap_or(inner_end);
+            updates.push((label_start..inner_end, label_part(current.as_deref())));
+        }
+        updates
+    }
+
+    fn remember(&mut self, id: NoteId, title: &str) {
+        let shown = self.0.entry(id).or_default();
+        if !shown.iter().any(|t| t == title) {
+            shown.push(title.to_owned());
+        }
+    }
+}
+
+/// A title as a wikilink shows it, or `None` if nothing of it remains.
+fn shown_title(title: Option<String>) -> Option<String> {
+    title.map(|title| link_label(&title)).filter(|title| !title.is_empty())
+}
+
+/// Replaces each wikilink in `text` with its label, or else the title that `title` returns for its
+/// note, or else its target.
+pub fn plain_links(text: &str, mut title: impl FnMut(NoteId) -> Option<String>) -> String {
+    replace_wikilinks(text, |link| {
+        Some(match &link.label {
+            Some(label) => label.clone(),
+            None => link.note.and_then(&mut title).unwrap_or_else(|| link.target.clone()),
+        })
+    })
+}
+
+fn replace_wikilinks(text: &str, mut replace: impl FnMut(&Link) -> Option<String>) -> String {
+    if !text.contains("[[") {
+        return text.to_owned();
+    }
+    let mut result = String::with_capacity(text.len());
+    let mut rest_start = 0;
+    for link in parse_links(text).into_iter().filter(|link| link.syntax == LinkSyntax::Wiki) {
+        if let Some(replacement) = replace(&link) {
+            result.push_str(&text[rest_start..link.range.start]);
+            result.push_str(&replacement);
+            rest_start = link.range.end;
+        }
+    }
+    result.push_str(&text[rest_start..]);
+    result
 }
 
 /// Finds every wikilink, Markdown link, and bare web address in `body`, in order.
@@ -134,27 +327,27 @@ fn scan_wikilinks(body: &str, excluded: &[Range<usize>]) -> Vec<Link> {
             continue;
         }
         let inner_start = start + 2;
-        let Some(length) = body[inner_start..].find("]]") else {
+        let Some(length) = find_unescaped(&body[inner_start..], "]]") else {
             break;
         };
         let inner = &body[inner_start..inner_start + length];
         if inner.contains(['\n', '\r']) {
             continue;
         }
-        let (target, label) = match inner.split_once('|') {
-            Some((target, label)) => (target.trim(), Some(label.trim())),
-            None => (inner.trim(), None),
+        let (target, label) = match find_unescaped(inner, "|") {
+            Some(i) => (unescape(inner[..i].trim()), Some(unescape(inner[i + 1..].trim()))),
+            None => (unescape(inner.trim()), None),
         };
         if target.is_empty() {
             continue;
         }
         let end = inner_start + length + 2;
         links.push(Link {
-            label: label.filter(|label| !label.is_empty()).map(str::to_owned),
+            label: label.filter(|label| !label.is_empty()),
             note: target.parse().ok(),
             range: start..end,
             syntax: LinkSyntax::Wiki,
-            target: target.to_owned(),
+            target,
         });
         from = end;
     }
@@ -229,6 +422,22 @@ mod tests {
         assert_eq!(links[1].target, "other");
         assert_eq!(links[1].note, None);
         assert_eq!(links[1].label, None);
+    }
+
+    #[test]
+    fn parses_escapes() {
+        let labels = |body: &str| -> Vec<Option<String>> {
+            parse_links(body).into_iter().map(|link| link.label).collect()
+        };
+        assert_eq!(
+            labels(r"[[a|x\]]] [[b|C:\temp]] [[c|end\\]]"),
+            [Some("x]".to_owned()), Some(r"C:\temp".to_owned()), Some(r"end\".to_owned()),]
+        );
+        let body = r"[[a\|b|c\|d]]";
+        let link = &parse_links(body)[0];
+        assert_eq!((link.target.as_str(), link.label.as_deref()), ("a|b", Some("c|d")));
+        assert_eq!(label_separator(body, link), Some(6));
+        assert_eq!(wikilink_escapes(body, link), [3, 8]);
     }
 
     #[test]
@@ -310,8 +519,80 @@ mod tests {
     #[test]
     fn formats_wikilinks() {
         let id = NoteId::generate();
-        assert_eq!(wikilink(id, Some(" a|b]]c ")), format!("[[{id}|a b c]]"));
+        assert_eq!(wikilink(id, Some(" a|b]]c\\ ")), format!(r"[[{id}|a\|b\]\]c\\]]"));
+        assert_eq!(
+            parse_links(&wikilink(id, Some(" a|b]]c\\ ")))[0].label.as_deref(),
+            Some(r"a|b]]c\")
+        );
         assert_eq!(wikilink(id, None), format!("[[{id}]]"));
         assert_eq!(parse_links(&wikilink(id, Some("x]]y")))[0].note, Some(id));
+        let bracketed = wikilink(id, Some("Read [this]"));
+        assert_eq!(parse_links(&bracketed)[0].label.as_deref(), Some("Read [this]"));
+        assert_eq!(parse_links(&bracketed)[0].range.end, bracketed.len());
+    }
+
+    /// Applies `updates` to `text`, as an editor would.
+    fn apply(text: &str, updates: Vec<(Range<usize>, String)>) -> String {
+        let mut text = text.to_owned();
+        for (range, replacement) in updates.into_iter().rev() {
+            text.replace_range(range, &replacement);
+        }
+        text
+    }
+
+    #[test]
+    fn tracks_shown_titles() {
+        let (a, b, empty) = (NoteId::generate(), NoteId::generate(), NoteId::generate());
+        let mut titles = HashMap::from([(a, "Blah".to_owned()), (b, "Read [this]".to_owned())]);
+        let body = format!("[[{a}]] [[{a}|custom]] [[{b}]] [[{empty}]]");
+        let mut shown = ShownTitles::default();
+        let text = shown.expand(&body, |id| titles.get(&id).cloned());
+        assert_eq!(text, format!("[[{a}|Blah]] [[{a}|custom]] [[{b}|Read [this\\]]] [[{empty}]]"));
+        assert_eq!(shown.collapse(&text, |id| titles.get(&id).cloned()), body);
+
+        titles.insert(a, "Yadda".to_owned());
+        titles.insert(empty, "Now titled".to_owned());
+        let lookup = |id| titles.get(&id).cloned();
+        let updated = apply(&text, shown.updates(&text, lookup));
+        assert_eq!(
+            updated,
+            format!("[[{a}|Yadda]] [[{a}|custom]] [[{b}|Read [this\\]]] [[{empty}|Now titled]]")
+        );
+        assert!(shown.updates(&updated, lookup).is_empty());
+        assert_eq!(shown.collapse(&updated, lookup), body);
+        // Undoing the update brings back the old title, which still isn't a custom label.
+        assert_eq!(shown.collapse(&text, lookup), body);
+
+        titles.remove(&a);
+        let lookup = |id| titles.get(&id).cloned();
+        let untitled = apply(&updated, shown.updates(&updated, lookup));
+        assert!(untitled.starts_with(&format!("[[{a}]] [[{a}|custom]]")));
+    }
+
+    #[test]
+    fn expands_and_collapses_links() {
+        let (a, b, gone) = (NoteId::generate(), NoteId::generate(), NoteId::generate());
+        let title = |id| (id == a).then(|| "Blah | blah".to_owned());
+        let body = format!("[[{a}]] [[{a}|custom]] [[{gone}]] [[other]] `[[{a}]]`");
+        let expanded = expand_links(&body, title);
+        assert_eq!(
+            expanded,
+            format!(r"[[{a}|Blah \| blah]] [[{a}|custom]] [[{gone}]] [[other]] `[[{a}]]`")
+        );
+        let shown = link_label("Blah | blah");
+        assert_eq!(collapse_links(&expanded, |id, label| id == a && label == shown), body);
+        let typed = format!(r"[[{a}|Blah \| blah]] and [[{b}|Blah \| blah]]");
+        assert_eq!(
+            collapse_links(&typed, |id, label| id == a && label == shown),
+            format!(r"[[{a}]] and [[{b}|Blah \| blah]]")
+        );
+    }
+
+    #[test]
+    fn writes_links_as_plain_text() {
+        let (a, gone) = (NoteId::generate(), NoteId::generate());
+        let title = |id| (id == a).then(|| "Title".to_owned());
+        let text = format!("See [[{a}]], [[{a}|this]], [[{gone}]], and [[other]]");
+        assert_eq!(plain_links(&text, title), format!("See Title, this, {gone}, and other"));
     }
 }

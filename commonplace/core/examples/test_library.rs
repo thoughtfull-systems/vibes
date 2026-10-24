@@ -96,6 +96,17 @@ fn memos(library: &mut Library) -> Result<NoteId, Error> {
         "A long memo to scroll\n\n# Outline\n\n## One\n\nThe outline sidebar lists each \
           heading.\n\n## Two\n\nClick one to jump to it.\n\n## Three\n\nThe end.\n",
     )?;
+    let deleted = library.create_memo("Old packing ideas\n\nDeleted for good.\n")?;
+    library.trash(deleted)?;
+    library.delete(deleted)?;
+    let bracketed = library.create_memo("Budget [draft] | v2\n\nA title with link syntax.\n")?;
+    library.create_memo(&format!(
+        "Links to {}\n\nThe title shows the linked note's title. {} still names the note it led \
+          to, deleted for good. {} shows its brackets and bar.\n",
+        wikilink(meeting, None),
+        wikilink(deleted, None),
+        wikilink(bracketed, None)
+    ))?;
     library.create_memo("")?;
     let trashed = library.create_memo("A trashed memo\n\nRestore it or delete it for good.\n")?;
     library.trash(trashed)?;

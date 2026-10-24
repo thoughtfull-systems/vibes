@@ -1501,6 +1501,7 @@ mod tests {
         library.delete(project).unwrap();
         assert!(library.note(step).is_none());
         assert!(library.hierarchy().nodes.is_empty());
+        assert_eq!(library.deleted_label(step).as_deref(), Some("Step"));
     }
 
     #[test]

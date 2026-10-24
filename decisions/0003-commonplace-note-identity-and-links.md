@@ -1,5 +1,7 @@
 # 0003 Commonplace note identity and links
 
+[Decision 0008](0008-commonplace-link-labels.md) revises how links carry labels.
+
 ## Context
 
 Commonplace notes link to each other, and other software links to them: a browser bookmark, a
@@ -31,7 +33,7 @@ gets reused. The [links specification](../commonplace/spec/links.md) defines the
 Inside note text, link with wikilinks: `[[target]]` or `[[target|label]]`. A target is a note
 identifier. Later specs may add other targets, such as titles or zettel addresses, with their
 resolution rules. Typing `[[` in an editor opens a search, and picking a note inserts a link to its
-identifier with the note's label. Standard Markdown links with a `commonplace:` URI work too.
+identifier. Standard Markdown links with a `commonplace:` URI work too.
 
 Outside the app, refer to a note with the uniform resource identifier (URI) `commonplace:note/<id>`.
 Each implementation registers itself as the handler for the `commonplace` scheme. An instance of the
@@ -43,7 +45,7 @@ scheme, because browsers only let web pages handle schemes that start with `web+
 - **Offline creation:** version 7 UUIDs combine a timestamp with 74 random bits, so two devices
   won't generate the same one.
 - **Readable text:** Base32 makes the identifier 26 characters instead of 36, without hyphens, and
-  the label carries the meaning for a human reader.
+  the app shows each link by its label or its target's title.
 - **Quick to write:** the editor's search turns `[[` and a few letters into a finished link.
 - **Reachable from outside:** a custom scheme works on Linux through the desktop entry, on Android
   through an intent filter, and in a browser through the `web+` scheme. A web instance also gives

@@ -20,7 +20,7 @@ its own, and syncs on its own.
 Each running instance of an implementation uses a fresh, random Loro peer identifier, as Loro does
 by default. Two instances that write at the same time must never share one.
 
-The document has four root containers.
+The document has five root containers.
 
 | Name       | Type | Contents                                                   |
 | ---------- | ---- | ---------------------------------------------------------- |
@@ -28,6 +28,7 @@ The document has four root containers.
 | `notes`    | Map  | Every note, keyed by its identifier.                       |
 | `actions`  | Tree | The hierarchy of actions, as the [tree](#actions) defines. |
 | `settings` | Map  | Preferences that follow the owner across devices.          |
+| `deleted`  | Map  | A [tombstone](#deleted) for each note deleted for good.    |
 
 ### `meta`
 
@@ -153,6 +154,19 @@ app keeps the height, in pixels, that the owner dragged the panel below the note
 it, the panel fits what it shows. It keeps whether an action's list of steps shows its done steps
 under `linux.steps.show_done`: 1 to show them, or 0 to hide them. Without it, the list hides them.
 
+### `deleted`
+
+Each key in `deleted` is the identifier of a note deleted for good, and each value is a map with
+these keys. Links to the note show the label the tombstone keeps, as the
+[links spec](links.md#labels) describes.
+
+| Key       | Type    | Value                                                         |
+| --------- | ------- | ------------------------------------------------------------- |
+| `deleted` | Integer | When the owner deleted the note, as a timestamp.              |
+| `label`   | String  | The note's [label](#labels) then. Absent if it had none then. |
+
+Readers ignore a tombstone for a note that `notes` still holds.
+
 ## Rules for writers
 
 - **Create a note in one commit.** Insert the note's map with `body`, `created`, `kind`, and
@@ -172,6 +186,9 @@ under `linux.steps.show_done`: 1 to show them, or 0 to hide them. Without it, th
   create its node, all in one commit.
 - **Delete an action with its subtree.** To delete an action, delete its node and its subtree's
   nodes and notes.
+- **Leave a tombstone.** In the commit that deletes a note for good, write a tombstone for it, and
+  for each action in its subtree. Moving a note to another library leaves none, because the note
+  still exists.
 - **Promote parents.** When an action gets its first child, set its `project` to `true`.
 - **Close and reopen.** Set `closed` when `state` becomes `done`, and remove it when `state` becomes
   `open`.

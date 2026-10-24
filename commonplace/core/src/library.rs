@@ -18,7 +18,9 @@ const VERSION: i64 = 2;
 
 const BODY: &str = "body";
 const CREATED: &str = "created";
+const DELETED: &str = "deleted";
 const KIND: &str = "kind";
+const LABEL: &str = "label";
 pub(crate) const MODIFIED: &str = "modified";
 const TRASHED: &str = "trashed";
 
@@ -201,12 +203,39 @@ impl Library {
         if !self.is_in_trash(id) {
             return Err(Error::NotTrashed(id));
         }
+        let mut doomed = vec![id];
+        if note.action.is_some() {
+            doomed.extend(self.hierarchy().descendants(id));
+        }
+        let now = now();
+        for &note in &doomed {
+            let label = self.note(note).and_then(|note| note.label());
+            let tombstone = self
+                .doc
+                .get_map(DELETED)
+                .insert_container(&note.to_string(), LoroMap::new())
+                .map_err(loro_error)?;
+            tombstone.insert(DELETED, now).map_err(loro_error)?;
+            if let Some(label) = label {
+                tombstone.insert(LABEL, label).map_err(loro_error)?;
+            }
+        }
         if note.action.is_some() {
             self.delete_action_subtree(id)?;
         } else {
             self.notes_map().delete(&id.to_string()).map_err(loro_error)?;
         }
         self.commit()
+    }
+
+    /// The label a note had when it was deleted for good, so links to it can still name it.
+    pub fn deleted_label(&self, id: NoteId) -> Option<String> {
+        let LoroValue::Map(tombstone) =
+            self.doc.get_map(DELETED).get(&id.to_string())?.get_deep_value()
+        else {
+            return None;
+        };
+        tombstone.get(LABEL).and_then(|label| string(label.clone()))
     }
 
     /// Notes outside the trash whose bodies contain every word of `query`, ignoring case.
@@ -499,10 +528,12 @@ mod tests {
         assert!(library.note(id).unwrap().is_trashed());
         library.restore(id).unwrap();
         assert!(!library.note(id).unwrap().is_trashed());
+        assert_eq!(library.deleted_label(id), None);
         library.trash(id).unwrap();
         library.delete(id).unwrap();
         assert_eq!(library.note(id), None);
         assert!(library.notes().is_empty());
+        assert_eq!(library.deleted_label(id).as_deref(), Some("x"));
     }
 
     #[test]

@@ -18,7 +18,7 @@ pub enum Choice {
     CreateAction(String),
     /// A new memo with this text.
     CreateMemo(String),
-    Note(NoteId, Option<String>),
+    Note(NoteId),
     /// No parent: the top level of the action hierarchy.
     TopLevel,
 }
@@ -167,7 +167,7 @@ impl LinkPicker {
                 .filter(|note| !exclude.contains(&note.id))
                 .filter(|note| purpose == Purpose::Link || note.action.is_some())
                 .take(MAX_RESULTS)
-                .map(|note| (Choice::Note(note.id, note.label()), display_label(&note)))
+                .map(|note| (Choice::Note(note.id), display_label(library, &note)))
                 .collect()
         });
         let mut choices = Vec::new();

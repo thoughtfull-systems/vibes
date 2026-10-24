@@ -4,8 +4,9 @@ use std::ops::Range;
 
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 
+use crate::links::wikilink_escapes;
 use crate::lists::Item as ListItem;
-use crate::{LinkSyntax, parse_links};
+use crate::{LinkSyntax, label_separator, parse_links, plain_links};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Style {
@@ -149,8 +150,12 @@ pub fn spans(body: &str) -> Vec<Span> {
     spans.extend(list_prefixes(body));
     for link in parse_links(body).into_iter().filter(|link| link.syntax == LinkSyntax::Wiki) {
         let Range { start, end } = link.range;
-        let label_start = body[start + 2..end - 2].find('|').map_or(start + 2, |i| start + 3 + i);
-        let syntax = vec![start..label_start, end - 2..end];
+        let label_start = label_separator(body, &link).map_or(start + 2, |i| i + 1);
+        let escapes = wikilink_escapes(body, &link).into_iter().filter(|&i| i >= label_start);
+        let syntax: Vec<Range<usize>> = std::iter::once(start..label_start)
+            .chain(escapes.map(|i| i..i + 1))
+            .chain(std::iter::once(end - 2..end))
+            .collect();
         spans.push(span(body, start..end, Style::Link, syntax));
     }
     spans.sort_by_key(|span| span.range.start);
@@ -388,7 +393,7 @@ pub fn outline(body: &str) -> Vec<Heading> {
                 if level == 2 && is_single_dash_underline(body, &range) {
                     continue;
                 }
-                let text = without_wikilinks(&raw).trim().to_owned();
+                let text = plain_links(&raw, |_| None).trim().to_owned();
                 if !text.is_empty() {
                     let range = span(body, range, Style::Heading(level), Vec::new()).range;
                     headings.push(Heading { level, range, text });
@@ -398,19 +403,6 @@ pub fn outline(body: &str) -> Vec<Heading> {
         }
     }
     headings
-}
-
-/// Replaces each wikilink in `text` with its label, or its target if it has none.
-fn without_wikilinks(text: &str) -> String {
-    let mut plain = String::new();
-    let mut rest_start = 0;
-    for link in parse_links(text).into_iter().filter(|link| link.syntax == LinkSyntax::Wiki) {
-        plain.push_str(&text[rest_start..link.range.start]);
-        plain.push_str(link.label.as_deref().unwrap_or(&link.target));
-        rest_start = link.range.end;
-    }
-    plain.push_str(&text[rest_start..]);
-    plain
 }
 
 /// A fenced code block that names its language, such as ```` ```rust ````.
@@ -675,6 +667,10 @@ mod tests {
         let without = format!("[[{id}]]");
         assert_eq!(hidden(&with_label), [(Style::Link, vec![&*format!("[[{id}|"), "]]"])]);
         assert_eq!(hidden(&without), [(Style::Link, vec!["[[", "]]"])]);
+        let escaped = format!(r"[[{id}|Read [this\] \| that]]");
+        assert_eq!(hidden(&escaped), [(Style::Link, vec![&*format!("[[{id}|"), r"\", r"\", "]]"])]);
+        let pieces: String = inline_pieces(&escaped).into_iter().map(|piece| piece.text).collect();
+        assert_eq!(pieces, "Read [this] | that");
     }
 
     #[test]
