@@ -5,7 +5,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use adw::prelude::*;
-use commonplace_core::{Error, Link, Note, NoteId, label, note_uri, outline, wikilink, word_count};
+use commonplace_core::{Error, Link, Note, NoteId, note_uri, outline, wikilink, word_count};
 use gtk::{gdk, gio, glib};
 
 use crate::action_panel::ActionPanel;
@@ -50,6 +50,7 @@ pub struct NotePage {
     details_restore: Rc<Cell<Option<i32>>>,
     /// The details' width when they last showed.
     details_width: Rc<Cell<i32>>,
+    link_titles: editor::LinkTitles,
     /// Set while the view changes widgets itself, so their change signals don't echo back.
     loading: Cell<bool>,
     on_leave: RefCell<Option<Handler>>,
@@ -417,6 +418,7 @@ impl NotePage {
             details,
             details_restore,
             details_width,
+            link_titles: editor::LinkTitles::default(),
             loading: Cell::new(false),
             on_leave: RefCell::default(),
             note_menu_button,
@@ -505,6 +507,9 @@ impl NotePage {
         };
         let writable = self.writable(id);
         self.view.set_editable(writable);
+        self.loading.set(true);
+        self.state.read(|spaces| self.link_titles.update(&self.view.buffer(), spaces));
+        self.loading.set(false);
         self.refresh_space_row();
         self.refresh_backlinks();
         self.highlight_links();
@@ -691,7 +696,8 @@ impl NotePage {
         self.loading.set(true);
         match &note {
             Some(note) => {
-                self.view.buffer().set_text(&note.body);
+                let text = self.state.read(|spaces| self.link_titles.expand(spaces, &note.body));
+                self.view.buffer().set_text(&text);
                 self.view.buffer().place_cursor(&self.view.buffer().start_iter());
                 self.view.set_editable(self.writable(note.id));
             }
@@ -714,7 +720,9 @@ impl NotePage {
     fn update_buttons(&self) {
         let note = self.current.get().and_then(|id| self.state.read(|library| library.note(id)));
         if let Some(note) = note.as_ref().filter(|_| self.widget.is_child_visible()) {
-            self.window.set_title(Some(&crate::window_title(&display_label(note))));
+            self.window.set_title(Some(&crate::window_title(
+                &self.state.read(|spaces| display_label(spaces, note)),
+            )));
         }
         let in_trash =
             note.as_ref().is_some_and(|note| self.state.read(|l| l.is_in_trash(note.id)));
@@ -879,7 +887,8 @@ impl NotePage {
         if !self.view.is_editable() {
             return;
         }
-        let body = editor::text(&self.view.buffer());
+        let text = editor::text(&self.view.buffer());
+        let body = self.state.read(|spaces| self.link_titles.collapse(spaces, &text));
         let Some(note) = self.state.read(|library| library.note(id)) else {
             return;
         };
@@ -960,8 +969,8 @@ impl NotePage {
     }
 
     fn put_link(&self, choice: Choice, after_brackets: bool, selection: Option<String>) {
-        let (id, note_label) = match choice {
-            Choice::Note(id, label) => (id, label),
+        let id = match choice {
+            Choice::Note(id) => id,
             Choice::CreateAction(ref text) | Choice::CreateMemo(ref text) => {
                 let action = matches!(choice, Choice::CreateAction(_));
                 let Some(space) = self
@@ -979,7 +988,7 @@ impl NotePage {
                     }
                 });
                 match created {
-                    Ok(id) => (id, label(text)),
+                    Ok(id) => id,
                     Err(error) => {
                         self.report_error(&error);
                         return;
@@ -988,7 +997,9 @@ impl NotePage {
             }
             Choice::TopLevel => return,
         };
-        let link = wikilink(id, selection.as_deref().or(note_label.as_deref()));
+        // Saving stores the link without a label unless the selection differs from the title.
+        let title = self.state.read(|spaces| spaces.link_title(id));
+        let link = wikilink(id, selection.as_deref().or(title.as_deref()));
         let buffer = self.view.buffer();
         if after_brackets {
             buffer.insert_at_cursor(&link[2..]);

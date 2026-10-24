@@ -1,8 +1,11 @@
 # Links
 
-Version 1. This spec defines how Commonplace identifies notes and how links refer to them, inside
+Version 2. This spec defines how Commonplace identifies notes and how links refer to them, inside
 note text and from outside the app.
 [Decision 0003](../../decisions/0003-commonplace-note-identity-and-links.md) explains the choices.
+
+Version 1 had no escapes inside wikilinks. Version 2 adds them, so a label can hold any character
+but a line break.
 
 ## Note identifiers
 
@@ -36,10 +39,15 @@ A wikilink is a link written in note text with double square brackets:
 [[target|label]]
 ```
 
-- The **target** is the text between `[[` and the first `|` or `]]`.
-- The **label**, if present, is the text between the first `|` and `]]`.
-- Implementations remove white space from both ends of the target and the label.
-- Neither part may contain a line break or `]]`. A wikilink ends at the first `]]` after its `[[`.
+- Inside the brackets, a backslash escapes a backslash, a `]`, or a `|`: `\\`, `\]`, and `\|` stand
+  for the character alone, and don't count as syntax. A backslash before any other character is a
+  backslash.
+- The **target** is the text between `[[` and the first `|` or `]]` that a backslash doesn't escape.
+- The **label**, if present, is the text between that `|` and the `]]`.
+- Implementations remove white space from both ends of the target and the label, and then remove the
+  escaping backslashes.
+- Neither part may contain a line break. A wikilink ends at the first `]]` after its `[[` whose
+  first `]` isn't escaped.
 - A wikilink isn't recognized inside a code span, a fenced or indented code block, or an HTML block,
   or when a backslash escapes its first `[`.
 - An empty target makes the text not a wikilink.
@@ -49,12 +57,29 @@ in the library, including one in the trash, is a broken link. Implementations ke
 and show it as broken. Later versions may define other targets, such as titles, aliases, or zettel
 addresses, and how they resolve.
 
-An implementation shows a wikilink by its label, or by the target note's [label] if the wikilink has
-none.
+### Labels
 
-When an editor inserts a wikilink for the user, it writes the target note's identifier and the
-note's current label: `[[<id>|<label>]]`. It leaves out the label if the note has none. It replaces
-any `]]`, `|`, or line break in the label with a space.
+An implementation shows a wikilink by its label. If the wikilink has none, it shows the target
+note's [label], or for a note deleted for good, the label its [tombstone] keeps. If the target's
+label holds wikilinks, it shows each of them by its label, or else by its own target's label with
+any wikilinks in that label shown by their labels or targets, so labels that link to each other
+can't loop. If no label applies, it shows the target.
+
+A label that a wikilink stores is one the user chose. When an editor inserts a wikilink for the
+user, it stores the target note's identifier alone: `[[<id>]]`. If the user selected text first, it
+stores that text as the label: `[[<id>|<text>]]`. It replaces any line break in a label with a
+space, and escapes each backslash, `]`, and `|`.
+
+An editor that shows a note's raw text may fill in labels so the text shows titles, as long as it
+stores the text without them:
+
+- When it loads a note, it gives each wikilink without a label its target's label, as described
+  earlier, and remembers each label it gives each target.
+- When it saves, it removes each label that equals its target's current label or a label it gave
+  that target while the note was open.
+- When a target's label changes while the note is open, it replaces each label it gave that target
+  with the new one, gives a label to each wikilink without one whose target gained a label, and
+  remembers the labels it gives.
 
 ## Uniform resource identifiers
 
@@ -81,3 +106,4 @@ identifier. B's backlinks are all the notes that link to it, except notes in the
 [crockford]: https://www.crockford.com/base32.html
 [label]: library-format.md#labels
 [rfc9562]: https://www.rfc-editor.org/rfc/rfc9562
+[tombstone]: library-format.md#deleted

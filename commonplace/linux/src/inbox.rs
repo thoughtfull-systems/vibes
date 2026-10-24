@@ -27,6 +27,7 @@ pub struct InboxView {
     edited: Cell<bool>,
     editor: sourceview5::View,
     empty: adw::StatusPage,
+    link_titles: editor::LinkTitles,
     /// Set while the view changes widgets itself, so their change signals don't echo back.
     loading: Cell<bool>,
     path: gtk::Label,
@@ -121,6 +122,7 @@ impl InboxView {
             edited: Cell::new(false),
             editor,
             empty,
+            link_titles: editor::LinkTitles::default(),
             loading: Cell::new(false),
             path,
             pending_save: RefCell::default(),
@@ -353,10 +355,14 @@ impl InboxView {
         if self.current.get() != Some(id) {
             self.save_now();
             self.current.set(Some(id));
-            self.editor.buffer().set_text(&note.body);
+            let text = self.state.read(|spaces| self.link_titles.expand(spaces, &note.body));
+            self.editor.buffer().set_text(&text);
             self.editor.buffer().place_cursor(&self.editor.buffer().start_iter());
-        } else if !self.edited.get() && editor::text(&self.editor.buffer()) != note.body {
-            self.editor.buffer().set_text(&note.body);
+        } else if !self.edited.get() && self.stored_text() != note.body {
+            let text = self.state.read(|spaces| self.link_titles.expand(spaces, &note.body));
+            self.editor.buffer().set_text(&text);
+        } else {
+            self.state.read(|spaces| self.link_titles.update(&self.editor.buffer(), spaces));
         }
         self.project.set_active(action.project);
         self.loading.set(false);
@@ -421,7 +427,7 @@ impl InboxView {
                 self,
                 move |choice| {
                     let parent = match choice {
-                        Choice::Note(parent, _) => Some(parent),
+                        Choice::Note(parent) => Some(parent),
                         Choice::TopLevel => None,
                         Choice::CreateAction(_) | Choice::CreateMemo(_) => return,
                     };
@@ -462,12 +468,18 @@ impl InboxView {
         let Some(id) = self.current.get().filter(|_| self.edited.replace(false)) else {
             return;
         };
-        let body = editor::text(&self.editor.buffer());
+        let body = self.stored_text();
         let unchanged =
             self.state.read(|library| library.note(id)).is_none_or(|note| note.body == body);
         if !unchanged {
             self.report(self.state.write(|library| library.set_body(id, &body)));
         }
+    }
+
+    /// The editor's text as the note stores it, without the titles it shows in links.
+    fn stored_text(&self) -> String {
+        let text = editor::text(&self.editor.buffer());
+        self.state.read(|spaces| self.link_titles.collapse(spaces, &text))
     }
 
     fn report(&self, result: Result<(), Error>) {

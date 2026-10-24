@@ -7,7 +7,8 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use commonplace_core::{
-    Link, ListKey, Span, Style, list_edit, parse_links, spans, toggle_checkbox,
+    Link, LinkSyntax, ListKey, ShownTitles, Spaces, Span, Style, label_separator, list_edit,
+    parse_links, spans, toggle_checkbox,
 };
 use gtk::{gdk, glib, pango};
 
@@ -511,11 +512,10 @@ pub fn highlight_links(buffer: &gtk::TextBuffer, exists: impl Fn(&Link) -> bool)
         let range = char_range(&body, link.range.clone());
         let name = if exists(&link) { LINK } else { BROKEN };
         apply(buffer, name, range.clone());
-        if link.label.is_some() {
-            let target_end = body[link.range.clone()].find('|').map(|i| link.range.start + i + 1);
-            if let Some(target_end) = target_end {
-                apply(buffer, TARGET, char_range(&body, link.range.start..target_end));
-            }
+        if link.syntax == LinkSyntax::Wiki
+            && let Some(separator) = label_separator(&body, &link)
+        {
+            apply(buffer, TARGET, char_range(&body, link.range.start..separator + 1));
         }
     }
 }
@@ -548,6 +548,47 @@ pub fn link_at(buffer: &gtk::TextBuffer, offset: i32) -> Option<Link> {
     parse_links(&body)
         .into_iter()
         .find(|link| char_range(&body, link.range.clone()).contains(&offset))
+}
+
+/// The titles an editor fills into the links of the note it shows, from the open libraries.
+#[derive(Default)]
+pub struct LinkTitles(RefCell<ShownTitles>);
+
+impl LinkTitles {
+    /// The text to show for `body`, with each link that has no label showing its note's title.
+    pub fn expand(&self, spaces: &Spaces, body: &str) -> String {
+        self.0.borrow_mut().expand(body, |id| spaces.link_title(id))
+    }
+
+    /// The text to store for the editor's `text`, without the titles it shows.
+    pub fn collapse(&self, spaces: &Spaces, text: &str) -> String {
+        self.0.borrow().collapse(text, |id| spaces.link_title(id))
+    }
+
+    /// Shows the current title in each link whose note's title changed, and in each link without
+    /// a label whose note has gained one, as a single undoable step.
+    pub fn update(&self, buffer: &gtk::TextBuffer, spaces: &Spaces) {
+        let body = text(buffer);
+        let updates = self.0.borrow_mut().updates(&body, |id| spaces.link_title(id));
+        if updates.is_empty() {
+            return;
+        }
+        buffer.begin_user_action();
+        for (range, replacement) in updates.into_iter().rev() {
+            let range = char_range(&body, range);
+            let mut start = buffer.iter_at_offset(range.start as i32);
+            let mut end = buffer.iter_at_offset(range.end as i32);
+            buffer.delete(&mut start, &mut end);
+            buffer.insert(&mut start, &replacement);
+        }
+        buffer.end_user_action();
+    }
+}
+
+/// The text to store for `text`, a new note's, without the current titles of the notes it links
+/// to.
+pub fn collapse_titles(spaces: &Spaces, text: &str) -> String {
+    ShownTitles::default().collapse(text, |id| spaces.link_title(id))
 }
 
 fn apply(buffer: &gtk::TextBuffer, name: &str, range: Range<usize>) {

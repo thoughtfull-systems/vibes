@@ -14,6 +14,7 @@ use crate::actions::order_key;
 use crate::library::{MODIFIED, loro_error, now};
 use crate::{
     ActionChange, ActionDates, ActionEntry, ActionView, Date, Error, Library, Note, NoteId,
+    plain_links,
 };
 
 const LIBRARIES: &str = "libraries";
@@ -202,6 +203,24 @@ impl Spaces {
 
     pub fn note(&self, id: NoteId) -> Option<Note> {
         self.spaces.iter().find_map(|space| space.library.note(id))
+    }
+
+    /// The title a link to `id` shows, as plain text: the note's label, or the label it had when it
+    /// was deleted for good.
+    pub fn link_title(&self, id: NoteId) -> Option<String> {
+        // A link inside the title shows its target's label without expanding that label's own
+        // links, so titles that link to each other can't recurse.
+        let nested = |id| self.raw_label(id).map(|label| plain_links(&label, |_| None));
+        self.raw_label(id).map(|label| plain_links(&label, nested))
+    }
+
+    /// The note's label as its body writes it, or the label it had when it was deleted for good,
+    /// from any library.
+    fn raw_label(&self, id: NoteId) -> Option<String> {
+        match self.note(id) {
+            Some(note) => note.label(),
+            None => self.all().find_map(|library| library.deleted_label(id)),
+        }
     }
 
     /// The notes in the libraries that show, including those in the trash, most recently modified
@@ -582,6 +601,36 @@ mod tests {
         }
         assert_eq!(spaces.note(moved).unwrap().body, "moved");
         assert!(matches!(spaces.remove("b"), Err(Error::LastLibrary)));
+    }
+
+    #[test]
+    fn finds_link_titles_across_libraries() {
+        let mut spaces = Spaces::in_memory(&["a", "b"]);
+        let deleted = spaces.create_memo("a", "# Old plan").unwrap();
+        let moved = spaces.create_memo("a", "Moved").unwrap();
+        let linking =
+            spaces.create_memo("b", &format!("See [[{deleted}]] or [[{moved}|it]]")).unwrap();
+        let cycle = spaces.create_memo("b", &format!("Back to [[{linking}]]")).unwrap();
+        spaces.trash(deleted).unwrap();
+        spaces.delete(deleted).unwrap();
+        spaces.move_to_space(moved, "b").unwrap();
+        assert_eq!(spaces.link_title(deleted).as_deref(), Some("Old plan"));
+        assert_eq!(spaces.link_title(moved).as_deref(), Some("Moved"));
+        assert_eq!(spaces.library("a").unwrap().deleted_label(moved), None);
+        assert_eq!(spaces.link_title(linking).as_deref(), Some("See Old plan or it"));
+        assert_eq!(
+            spaces.link_title(cycle).as_deref(),
+            Some(&*format!("Back to See {deleted} or it"))
+        );
+        let linked_title =
+            spaces.create_memo("b", &format!("Follow up on [[{moved}|it]]")).unwrap();
+        spaces.trash(linked_title).unwrap();
+        spaces.delete(linked_title).unwrap();
+        assert_eq!(spaces.link_title(linked_title).as_deref(), Some("Follow up on it"));
+        let both_deleted = spaces.create_memo("b", &format!("Instead of [[{deleted}]]")).unwrap();
+        spaces.trash(both_deleted).unwrap();
+        spaces.delete(both_deleted).unwrap();
+        assert_eq!(spaces.link_title(both_deleted).as_deref(), Some("Instead of Old plan"));
     }
 
     #[test]

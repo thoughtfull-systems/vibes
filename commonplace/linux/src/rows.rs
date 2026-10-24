@@ -7,7 +7,7 @@ use std::rc::Rc;
 use adw::prelude::*;
 use commonplace_core::{
     Action, ActionChange, ActionDates, ActionEntry, ActionList, ActionState, ActionStatus, Date,
-    Dated, Note, NoteId, Style, inline_pieces,
+    Dated, Note, NoteId, Spaces, Style, expand_links, inline_pieces,
 };
 use gtk::glib;
 
@@ -170,7 +170,7 @@ fn stamped_note_row(
 ) -> gtk::Box {
     let note = &entry.note;
     let title = gtk::Label::builder()
-        .label(title_markup(note))
+        .label(state.read(|spaces| title_markup(spaces, note)))
         .use_markup(true)
         .xalign(0.0)
         .ellipsize(gtk::pango::EllipsizeMode::End)
@@ -313,7 +313,9 @@ pub fn describe_date(state: &State, word: &str, dated: Dated, id: NoteId) -> Str
         return date;
     }
     match state.read(|library| library.note(dated.from)) {
-        Some(project) => format!("{date} from {}", display_label(&project)),
+        Some(project) => {
+            format!("{date} from {}", state.read(|spaces| display_label(spaces, &project)))
+        }
         None => date,
     }
 }
@@ -334,7 +336,7 @@ pub fn parent_labels(state: &State, parents: &[NoteId]) -> Vec<(NoteId, String)>
     state.read(|library| {
         parents
             .iter()
-            .filter_map(|&id| library.note(id).map(|note| (id, display_label(&note))))
+            .filter_map(|&id| library.note(id).map(|note| (id, display_label(library, &note))))
             .collect()
     })
 }
@@ -408,9 +410,9 @@ pub fn format_date(date: Date) -> String {
 
 /// The note's label as Pango markup that renders its inline Markdown, or a stand-in naming its kind
 /// if its body has no text.
-fn title_markup(note: &Note) -> String {
-    let Some(label) = note.label() else {
-        return glib::markup_escape_text(&display_label(note)).to_string();
+fn title_markup(spaces: &Spaces, note: &Note) -> String {
+    let Some(label) = shown_label(spaces, note) else {
+        return glib::markup_escape_text(&display_label(spaces, note)).to_string();
     };
     let markup: String = inline_pieces(&label)
         .into_iter()
@@ -432,7 +434,7 @@ fn title_markup(note: &Note) -> String {
         })
         .collect();
     if markup.trim().is_empty() {
-        glib::markup_escape_text(&display_label(note)).to_string()
+        glib::markup_escape_text(&display_label(spaces, note)).to_string()
     } else {
         markup
     }
@@ -440,8 +442,8 @@ fn title_markup(note: &Note) -> String {
 
 /// The note's label as plain text, without its Markdown, or a stand-in naming its kind if its body
 /// has no text.
-pub fn display_label(note: &Note) -> String {
-    if let Some(label) = note.label() {
+pub fn display_label(spaces: &Spaces, note: &Note) -> String {
+    if let Some(label) = shown_label(spaces, note) {
         let text: String = inline_pieces(&label).into_iter().map(|piece| piece.text).collect();
         if !text.trim().is_empty() {
             return text;
@@ -455,6 +457,11 @@ pub fn display_label(note: &Note) -> String {
         }
         .to_owned()
     })
+}
+
+/// The note's label, with each link in it that has no label showing its note's title.
+fn shown_label(spaces: &Spaces, note: &Note) -> Option<String> {
+    note.label().map(|label| expand_links(&label, |id| spaces.link_title(id)))
 }
 
 pub fn format_time(milliseconds: i64) -> String {

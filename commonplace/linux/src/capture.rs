@@ -121,6 +121,7 @@ pub fn present(app: &adw::Application, state: Rc<State>, task: bool) -> adw::App
             }
             let space = space.borrow().clone();
             state.set_capture_space(&space);
+            let text = state.read(|spaces| editor::collapse_titles(spaces, &text));
             let created = state.write(|spaces| {
                 if task {
                     spaces.create_inbox_task(&space, &text)
