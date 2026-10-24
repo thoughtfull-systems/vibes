@@ -503,11 +503,6 @@ impl Window {
             self,
             move || this.return_to_listing()
         ));
-        self.note.connect_trashed(glib::clone!(
-            #[weak(rename_to = this)]
-            self,
-            move || this.go(Location::List(this.tab()))
-        ));
         self.back_button.connect_clicked(glib::clone!(
             #[weak(rename_to = this)]
             self,
@@ -680,7 +675,10 @@ impl Window {
         search.connect_activate(glib::clone!(
             #[weak(rename_to = this)]
             self,
-            move |_, _| _ = this.search.grab_focus()
+            move |_, _| {
+                this.search.grab_focus();
+                this.search.select_region(0, -1);
+            }
         ));
         let toggle_checkbox = gio::SimpleAction::new("toggle-checkbox", None);
         toggle_checkbox.connect_activate(glib::clone!(

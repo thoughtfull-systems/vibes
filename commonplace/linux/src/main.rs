@@ -61,7 +61,6 @@ button.unpin {
 }
 button.unpin:hover { color: @accent_color; }
 .drop-line { background-color: @accent_color; border-radius: 1px; }
-.done { text-decoration-line: line-through; }
 .dragged { opacity: 0.55; }
 .drop-inside { box-shadow: inset 0 0 0 2px @accent_color; border-radius: 6px; }
 ";

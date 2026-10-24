@@ -494,6 +494,11 @@ impl ActionPanel {
         self.loading.set(false);
         *self.lists.borrow_mut() = lists.into_iter().map(|(_, list)| list).collect();
         self.refresh();
+        self.set_editable(editable);
+    }
+
+    /// Lets the user change the action, or only look at it.
+    pub fn set_editable(&self, editable: bool) {
         self.widget.set_sensitive(editable);
         // The show done switch stays usable, since it only changes the view.
         for widget in [

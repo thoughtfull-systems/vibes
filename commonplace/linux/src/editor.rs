@@ -312,7 +312,6 @@ fn add_preview_tags(table: &gtk::TextTagTable) {
             .build(),
         gtk::TextTag::builder()
             .name(style_tag(Style::Completed).unwrap())
-            .strikethrough(true)
             .foreground_rgba(&dim)
             .build(),
         gtk::TextTag::builder()
