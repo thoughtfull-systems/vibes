@@ -11,6 +11,8 @@ use gtk::{gdk, gio, glib};
 use crate::action_panel::ActionPanel;
 use crate::bottom_pane::BottomPane;
 use crate::editor;
+use crate::entry_panel::EntryPanel;
+use crate::journal_panel::JournalPanel;
 use crate::libraries;
 use crate::link_picker::{Choice, LinkPicker, Purpose};
 use crate::rows::{display_label, entry, note_row, today};
@@ -44,7 +46,12 @@ pub struct NotePage {
     /// Divides the outline from the rest.
     body: gtk::Paned,
     bottom: Rc<BottomPane>,
+    /// Turns a memo into an entry in the journal its menu picks.
+    convert_button: gtk::MenuButton,
+    convert_memo: gio::SimpleAction,
     copy_link: gio::SimpleAction,
+    entry_panel: Rc<EntryPanel>,
+    journal_panel: Rc<JournalPanel>,
     current: Cell<Option<NoteId>>,
     delete_button: gtk::Button,
     details: gtk::Box,
@@ -89,6 +96,7 @@ impl NotePage {
         window: adw::ApplicationWindow,
         toasts: adw::ToastOverlay,
     ) -> Rc<Self> {
+        let convert_memo = gio::SimpleAction::new("convert-memo", Some(glib::VariantTy::STRING));
         let copy_link = gio::SimpleAction::new("copy-link", None);
         let trash_note = gio::SimpleAction::new("trash-note", None);
         let restore_button = gtk::Button::builder().label("_Restore").use_underline(true).build();
@@ -271,6 +279,20 @@ impl NotePage {
         let details_content = gtk::Box::new(gtk::Orientation::Vertical, 6);
         details_content.append(&space_row);
         details_content.append(&action_panel.widget);
+        let journal_panel = JournalPanel::new(state.clone());
+        details_content.append(&journal_panel.widget);
+        let entry_panel = EntryPanel::new(state.clone());
+        details_content.append(&entry_panel.widget);
+        let convert_button = gtk::MenuButton::builder()
+            .label("Make Journal Entry")
+            .tooltip_text("Turn this memo into an entry, leaving a link to it here")
+            .margin_start(12)
+            .margin_end(12)
+            .margin_top(12)
+            .halign(gtk::Align::Start)
+            .visible(false)
+            .build();
+        details_content.append(&convert_button);
         let archive_button = gtk::Button::builder()
             .label("Archive")
             .valign(gtk::Align::End)
@@ -341,6 +363,9 @@ impl NotePage {
         }
         for details in [
             action_panel.widget.upcast_ref::<gtk::Widget>(),
+            journal_panel.widget.upcast_ref(),
+            entry_panel.widget.upcast_ref(),
+            convert_button.upcast_ref(),
             space_row.upcast_ref(),
             archive_button.upcast_ref(),
         ] {
@@ -398,7 +423,7 @@ impl NotePage {
             }
         ));
         editor_box.prepend(&trash_bar);
-        for action in [&copy_link, &trash_note] {
+        for action in [&convert_memo, &copy_link, &trash_note] {
             window.add_action(action);
         }
         bottom.append(&action_panel.steps_section);
@@ -431,7 +456,11 @@ impl NotePage {
             backlinks_section,
             body,
             bottom: bottom_pane,
+            convert_button,
+            convert_memo,
             copy_link,
+            entry_panel,
+            journal_panel,
             current: Cell::new(None),
             delete_button,
             details,
@@ -533,6 +562,9 @@ impl NotePage {
         self.refresh_backlinks();
         self.highlight_links();
         self.action_panel.refresh(writable);
+        let note = self.state.read(|spaces| spaces.note(id));
+        self.journal_panel.show(note.as_ref(), writable);
+        self.entry_panel.show(note.as_ref(), writable);
         self.update_buttons();
         self.bottom.update();
     }
@@ -616,6 +648,27 @@ impl NotePage {
             #[weak(rename_to = this)]
             self,
             move |_| this.confirm_delete()
+        ));
+        self.entry_panel.connect_open(glib::clone!(
+            #[weak(rename_to = this)]
+            self,
+            move |id| this.request_open(id)
+        ));
+        self.convert_memo.connect_activate(glib::clone!(
+            #[weak(rename_to = this)]
+            self,
+            move |_, parameter| {
+                let journal = parameter
+                    .and_then(|value| value.get::<String>())
+                    .and_then(|id| id.parse().ok());
+                if let (Some(memo), Some(journal)) = (this.current.get(), journal) {
+                    this.save_now();
+                    match this.state.write(|spaces| spaces.convert_memo(memo, journal)) {
+                        Ok(entry) => this.request_open(entry),
+                        Err(error) => this.report_error(&error),
+                    }
+                }
+            }
         ));
         self.action_panel.connect_open(glib::clone!(
             #[weak(rename_to = this)]
@@ -709,6 +762,39 @@ impl NotePage {
         self.widget.add_controller(escape);
     }
 
+    /// Entries move with their journal, so they get no space buttons.
+    fn is_entry(&self, id: NoteId) -> bool {
+        self.state.read(|spaces| spaces.note(id)).is_some_and(|note| note.entry.is_some())
+    }
+
+    /// Offers the journals in `memo`'s library to turn it into an entry in, or hides the menu.
+    fn refresh_convert_menu(&self, memo: Option<&Note>) {
+        let journals: Vec<Note> = memo
+            .map(|memo| {
+                let space = self.state.read(|spaces| spaces.space_of(memo.id).map(str::to_owned));
+                self.state
+                    .read(|spaces| spaces.journals())
+                    .into_iter()
+                    .filter(|journal| {
+                        self.state.read(|spaces| spaces.space_of(journal.id).map(str::to_owned))
+                            == space
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        self.convert_button.set_visible(!journals.is_empty());
+        let menu = gio::Menu::new();
+        for journal in journals {
+            let item = gio::MenuItem::new(journal.label().as_deref(), None);
+            item.set_action_and_target_value(
+                Some("win.convert-memo"),
+                Some(&journal.id.to_string().to_variant()),
+            );
+            menu.append_item(&item);
+        }
+        self.convert_button.set_menu_model(Some(&menu));
+    }
+
     fn writable(&self, id: NoteId) -> bool {
         !self.state.read(|library| library.is_in_trash(id) || library.is_read_only())
     }
@@ -729,6 +815,8 @@ impl NotePage {
         }
         self.loading.set(false);
         self.action_panel.show(note.as_ref(), self.view.is_editable());
+        self.journal_panel.show(note.as_ref(), self.view.is_editable());
+        self.entry_panel.show(note.as_ref(), self.view.is_editable());
         self.refresh_space_row();
         self.update_buttons();
         self.highlight_links();
@@ -771,6 +859,7 @@ impl NotePage {
             "In the trash with a project above it, which restoring brings back too"
         });
         self.note_menu_button.set_visible(note.is_some() && !in_trash);
+        self.refresh_convert_menu(note.as_ref().filter(|note| note.is_memo() && writable));
     }
 
     /// Shows a button for each library while there's more than one and the libraries can change,
@@ -784,7 +873,7 @@ impl NotePage {
         let movable = id.is_some_and(|id| self.writable(id));
         let shown = id
             .zip(space)
-            .filter(|_| !read_only && spaces.len() > 1)
+            .filter(|(id, _)| !read_only && spaces.len() > 1 && !self.is_entry(*id))
             .map(|(id, space)| SpaceRow { id, movable, space, spaces });
         if *self.space_row_shown.borrow() == shown {
             return;

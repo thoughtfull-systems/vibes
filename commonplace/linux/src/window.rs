@@ -9,6 +9,7 @@ use gtk::{gdk, gio, glib};
 
 use crate::browse::{Browser, Scope};
 use crate::inbox::InboxView;
+use crate::journals_view::JournalsView;
 use crate::layout;
 use crate::libraries;
 use crate::note_page::NotePage;
@@ -40,6 +41,7 @@ const MODES: [(&str, &str, Mode); 4] = [
 enum Listing {
     Actions(Mode),
     AllNotes,
+    Journals,
     Memos,
     Trash,
 }
@@ -67,6 +69,7 @@ impl Location {
             Listing::Actions(Mode::Plan) => "actions.plan",
             Listing::Actions(Mode::Review) => "actions.review",
             Listing::AllNotes => "all",
+            Listing::Journals => "journals",
             Listing::Memos => "memos",
             Listing::Trash => "trash",
         };
@@ -87,6 +90,7 @@ impl Location {
             "actions.plan" => Listing::Actions(Mode::Plan),
             "actions.review" => Listing::Actions(Mode::Review),
             "all" => Listing::AllNotes,
+            "journals" => Listing::Journals,
             "memos" => Listing::Memos,
             "trash" => Listing::Trash,
             _ => return None,
@@ -112,6 +116,7 @@ pub struct Window {
     actions_narrow: Cell<bool>,
     actions_stack: gtk::Stack,
     all_notes: Rc<Browser>,
+    journals: Rc<JournalsView>,
     /// Locations to return to, most recent last.
     back: RefCell<Vec<Location>>,
     back_button: gtk::Button,
@@ -160,6 +165,7 @@ impl Window {
 
         let memos = Browser::new(state.clone(), Scope::Memos);
         let all_notes = Browser::new(state.clone(), Scope::All);
+        let journals = JournalsView::new(state.clone());
         let actions = NoteList::new(state.clone());
         let modes = gtk::ListBox::builder().css_classes(["navigation-sidebar"]).build();
         for (name, icon, _) in MODES {
@@ -202,8 +208,9 @@ impl Window {
         let trash = Browser::new(state.clone(), Scope::Trash);
         // The order of the tabs.
         for (page, name, title, icon) in [
-            (memos.widget.upcast_ref::<gtk::Widget>(), "memos", "Memos", "document-edit-symbolic"),
+            (memos.widget.upcast_ref::<gtk::Widget>(), "memos", "Memos", crate::rows::MEMO_ICON),
             (actions_stack.upcast_ref(), "actions", "Actions", "object-select-symbolic"),
+            (journals.widget.upcast_ref(), "journals", "Journals", crate::rows::JOURNAL_ICON),
             (all_notes.widget.upcast_ref(), "all", "All Notes", "view-list-bullet-symbolic"),
             (trash.widget.upcast_ref(), "trash", "Trash", "user-trash-symbolic"),
         ] {
@@ -286,6 +293,7 @@ impl Window {
             back_button,
             forward: RefCell::default(),
             inbox,
+            journals,
             location: Cell::new(Location::List(Listing::Memos)),
             main,
             memos,
@@ -424,6 +432,7 @@ impl Window {
                 }
             }
             Listing::AllNotes => self.tabs.set_visible_child_name("all"),
+            Listing::Journals => self.tabs.set_visible_child_name("journals"),
             Listing::Memos => self.tabs.set_visible_child_name("memos"),
             Listing::Trash => self.tabs.set_visible_child_name("trash"),
         }
@@ -470,6 +479,7 @@ impl Window {
         match self.tabs.visible_child_name().as_deref() {
             Some("actions") => Listing::Actions(self.mode()),
             Some("all") => Listing::AllNotes,
+            Some("journals") => Listing::Journals,
             Some("trash") => Listing::Trash,
             _ => Listing::Memos,
         }
@@ -491,6 +501,16 @@ impl Window {
                 move |id| this.open(id)
             ));
         }
+        self.journals.connect_open(glib::clone!(
+            #[weak(rename_to = this)]
+            self,
+            move |id| this.open(id)
+        ));
+        self.journals.connect_new(glib::clone!(
+            #[weak(rename_to = this)]
+            self,
+            move || this.new_journal()
+        ));
         for browser in [&self.memos, &self.all_notes, &self.trash] {
             browser.connect_open(glib::clone!(
                 #[weak(rename_to = this)]
@@ -871,6 +891,7 @@ impl Window {
         let query = self.search.text();
         self.memos.refresh(&query);
         self.all_notes.refresh(&query);
+        self.journals.refresh(&query);
         self.trash.refresh(&query);
         let searching = !query.trim().is_empty();
         self.actions_stack.set_visible_child_name(if searching { "results" } else { "list" });
@@ -885,6 +906,48 @@ impl Window {
             .map(|entry| ActionEntry { depth: 0, ..entry })
             .collect();
         self.actions_results.show(vec![section("", actions, false)]);
+    }
+
+    /// Asks for a name, and a library if there's more than one, and opens the new journal.
+    fn new_journal(self: &Rc<Self>) {
+        let name = gtk::Entry::builder().placeholder_text("Name").activates_default(true).build();
+        let spaces = self.state.spaces();
+        let names: Vec<&str> = spaces.iter().map(|space| space.name.as_str()).collect();
+        let library = gtk::DropDown::from_strings(&names);
+        let start = self.state.capture_space();
+        library
+            .set_selected(spaces.iter().position(|space| space.key == start).unwrap_or(0) as u32);
+        library.set_visible(spaces.len() > 1);
+        let content = gtk::Box::new(gtk::Orientation::Vertical, 12);
+        content.append(&name);
+        content.append(&library);
+        let dialog = adw::AlertDialog::new(Some("New Journal"), None);
+        dialog.add_responses(&[("cancel", "_Cancel"), ("create", "_Create")]);
+        dialog.set_response_appearance("create", adw::ResponseAppearance::Suggested);
+        dialog.set_default_response(Some("create"));
+        dialog.set_close_response("cancel");
+        dialog.set_extra_child(Some(&content));
+        dialog.connect_response(
+            Some("create"),
+            glib::clone!(
+                #[weak(rename_to = this)]
+                self,
+                move |_, _| {
+                    let text = name.text().trim().to_owned();
+                    let Some(space) = spaces.get(library.selected() as usize) else {
+                        return;
+                    };
+                    if text.is_empty() {
+                        return;
+                    }
+                    match this.state.create_journal(&space.key, &text) {
+                        Ok(id) => this.open(id),
+                        Err(error) => this.toast(&error.to_string()),
+                    }
+                }
+            ),
+        );
+        dialog.present(Some(&self.window));
     }
 
     fn toast(&self, title: &str) {

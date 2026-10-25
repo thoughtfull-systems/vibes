@@ -1,18 +1,24 @@
 // SPDX-License-Identifier: MPL-2.0-no-copyleft-exception
 
 mod action_panel;
+mod answers;
 mod bottom_pane;
 mod browse;
 mod capture;
 mod device;
 mod drag_scroll;
 mod editor;
+mod entry_panel;
 mod highlight;
 mod inbox;
+mod journal_capture;
+mod journal_panel;
+mod journals_view;
 mod layout;
 mod libraries;
 mod link_picker;
 mod note_page;
+mod prompts;
 mod rows;
 mod state;
 mod tray;
@@ -70,6 +76,9 @@ Usage:
   commonplace                         Open the main window
   commonplace capture memo            Open the quick capture window for a memo
   commonplace capture action          Open the quick capture window for an action
+  commonplace capture journal [JOURNAL]
+                                      Open the quick capture window for a journal entry, in
+                                      JOURNAL, given by name or URI, or the last one used
   commonplace capture memo TEXT…      Save TEXT as a memo, and print its URI
   commonplace capture action TEXT…    Save TEXT as an action in the inbox, and print its URI
                                       (both in the library that capture last saved into)
@@ -97,8 +106,9 @@ fn main() -> glib::ExitCode {
         .collect();
     if matches!(
         arguments.iter().map(String::as_str).collect::<Vec<_>>()[..],
-        ["capture", "memo" | "action"]
-    ) {
+        ["capture", "memo" | "action" | "journal", ..]
+    ) && !matches!(arguments[1].as_str(), "memo" | "action" if arguments.len() > 2)
+    {
         start_in_background();
     }
     let app = adw::Application::builder()
@@ -135,6 +145,9 @@ fn main() -> glib::ExitCode {
                     .map(|spaces| Rc::new(State::new(spaces, Device::open(&dir))))
                     .map_err(|error| error.to_string())
             };
+            if let Ok(state) = &state {
+                prompts::start(app, state.clone());
+            }
             shared.borrow_mut().state = Some(state);
             let quit = gio::ActionEntry::builder("quit")
                 .activate(glib::clone!(
@@ -213,6 +226,28 @@ fn run(
         ["capture", kind @ ("memo" | "action")] => {
             let window = capture_with_window(app, state, shared, kind == "action");
             // The command that asked for the capture exits once it's saved or discarded.
+            let command_line = command_line.clone();
+            window.connect_destroy(move |_| command_line.done());
+        }
+        ["capture", "journal", ref words @ ..] => {
+            let journal = if words.is_empty() {
+                None
+            } else {
+                match journal_capture::find_journal(&state, &words.join(" ")) {
+                    Ok(id) => Some(id),
+                    Err(error) => {
+                        command_line.printerr_literal(&format!("commonplace: {error}\n"));
+                        return glib::ExitCode::FAILURE;
+                    }
+                }
+            };
+            if shared.borrow().window.is_none() {
+                main_window(app, &state, shared).present();
+            }
+            let Some(window) = journal_capture::present(app, state, journal, None) else {
+                command_line.printerr_literal("commonplace: there are no journals yet\n");
+                return glib::ExitCode::FAILURE;
+            };
             let command_line = command_line.clone();
             window.connect_destroy(move |_| command_line.done());
         }
@@ -398,6 +433,9 @@ fn start_tray(app: &adw::Application, state: &Rc<State>, shared: &Rc<RefCell<App
             tray::Event::Activate => main_window(&app, &state, &shared).toggle(),
             tray::Event::CaptureAction => {
                 capture::present(&app, state.clone(), true);
+            }
+            tray::Event::CaptureEntry => {
+                journal_capture::present(&app, state.clone(), None, None);
             }
             tray::Event::CaptureMemo => {
                 capture::present(&app, state.clone(), false);

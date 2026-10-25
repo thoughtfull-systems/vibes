@@ -24,11 +24,11 @@ drill a fact, to develop an idea a little more each time, or to check on a proje
 
 ## Status
 
-The Linux app covers memos and actions:
+The Linux app covers memos, actions, and journals:
 
-- Switch between the four tabs, Memos, Actions, All Notes, and Trash. The search bar beside them
-  filters each tab's notes until you clear it. A note opens below the tabs and the search bar, and
-  Back returns to the tab.
+- Switch between the five tabs, Memos, Actions, Journals, All Notes, and Trash. The search bar
+  beside them filters each tab's notes until you clear it. A note opens below the tabs and the
+  search bar, and Back returns to the tab.
 - Write and edit memos in an editor that renders Markdown as you write, shows the syntax of whatever
   the cursor touches, and saves as you type. A memo shows its outline beside it and its backlinks
   below it.
@@ -42,6 +42,20 @@ The Linux app covers memos and actions:
 - Archive any note with the button at the bottom of its details sidebar, to set it aside without
   changing it. Archived memos leave the Memos tab, and archived actions leave the four modes. All
   Notes lists archived notes, and ordering it by archive date lists only them.
+- Keep journals, each with its own questions: text that the entry's body holds under a heading for
+  each, and short text, numbers, scales, choices, yes or no, durations, and times of day that the
+  entry keeps as answers. A journal's sidebar edits its questions, its color, its schedules, and
+  whether it prompts on this device.
+- Get prompted by a notification that names the journal, on the days a schedule picks, at fixed
+  times or at random times within a window. Answer it, snooze it for 15 minutes or an hour, or skip
+  it. Answering opens the capture window for that prompt. Your notification server's do-not-disturb
+  mode holds prompts, such as while you share your screen.
+- Read entries in the Journals tab, grouped by day, newest first. A button for each journal shows or
+  hides it, and a menu picks how far back to go. With one journal showing, the tab charts its
+  answers: a line for numbers, scales, durations, and times, and daily counts for choices and yes or
+  no. An entry's sidebar changes when it happened and its answers.
+- Turn a memo into a journal entry from its sidebar. The memo keeps a link to the entry and goes to
+  the archive.
 - Reorder a project's steps by dragging them, or with Alt+Shift+Up and Alt+Shift+Down. Drop a step
   on the middle of another to nest it there.
 - Link notes with wikilinks, follow links, and see each note's backlinks.
@@ -65,7 +79,8 @@ The Linux app covers memos and actions:
   libraries, and the names belong to the device. With one library, none of this shows.
 - Keep running in the system tray. Clicking the icon hides the window, or brings it to the current
   workspace when it's hidden or on another one. Closing the window or pressing Ctrl+Q hides it, and
-  the icon's menu captures an action or a memo, or quits. Without a tray, Ctrl+Q quits.
+  the icon's menu captures an action, a journal entry, or a memo, or quits. Without a tray, Ctrl+Q
+  quits.
 - Open notes from `commonplace:` links.
 - Print an action with the bodies of the projects it belongs to, outermost first, with
   `commonplace print URI`, to hand it to a coding agent as a prompt.
@@ -127,10 +142,10 @@ To run the working tree on a library of your own instead, set `COMMONPLACE_LIBRA
 directory. The script prints the path, opens that library, and leaves it in place when the app
 quits. Only one copy can open a library at a time, so close any everyday copy that uses it first.
 
-To quick capture into the test copy while it runs, use `commonplace-test-capture` with `memo` or
-`action`, like the `capture` command. It refuses to run without a test copy open, so captures go to
-the test copy's library and never start an everyday copy. In Sway, a binding in the capture mode can
-sit beside the everyday ones:
+To quick capture into the test copy while it runs, use `commonplace-test-capture` with `memo`,
+`action`, or `journal`, like the `capture` command. It refuses to run without a test copy open, so
+captures go to the test copy's library and never start an everyday copy. In Sway, a binding in the
+capture mode can sit beside the everyday ones:
 
 ```text
 bindsym t exec sh -c 'cd ~/vibes && devenv shell -- commonplace-test-capture memo'; mode "default"
@@ -221,22 +236,26 @@ xdg-mime default systems.thoughtfull.Commonplace.desktop x-scheme-handler/common
 ```
 
 Linux has no standard way for an app to claim a global keyboard shortcut, so bind keys to
-`commonplace capture memo` and `commonplace capture action` in your desktop's settings. Each opens
-the quick capture window for its kind of note. Its Discard button throws the text away. The commands
-start Commonplace if it isn't running, and work the same from inside the app.
+`commonplace capture memo`, `commonplace capture action`, and `commonplace capture journal` in your
+desktop's settings. Each opens the quick capture window for its kind of note. A journal entry starts
+in the journal you name after `journal`, by its name or its `commonplace:` URI, or in the journal
+you last wrote in, and buttons in the window switch journals. A binding that gives the URI keeps
+working when you rename the journal. Its Discard button throws the text away. The commands start
+Commonplace if it isn't running, and work the same from inside the app.
 
 In Sway, for example, these lines make the window float and bind a key sequence to each command:
-press `$mod+c`, then `m` for a memo or `a` for an action. Escape backs out. Sway has no syntax for a
-sequence of keys, so the first key enters a binding mode, and each binding in the mode returns to
-the default mode. Sway matches a title as a regular expression anywhere in the window's title. The
-main window's title always starts with `Commonplace`, so with the anchors no note's label can make
-it float.
+press `$mod+c`, then `m` for a memo, `a` for an action, or `j` for a journal entry. Escape backs
+out. Sway has no syntax for a sequence of keys, so the first key enters a binding mode, and each
+binding in the mode returns to the default mode. Sway matches a title as a regular expression
+anywhere in the window's title. The main window's title always starts with `Commonplace`, so with
+the anchors no note's label can make it float.
 
 ```text
-set $capture "capture: (m)emo (a)ction"
+set $capture "capture: (m)emo (a)ction (j)ournal"
 mode $capture {
     bindsym m exec commonplace capture memo; mode "default"
     bindsym a exec commonplace capture action; mode "default"
+    bindsym j exec commonplace capture journal; mode "default"
     bindsym Escape mode "default"
 }
 bindsym $mod+c mode $capture

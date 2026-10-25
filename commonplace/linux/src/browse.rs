@@ -309,9 +309,7 @@ impl Browser {
                 .filter(|note| match scope {
                     Scope::All => !in_trash.contains(&note.id),
                     Scope::Memos => {
-                        note.action.is_none()
-                            && note.archived.is_none()
-                            && !in_trash.contains(&note.id)
+                        note.is_memo() && note.archived.is_none() && !in_trash.contains(&note.id)
                     }
                     Scope::Trash => note.is_trashed(),
                 })
@@ -345,7 +343,7 @@ impl Browser {
                 ("document-edit-symbolic", "No Notes", "Capture a memo or an action to start")
             }
             (Scope::Memos, false) => {
-                ("document-edit-symbolic", "No Memos", "Capture one with commonplace capture memo")
+                (crate::rows::MEMO_ICON, "No Memos", "Capture one with commonplace capture memo")
             }
             (Scope::Trash, false) => {
                 ("user-trash-symbolic", "Trash Is Empty", "Notes you trash wait here")

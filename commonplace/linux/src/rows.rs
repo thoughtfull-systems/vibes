@@ -204,6 +204,15 @@ fn stamped_note_row(
         } else {
             summary
         };
+    let journal =
+        note.entry.as_ref().and_then(|fields| state.read(|spaces| spaces.note(fields.journal)));
+    let summary = match &journal {
+        Some(journal) => {
+            let name = journal.label().unwrap_or_else(|| "Untitled journal".to_owned());
+            format!("{name} · {summary}")
+        }
+        None => summary,
+    };
     let path = if show_path && !entry.parents.is_empty() {
         let labels: Vec<String> =
             parent_labels(state, &entry.parents).into_iter().map(|(_, label)| label).collect();
@@ -219,16 +228,17 @@ fn stamped_note_row(
         .build();
     // A checkbox has no baseline, so a grid row centers it on the title's line instead.
     let text = gtk::Grid::builder().column_spacing(8).row_spacing(2).build();
-    let mut column = 0;
+    let column = 1;
     if let Some(action) = &note.action {
         text.attach(&action_check(state, note.id, action), 0, 0, 1, 1);
-        column = 1;
         if action.project {
             title.add_css_class("project-title");
         }
         if action.state == ActionState::Done {
             row.add_css_class("dimmed");
         }
+    } else {
+        text.attach(&kind_icon(note, journal.as_ref()), 0, 0, 1, 1);
     }
     text.attach(&title, column, 0, 1, 1);
     for (line, index) in [summary, path].into_iter().filter(|line| !line.is_empty()).zip(1..) {
@@ -254,6 +264,28 @@ fn stamped_note_row(
     }
     row.append(&text);
     row
+}
+
+/// The app's own icons for memos and journals, which the tabs and the note rows share.
+pub const MEMO_ICON: &str = "systems.thoughtfull.Commonplace-memo-symbolic";
+pub const JOURNAL_ICON: &str = "systems.thoughtfull.Commonplace-journal-symbolic";
+
+/// The icon that tells a memo, a journal, and an entry apart: the Memos and Journals tabs' icons,
+/// and a dot in an entry's journal's color.
+fn kind_icon(note: &Note, journal: Option<&Note>) -> gtk::Widget {
+    if note.entry.is_some() {
+        let color = journal
+            .and_then(|journal| journal.journal.as_ref())
+            .map_or("blue", |fields| fields.color.as_str());
+        return crate::journals_view::dot(crate::journals_view::journal_color(color)).upcast();
+    }
+    let icon = if note.journal.is_some() { JOURNAL_ICON } else { MEMO_ICON };
+    gtk::Image::builder()
+        .icon_name(icon)
+        .valign(gtk::Align::Center)
+        .css_classes(["dimmed"])
+        .build()
+        .upcast()
 }
 
 /// A checkbox that marks an action done, or reopens it if it's closed.

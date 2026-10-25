@@ -8,6 +8,7 @@ use loro::{
 };
 
 use crate::actions::{ACTION, Action};
+use crate::journals::{ENTRY, ENTRY_KIND, Entry, JOURNAL, JOURNAL_KIND, Journal};
 use crate::store::Store;
 use crate::{Error, NoteId, label, parse_links};
 
@@ -16,7 +17,7 @@ const SETTINGS: &str = "settings";
 const FORMAT: &str = "commonplace-library";
 const VERSION: i64 = 3;
 
-const ARCHIVED: &str = "archived";
+pub(crate) const ARCHIVED: &str = "archived";
 const BODY: &str = "body";
 const CREATED: &str = "created";
 const DELETED: &str = "deleted";
@@ -29,7 +30,7 @@ pub const MEMO: &str = "memo";
 pub(crate) const ACTION_KIND: &str = "action";
 
 /// A copy of a note's contents at one moment.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Note {
     pub body: String,
     pub created: i64,
@@ -40,13 +41,22 @@ pub struct Note {
     pub action: Option<Action>,
     /// When the owner set the note aside, out of every list.
     pub archived: Option<i64>,
+    /// The journal's fields, for a note whose kind is journal.
+    pub journal: Option<Journal>,
+    /// The entry's fields, for a note whose kind is entry.
+    pub entry: Option<Entry>,
     pub trashed: Option<i64>,
 }
 
 impl Note {
     /// The note's title, derived from its body.
     pub fn label(&self) -> Option<String> {
-        label(&self.body)
+        if self.entry.is_some() { crate::label::entry_label(&self.body) } else { label(&self.body) }
+    }
+
+    /// Whether the note shows as a memo: a memo, or a note of a kind this version doesn't know.
+    pub fn is_memo(&self) -> bool {
+        self.action.is_none() && self.journal.is_none() && self.entry.is_none()
     }
 
     pub fn is_trashed(&self) -> bool {
@@ -198,7 +208,7 @@ impl Library {
         self.commit()
     }
 
-    fn body_text(&self, id: NoteId) -> Result<LoroText, Error> {
+    pub(crate) fn body_text(&self, id: NoteId) -> Result<LoroText, Error> {
         match self.note_map(id)?.get(BODY) {
             Some(ValueOrContainer::Container(container)) => container.into_text().ok(),
             _ => None,
@@ -233,7 +243,8 @@ impl Library {
     pub fn restore(&mut self, id: NoteId) -> Result<(), Error> {
         self.check_writable()?;
         let now = now();
-        let ancestors: Vec<NoteId> = self.hierarchy().ancestors(id).collect();
+        let mut ancestors: Vec<NoteId> = self.hierarchy().ancestors(id).collect();
+        ancestors.extend(self.entry_journal(id));
         for note in std::iter::once(id).chain(ancestors) {
             if self.note(note).is_some_and(|note| note.is_trashed()) {
                 let map = self.note_map(note)?;
@@ -255,6 +266,8 @@ impl Library {
         if note.action.is_some() {
             doomed.extend(self.hierarchy().descendants(id));
         }
+        let entries = if note.journal.is_some() { self.journal_entries(id) } else { Vec::new() };
+        doomed.extend(&entries);
         let now = now();
         for &note in &doomed {
             let label = self.note(note).and_then(|note| note.label());
@@ -272,6 +285,9 @@ impl Library {
             self.delete_action_subtree(id)?;
         } else {
             self.notes_map().delete(&id.to_string()).map_err(loro_error)?;
+        }
+        for entry in entries {
+            self.notes_map().delete(&entry.to_string()).map_err(loro_error)?;
         }
         self.commit()
     }
@@ -509,6 +525,13 @@ fn note_from_value(id: NoteId, value: &LoroValue) -> Option<Note> {
         modified: map.get(MODIFIED).and_then(|v| integer(v.clone())).unwrap_or(created),
         action,
         archived: map.get(ARCHIVED).and_then(|v| integer(v.clone())),
+        journal: (kind == JOURNAL_KIND)
+            .then(|| crate::journals::journal_from_value(map.get(JOURNAL))),
+        entry: if kind == ENTRY_KIND {
+            crate::journals::entry_from_value(map.get(ENTRY), created)
+        } else {
+            None
+        },
         trashed: map.get(TRASHED).and_then(|v| integer(v.clone())),
         kind,
     })

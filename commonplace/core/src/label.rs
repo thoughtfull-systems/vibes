@@ -11,6 +11,16 @@ pub fn label(body: &str) -> Option<String> {
     (!line.is_empty()).then(|| line.to_owned())
 }
 
+/// Derives an entry's label, which skips the headings that its journal's template wrote, so
+/// entries in one journal don't all share the label of its first question. An entry with nothing
+/// but headings takes its first heading.
+pub(crate) fn entry_label(body: &str) -> Option<String> {
+    body.lines()
+        .find(|line| !line.trim().is_empty() && strip_heading(line.trim_start()).is_none())
+        .and_then(label)
+        .or_else(|| label(body))
+}
+
 fn strip_heading(line: &str) -> Option<&str> {
     line.trim_start_matches('#').strip_prefix(' ').filter(|_| line.starts_with('#'))
 }
@@ -43,5 +53,13 @@ mod tests {
         ] {
             assert_eq!(label(body).as_deref(), expected, "{body:?}");
         }
+    }
+
+    #[test]
+    fn skips_template_headings_in_entry_labels() {
+        let body = "## What have you been working on?\n\n- Shipped it\n\n## Blockers\n";
+        assert_eq!(entry_label(body).as_deref(), Some("Shipped it"));
+        assert_eq!(entry_label("## Blockers\n\n").as_deref(), Some("Blockers"));
+        assert_eq!(entry_label("").as_deref(), None);
     }
 }

@@ -247,7 +247,7 @@ in
   ];
 
   scripts.commonplace-test-capture = {
-    description = "Quick capture into the running test copy: commonplace-test-capture memo|action";
+    description = "Capture into the test copy: commonplace-test-capture memo|action|journal";
     # Without a running test copy, the capture command would start one on the everyday library.
     exec = ''
       set -eu
