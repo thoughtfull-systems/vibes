@@ -204,8 +204,6 @@ fn stamped_note_row(
         } else {
             summary
         };
-    // Every entry in a journal starts with the same heading, so an entry goes by its text and its
-    // journal instead.
     let journal =
         note.entry.as_ref().and_then(|fields| state.read(|spaces| spaces.note(fields.journal)));
     let summary = match &journal {
@@ -215,16 +213,6 @@ fn stamped_note_row(
         }
         None => summary,
     };
-    if note.entry.is_some() {
-        let text = note
-            .body
-            .lines()
-            .map(str::trim)
-            .find(|line| !line.is_empty() && !line.starts_with('#'))
-            .map(str::to_owned);
-        let fallback = journal.as_ref().and_then(Note::label).unwrap_or_else(|| "Entry".to_owned());
-        title.set_label(&glib::markup_escape_text(&text.unwrap_or(fallback)));
-    }
     let path = if show_path && !entry.parents.is_empty() {
         let labels: Vec<String> =
             parent_labels(state, &entry.parents).into_iter().map(|(_, label)| label).collect();

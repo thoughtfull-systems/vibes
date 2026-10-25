@@ -4,7 +4,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use adw::prelude::*;
-use commonplace_core::{Date, Note, NoteId, Question, format_time, parse_time};
+use commonplace_core::{Date, Note, NoteId, Question, format_time, parse_loose_time};
 use gtk::glib;
 
 use crate::answers::AnswerForm;
@@ -100,14 +100,15 @@ impl EntryPanel {
         this.time.connect_activate(glib::clone!(
             #[weak]
             this,
-            move |entry| {
-                let text = entry.text();
-                match parse_time(text.trim()).or_else(|| parse_time(format!("0{}", text.trim()))) {
-                    Some(minute) => this.set_when(None, Some(minute)),
-                    None => entry.add_css_class("error"),
-                }
-            }
+            move |_| this.save_time()
         ));
+        let focus = gtk::EventControllerFocus::new();
+        focus.connect_leave(glib::clone!(
+            #[weak]
+            this,
+            move |_| this.save_time()
+        ));
+        this.time.add_controller(focus);
         this
     }
 
@@ -137,7 +138,9 @@ impl EntryPanel {
                 self.day.set_label(&format_date(date));
             }
             self.time.remove_css_class("error");
-            if !self.time.has_focus() || changed_note {
+            // The entry's text child holds the focus, never the entry itself.
+            let typing = self.time.state_flags().contains(gtk::StateFlags::FOCUS_WITHIN);
+            if !typing || changed_note {
                 self.time.set_text(&format_time((time.hour() * 60 + time.minute()) as u16));
             }
         }
@@ -183,6 +186,14 @@ impl EntryPanel {
             && form.widget.focus_child().is_none()
         {
             form.fill(&entry.answers);
+        }
+    }
+
+    /// Moves the entry to the time typed in the time field, or marks the field as wrong.
+    fn save_time(&self) {
+        match parse_loose_time(self.time.text()) {
+            Some(minute) => self.set_when(None, Some(minute)),
+            None => self.time.add_css_class("error"),
         }
     }
 

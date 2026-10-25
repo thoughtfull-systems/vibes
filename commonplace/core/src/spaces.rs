@@ -419,7 +419,7 @@ impl Spaces {
     /// Turns a memo into an entry in `journal`, which must be in the memo's library.
     pub fn convert_memo(&mut self, memo: NoteId, journal: NoteId) -> Result<NoteId, Error> {
         if self.owner_index(memo)? != self.owner_index(journal)? {
-            return Err(Error::NotAJournal(journal));
+            return Err(Error::DifferentLibraries);
         }
         self.owner_mut(memo)?.convert_memo(memo, journal)
     }
@@ -568,7 +568,8 @@ fn journals_by_label<'a>(libraries: impl Iterator<Item = &'a Library>) -> Vec<No
             library
                 .journals()
                 .into_iter()
-                .filter(|note| note.archived.is_none() && !library.is_in_trash(note.id))
+                // A journal is never in the action tree, so only its own flag puts it in the trash.
+                .filter(|note| note.archived.is_none() && !note.is_trashed())
         })
         .collect();
     journals.sort_by_key(|note| (note.label().unwrap_or_default().to_lowercase(), note.id));

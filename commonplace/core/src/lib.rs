@@ -23,7 +23,7 @@ pub use actions::{
 pub use id::{NoteId, ParseNoteIdError};
 pub use journals::{
     Answer, COLORS, ChoiceOption, Days, ENTRY_KIND, Entry, Handled, JOURNAL_KIND, Journal, Prompt,
-    Question, QuestionKind, Schedule, Times, format_time, parse_time, prompt_key,
+    Question, QuestionKind, Schedule, Times, format_time, parse_loose_time, parse_time, prompt_key,
 };
 pub use label::label;
 pub use library::{Library, MEMO, Note};
@@ -43,6 +43,8 @@ pub use words::word_count;
 pub enum Error {
     #[error("an action can't move inside itself")]
     CyclicMove(NoteId),
+    #[error("the memo and the journal are in different libraries")]
+    DifferentLibraries,
     #[error("an entry moves with its journal")]
     EntryMovesWithJournal(NoteId),
     #[error(transparent)]
@@ -57,6 +59,8 @@ pub enum Error {
     Malformed(NoteId),
     #[error("note {0} isn't a journal")]
     NotAJournal(NoteId),
+    #[error("note {0} isn't a memo")]
+    NotAMemo(NoteId),
     #[error("not a Commonplace library: its format is {0:?}")]
     NotALibrary(String),
     #[error("there's no library {0}")]
@@ -67,6 +71,8 @@ pub enum Error {
     NotFound(NoteId),
     #[error("note {0} isn't in the trash")]
     NotTrashed(NoteId),
+    #[error("a question keeps its type; add a new question instead")]
+    QuestionTypeChanged,
     #[error("a newer version of Commonplace wrote this library, so it's read-only")]
     ReadOnly,
     #[error("a library can't merge into itself")]

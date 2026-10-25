@@ -51,7 +51,7 @@ pub struct Note {
 impl Note {
     /// The note's title, derived from its body.
     pub fn label(&self) -> Option<String> {
-        label(&self.body)
+        if self.entry.is_some() { crate::label::entry_label(&self.body) } else { label(&self.body) }
     }
 
     /// Whether the note shows as a memo: a memo, or a note of a kind this version doesn't know.

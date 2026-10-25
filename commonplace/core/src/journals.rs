@@ -643,6 +643,15 @@ pub fn parse_time(text: impl AsRef<str>) -> Option<u16> {
     (hours < 24 && minutes < 60).then_some(hours * 60 + minutes)
 }
 
+/// Reads `HH:MM`, or `H:MM` with a one-digit hour, as minutes since midnight.
+pub fn parse_loose_time(text: impl AsRef<str>) -> Option<u16> {
+    let text = text.as_ref().trim();
+    match text.split_once(':') {
+        Some((hours, _)) if hours.len() == 1 => parse_time(format!("0{text}")),
+        _ => parse_time(text),
+    }
+}
+
 /// Writes minutes since midnight as `HH:MM`.
 pub fn format_time(minutes: u16) -> String {
     format!("{:02}:{:02}", minutes / 60, minutes % 60)
@@ -726,6 +735,14 @@ impl Library {
         let Some(index) = question_index(&list, &question.id) else {
             return Err(Error::Malformed(id));
         };
+        // Answers are typed by their question, so a new type would strand the old answers.
+        let old = self
+            .note(id)
+            .and_then(|note| note.journal)
+            .and_then(|journal| journal.question(&question.id).map(|old| old.kind.name()));
+        if old.is_some_and(|old| old != question.kind.name()) {
+            return Err(Error::QuestionTypeChanged);
+        }
         list.set(index, question.to_value()).map_err(loro_error)?;
         self.touch(id)?;
         self.commit()
@@ -882,6 +899,9 @@ impl Library {
     pub fn convert_memo(&mut self, memo: NoteId, journal: NoteId) -> Result<NoteId, Error> {
         self.check_writable()?;
         let note = self.note(memo).ok_or(Error::NotFound(memo))?;
+        if !note.is_memo() {
+            return Err(Error::NotAMemo(memo));
+        }
         let entry = self.insert_entry(journal, &note.body, note.created, None, &BTreeMap::new())?;
         self.body_text(memo)?
             .update(&format!("{}\n", wikilink(entry, None)), UpdateOptions::default())
@@ -1064,6 +1084,7 @@ mod tests {
             .unwrap();
         let note = library.note(entry).unwrap();
         assert_eq!(note.kind, ENTRY_KIND);
+        assert_eq!(note.label().as_deref(), Some("Shipped it."));
         let fields = note.entry.unwrap();
         assert_eq!(fields.journal, journal);
         assert_eq!((fields.at, fields.prompted), (5, Some(4)));
@@ -1092,6 +1113,9 @@ mod tests {
         let mut retired = renamed;
         retired.retired = Some(1);
         library.set_question(journal, &retired).unwrap();
+        let mut retyped = blockers.clone();
+        retyped.kind = QuestionKind::ShortText;
+        assert!(matches!(library.set_question(journal, &retyped), Err(Error::QuestionTypeChanged)));
         let fields = library.note(journal).unwrap().journal.unwrap();
         assert_eq!(fields.current_questions().count(), 1);
         assert_eq!(fields.questions.len(), 2);
@@ -1111,6 +1135,8 @@ mod tests {
         assert_eq!(memo.body, format!("{}\n", wikilink(entry, None)));
         assert!(memo.archived.is_some());
         assert!(matches!(library.convert_memo(memo.id, memo.id), Err(Error::NotAJournal(_))));
+        let task = library.create_task("x", None).unwrap();
+        assert!(matches!(library.convert_memo(task, journal), Err(Error::NotAMemo(_))));
     }
 
     #[test]

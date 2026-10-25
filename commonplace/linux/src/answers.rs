@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use adw::prelude::*;
-use commonplace_core::{Answer, Journal, QuestionKind, format_time, parse_time};
+use commonplace_core::{Answer, Journal, QuestionKind, format_time, parse_loose_time};
 use gtk::glib;
 
 type Changed = Rc<RefCell<Option<Box<dyn Fn(&str, Option<Answer>)>>>>;
@@ -360,15 +360,6 @@ fn parse_duration(text: &str) -> Option<u16> {
     hours.checked_mul(60)?.checked_add(minutes)
 }
 
-/// Reads a time of day from `HH:MM` or `H:MM`.
-fn parse_loose_time(text: &str) -> Option<u16> {
-    let text = text.trim();
-    match text.split_once(':') {
-        Some((hours, _)) if hours.len() == 1 => parse_time(format!("0{text}")),
-        _ => parse_time(text),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -382,12 +373,5 @@ mod tests {
         assert_eq!(parse_duration("45m"), Some(45));
         assert_eq!(parse_duration("1:75"), None);
         assert_eq!(parse_duration("soon"), None);
-    }
-
-    #[test]
-    fn reads_loose_times() {
-        assert_eq!(parse_loose_time("9:05"), Some(9 * 60 + 5));
-        assert_eq!(parse_loose_time("23:59"), Some(23 * 60 + 59));
-        assert_eq!(parse_loose_time("24:00"), None);
     }
 }

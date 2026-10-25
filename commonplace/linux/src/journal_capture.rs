@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use commonplace_core::{Note, NoteId, parse_note_uri};
-use gtk::{gdk, gio, glib};
+use gtk::glib;
 
 use crate::answers::AnswerForm;
 use crate::capture;
@@ -64,6 +64,12 @@ pub fn present(
     {
         journals.extend(state.read(|spaces| spaces.note(prompt.journal)));
     }
+    // A prompt answers only in its own journal, which may be gone by the time the owner answers.
+    if let Some(prompt) = &prompt
+        && !journals.iter().any(|journal| journal.id == prompt.journal && journal.journal.is_some())
+    {
+        return None;
+    }
     let start = prompt
         .as_ref()
         .map(|prompt| prompt.journal)
@@ -85,28 +91,7 @@ pub fn present(
     let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
     content.append(&form_holder);
     content.append(&scrolled);
-    let discard = gtk::Button::builder()
-        .label("_Discard")
-        .use_underline(true)
-        .tooltip_text("Discard (Escape)")
-        .build();
-    let save = gtk::Button::builder()
-        .label("_Save")
-        .use_underline(true)
-        .tooltip_text("Save (Ctrl+Return)")
-        .css_classes(["suggested-action"])
-        .build();
-    let header = adw::HeaderBar::builder()
-        .show_start_title_buttons(false)
-        .show_end_title_buttons(false)
-        .build();
-    let actions = gtk::ActionBar::new();
-    actions.pack_start(&discard);
-    actions.pack_end(&save);
-    let toolbar = adw::ToolbarView::new();
-    toolbar.add_top_bar(&header);
-    toolbar.add_bottom_bar(&actions);
-    toolbar.set_content(Some(&content));
+    let header = capture::header();
 
     let current = Rc::new(Cell::new(start));
     let form: Rc<RefCell<Option<Rc<AnswerForm>>>> = Rc::default();
@@ -203,101 +188,31 @@ pub fn present(
     }
     switch(start);
 
-    let window = adw::ApplicationWindow::builder()
-        .application(app)
-        .name(capture::NAME)
-        // The README's Sway rule floats capture windows by this exact title.
-        .title("Quick Capture")
-        .default_width(520)
-        .default_height(420)
-        .content(&toolbar)
-        .build();
-
-    let saving = Rc::new(Cell::new(false));
-    window.connect_close_request(glib::clone!(
-        #[strong]
-        saving,
-        #[strong]
-        state,
+    let save = glib::clone!(
         #[weak]
         view,
         #[upgrade_or]
-        glib::Propagation::Proceed,
-        move |window| {
-            if !saving.replace(false) {
-                return glib::Propagation::Proceed;
-            }
+        Ok(()),
+        move || {
             let text = editor::text(&view.buffer());
             let answers = form.borrow().as_ref().map(|form| form.answers()).unwrap_or_default();
             let unwritten = text.trim().is_empty() || text.trim() == template.borrow().trim();
             if unwritten && answers.is_empty() {
-                return glib::Propagation::Proceed;
+                return Ok(());
             }
             let journal = current.get();
             state.set_capture_journal(journal);
             let text = state.read(|spaces| editor::collapse_titles(spaces, &text));
             let prompt = prompt.as_ref().map(|prompt| (prompt.key.as_str(), prompt.prompted));
-            let created = state.write(|spaces| {
-                spaces.create_entry(journal, &text, opened, prompt, &answers, today())
-            });
-            match created {
-                Ok(_) => glib::Propagation::Proceed,
-                Err(error) => {
-                    let dialog = adw::AlertDialog::new(
-                        Some("Couldn’t Save the Entry"),
-                        Some(&error.to_string()),
-                    );
-                    dialog.add_response("ok", "_OK");
-                    dialog.present(Some(window));
-                    glib::Propagation::Stop
-                }
-            }
-        }
-    ));
-    let save_and_close = glib::clone!(
-        #[weak]
-        window,
-        move || {
-            saving.set(true);
-            window.close();
+            state
+                .write(|spaces| {
+                    spaces.create_entry(journal, &text, opened, prompt, &answers, today())
+                })
+                .map(|_| ())
         }
     );
-    discard.connect_clicked(glib::clone!(
-        #[weak]
-        window,
-        move |_| window.close()
-    ));
-    save.connect_clicked(glib::clone!(
-        #[strong]
-        save_and_close,
-        move |_| save_and_close()
-    ));
-    let save_action = gio::SimpleAction::new(capture::SAVE_ACTION, None);
-    save_action.connect_activate(move |_, _| save_and_close());
-    window.add_action(&save_action);
-    let toggle_space = gio::SimpleAction::new("toggle-space", Some(glib::VariantTy::INT32));
-    toggle_space.connect_activate(move |_, parameter| {
-        let index = parameter.and_then(|value| value.get::<i32>()).unwrap_or(0) - 1;
-        if let Some(button) = usize::try_from(index).ok().and_then(|index| buttons.get(index)) {
-            button.set_active(true);
-        }
-    });
-    window.add_action(&toggle_space);
-    let keys = gtk::EventControllerKey::new();
-    keys.connect_key_pressed(glib::clone!(
-        #[weak]
-        window,
-        #[upgrade_or]
-        glib::Propagation::Proceed,
-        move |_, key, _, _| {
-            if key != gdk::Key::Escape {
-                return glib::Propagation::Proceed;
-            }
-            window.close();
-            glib::Propagation::Stop
-        }
-    ));
-    window.add_controller(keys);
+    let failure = "Couldn’t Save the Entry";
+    let window = capture::window(app, &header, &content, (520, 420), buttons, failure, save);
 
     window.present();
     view.grab_focus();

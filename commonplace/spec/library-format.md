@@ -138,7 +138,8 @@ Each question is a map value, which writers replace whole to change it.
 The types are `text`, `short_text`, `number`, `scale`, `choice`, `yes_no`, `duration`, and `time`.
 Each option is a map of `id`, `label`, and an optional `retired`. A scale with no `min` runs from 1,
 and one with no `max` runs to 5. Readers skip a question with no `id` or an unknown `type`. A
-retired question or option asks nothing, but keeps its place so old answers keep their labels.
+retired question or option asks nothing, but keeps its place so old answers keep their labels. A
+question's `type` never changes, since its answers depend on it.
 
 #### Schedules
 
@@ -359,6 +360,10 @@ The markers are:
 - **List marker:** `-`, `*`, or `+` followed by a space, plus an optional checkbox, `[ ]`, `[x]`, or
   `[X]`, after any white space.
 - **Block quote marker:** `>`.
+
+An entry's label comes from the first line that contains a character other than white space and
+doesn't start with a heading marker, since its journal's template writes the headings. An entry with
+nothing but headings takes its label from the body as any note does.
 
 An implementation may shorten a long label for display.
 

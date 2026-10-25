@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0-no-copyleft-exception
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashSet};
 use std::rc::Rc;
 
@@ -79,6 +79,8 @@ pub struct JournalsView {
     on_open: RefCell<Option<OpenHandler>>,
     on_new: RefCell<Option<Rc<dyn Fn()>>>,
     query: RefCell<String>,
+    /// Set when the library changed while the tab didn't show, so it rebuilds once it shows.
+    stale: Cell<bool>,
     range: gtk::DropDown,
     scrolled: gtk::ScrolledWindow,
     state: Rc<State>,
@@ -164,6 +166,7 @@ impl JournalsView {
             on_open: RefCell::default(),
             on_new: RefCell::default(),
             query: RefCell::default(),
+            stale: Cell::new(false),
             range,
             scrolled,
             state,
@@ -216,6 +219,15 @@ impl JournalsView {
                 }
             }
         ));
+        this.widget.connect_map(glib::clone!(
+            #[weak]
+            this,
+            move |_| {
+                if this.stale.replace(false) {
+                    this.show();
+                }
+            }
+        ));
         adw::StyleManager::default().connect_dark_notify(glib::clone!(
             #[weak]
             this,
@@ -233,10 +245,14 @@ impl JournalsView {
         self.on_new.replace(Some(Rc::new(f)));
     }
 
-    /// Shows the entries that match `query`.
+    /// Shows the entries that match `query`, now if the tab shows, or else once it does.
     pub fn refresh(self: &Rc<Self>, query: &str) {
         self.query.replace(query.to_owned());
-        self.show();
+        if self.widget.is_mapped() {
+            self.show();
+        } else {
+            self.stale.set(true);
+        }
     }
 
     fn hidden(&self) -> HashSet<String> {

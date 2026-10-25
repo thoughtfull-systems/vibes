@@ -6,7 +6,7 @@ use std::rc::Rc;
 use adw::prelude::*;
 use commonplace_core::{
     COLORS, ChoiceOption, Days, Journal, Note, NoteId, Question, QuestionKind, Schedule, Times,
-    format_time, parse_time,
+    format_time, parse_loose_time, parse_time,
 };
 use gtk::glib;
 
@@ -357,6 +357,12 @@ impl QuestionEditor {
         let kind = gtk::DropDown::from_strings(&KINDS.map(|(label, _)| label));
         let name = question.map_or("text", |question| question.kind.name());
         kind.set_selected(KINDS.iter().position(|(_, kind)| *kind == name).unwrap_or(0) as u32);
+        if question.is_some() {
+            kind.set_sensitive(false);
+            kind.set_tooltip_text(Some(
+                "A question keeps its type. Add a new question for another type.",
+            ));
+        }
         let entry = |placeholder: &str| gtk::Entry::builder().placeholder_text(placeholder).build();
         let (unit, min, max) = (entry("Unit, such as kg"), entry("Least"), entry("Greatest"));
         let (low, high) = (entry("Label for the least"), entry("Label for the greatest"));
@@ -642,7 +648,7 @@ impl ScheduleEditor {
                 .text()
                 .split([',', ' '])
                 .filter(|part| !part.is_empty())
-                .filter_map(loose_time)
+                .filter_map(parse_loose_time)
                 .collect();
             list.sort_unstable();
             list.dedup();
@@ -655,14 +661,6 @@ impl ScheduleEditor {
             Some(existing) => Schedule { days, times, ..existing.clone() },
             None => Schedule::new(days, times),
         })
-    }
-}
-
-/// Reads `HH:MM` or `H:MM`.
-fn loose_time(text: &str) -> Option<u16> {
-    match text.split_once(':') {
-        Some((hours, _)) if hours.len() == 1 => parse_time(format!("0{text}")),
-        _ => parse_time(text),
     }
 }
 

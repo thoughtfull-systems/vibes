@@ -18,6 +18,10 @@ const INTERVAL_SECONDS: u32 = 20;
 /// The notifications showing, by journal: the prompt each shows and when it came due.
 type Shown = Rc<RefCell<HashMap<NoteId, (String, i64)>>>;
 
+/// The journals as of a count of the libraries' commits, so a check reads them again only after
+/// they change.
+type Journals = Rc<RefCell<Option<(u64, Vec<Note>)>>>;
+
 /// Sends a notification for each journal that prompts on this device when its latest prompt comes
 /// due, and handles the notifications' actions.
 pub fn start(app: &adw::Application, state: Rc<State>) {
@@ -82,6 +86,7 @@ pub fn start(app: &adw::Application, state: Rc<State>) {
     ));
     app.add_action(&skip);
 
+    let journals: Journals = Rc::default();
     let check = glib::clone!(
         #[weak]
         app,
@@ -89,7 +94,7 @@ pub fn start(app: &adw::Application, state: Rc<State>) {
         state,
         #[strong]
         shown,
-        move || check(&app, &state, &shown)
+        move || check(&app, &state, &shown, &journals)
     );
     check();
     glib::timeout_add_seconds_local(INTERVAL_SECONDS, move || {
@@ -108,17 +113,23 @@ fn handle(app: &adw::Application, state: &State, journal: NoteId, key: &str, han
 
 /// Shows each journal's due prompt, unless it already shows, and takes away notifications for
 /// prompts that something else has handled, such as another device.
-fn check(app: &adw::Application, state: &State, shown: &Shown) {
+fn check(app: &adw::Application, state: &State, shown: &Shown, cache: &Journals) {
     let Ok(local) = glib::DateTime::now_local() else {
         return;
     };
     let today = today();
     let minute = (local.hour() * 60 + local.minute()) as u16;
     let now = now();
-    let journals: Vec<Note> = state
-        .read(|spaces| spaces.all_journals())
-        .into_iter()
+    let commits = state.read(|spaces| spaces.commits());
+    if cache.borrow().as_ref().is_none_or(|(seen, _)| *seen != commits) {
+        cache.replace(Some((commits, state.read(|spaces| spaces.all_journals()))));
+    }
+    let journals: Vec<Note> = cache
+        .borrow()
+        .iter()
+        .flat_map(|(_, journals)| journals)
         .filter(|journal| state.prompts_here(journal.id))
+        .cloned()
         .collect();
     let mut due: HashMap<NoteId, (Prompt, i64)> = HashMap::new();
     for journal in &journals {
