@@ -4,6 +4,7 @@
 
 mod actions;
 mod id;
+mod journals;
 mod label;
 mod library;
 mod links;
@@ -20,6 +21,10 @@ pub use actions::{
     ActionView, Date, Dated, ParseDateError,
 };
 pub use id::{NoteId, ParseNoteIdError};
+pub use journals::{
+    Answer, COLORS, ChoiceOption, Days, ENTRY_KIND, Entry, Handled, JOURNAL_KIND, Journal, Prompt,
+    Question, QuestionKind, Schedule, Times, format_time, parse_time, prompt_key,
+};
 pub use label::label;
 pub use library::{Library, MEMO, Note};
 pub use links::{
@@ -38,6 +43,8 @@ pub use words::word_count;
 pub enum Error {
     #[error("an action can't move inside itself")]
     CyclicMove(NoteId),
+    #[error("an entry moves with its journal")]
+    EntryMovesWithJournal(NoteId),
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error("a device keeps at least one library")]
@@ -48,6 +55,8 @@ pub enum Error {
     Loro(String),
     #[error("note {0} is malformed")]
     Malformed(NoteId),
+    #[error("note {0} isn't a journal")]
+    NotAJournal(NoteId),
     #[error("not a Commonplace library: its format is {0:?}")]
     NotALibrary(String),
     #[error("there's no library {0}")]

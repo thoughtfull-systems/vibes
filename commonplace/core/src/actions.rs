@@ -57,6 +57,12 @@ impl Date {
     pub fn day(self) -> u8 {
         self.day
     }
+
+    /// The day of the week, from 0 for Monday to 6 for Sunday.
+    pub fn weekday(self) -> u8 {
+        // 1970-01-01 was a Thursday.
+        (self.days() + 3).rem_euclid(7) as u8
+    }
 }
 
 impl Date {
@@ -331,7 +337,7 @@ pub struct ActionDates {
 }
 
 /// An action in a view.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ActionEntry {
     pub dates: ActionDates,
     /// How many of the action's ancestors the view also shows.
@@ -564,7 +570,8 @@ impl Library {
         entries
     }
 
-    /// Every note in the trash, itself or through an action above it.
+    /// Every note in the trash, itself or through an action above it or the journal it belongs
+    /// to.
     pub fn notes_in_trash(&self) -> HashSet<NoteId> {
         let notes = self.notes();
         let trashed: HashSet<NoteId> =
@@ -572,10 +579,14 @@ impl Library {
         let hierarchy = self.hierarchy();
         notes
             .iter()
-            .map(|note| note.id)
-            .filter(|&id| {
-                std::iter::once(id).chain(hierarchy.ancestors(id)).any(|id| trashed.contains(&id))
+            .filter(|note| {
+                let journal = note.entry.as_ref().map(|entry| entry.journal);
+                std::iter::once(note.id)
+                    .chain(hierarchy.ancestors(note.id))
+                    .chain(journal)
+                    .any(|id| trashed.contains(&id))
             })
+            .map(|note| note.id)
             .collect()
     }
 
@@ -621,11 +632,12 @@ impl Library {
         Ok(format!("{}\n", elements.join("\n\n")))
     }
 
-    /// Whether the note is in the trash, itself or through an action it belongs to.
+    /// Whether the note is in the trash, itself or through an action or a journal it belongs to.
     pub fn is_in_trash(&self, id: NoteId) -> bool {
         let hierarchy = self.hierarchy();
         std::iter::once(id)
             .chain(hierarchy.ancestors(id))
+            .chain(self.entry_journal(id))
             .any(|note| self.note(note).is_some_and(|note| note.is_trashed()))
     }
 

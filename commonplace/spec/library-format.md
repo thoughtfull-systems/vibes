@@ -5,8 +5,8 @@ implementation can read and write the same data.
 [Decision 0002](../../decisions/0002-commonplace-library-storage.md) explains the choice of format,
 and [decision 0004](../../decisions/0004-commonplace-actions.md) explains actions.
 
-Version 1 covered memos. Version 2 adds actions. Version 3 lets every note go to the archive. Later
-versions add curios, zettels, attachments, and spaced repetition.
+Version 1 covered memos. Version 2 adds actions. Version 3 lets every note go to the archive, and
+adds journals. Later versions add curios, zettels, attachments, and spaced repetition.
 
 ## Document
 
@@ -53,10 +53,12 @@ Each value is a map with these keys.
 | ---------- | ------- | ---------------------------------------------------------------------- |
 | `body`     | Text    | The note's content, in [Commonplace Markdown](#body).                  |
 | `created`  | Integer | The note's creation time, as [a timestamp](#timestamps).               |
-| `kind`     | String  | The kind of note: `memo` or `action`.                                  |
+| `kind`     | String  | The kind of note: `memo`, `action`, `journal`, or `entry`.             |
 | `modified` | Integer | When the note last changed, as a timestamp.                            |
 | `action`   | Map     | The [action fields](#action-fields). Present for every action.         |
 | `archived` | Integer | When the note went to the [archive](#archive). Absent outside it.      |
+| `journal`  | Map     | The [journal fields](#journal-fields). Present for every journal.      |
+| `entry`    | Map     | The [entry fields](#entry-fields). Present for every entry.            |
 | `trashed`  | Integer | When the note moved to the trash. Absent for notes not in it.          |
 | `settings` | Map     | Preferences about this note alone, as [settings](#settings) describes. |
 
@@ -64,7 +66,8 @@ Later versions use the names `curio` and `zettel` for the kinds they add, so ver
 them. An implementation shows a note of a kind it doesn't know as a memo, and leaves its `kind`
 alone.
 
-A note's `kind` never changes. Readers ignore an `action` map in a note whose kind isn't `action`.
+A note's `kind` never changes. Readers ignore an `action`, `journal`, or `entry` map in a note of
+another kind.
 
 ### Action fields
 
@@ -96,6 +99,95 @@ a missing `project` as `false`.
 A project's list and dates apply to its subtree too. An action counts as deferred if it or any
 ancestor has a `defer` date after today. The list that applies to an action is the latest, among its
 own list and its ancestors' lists, in the order `active`, `waiting`, `someday`, `maybe`, `inbox`.
+
+### Journal fields
+
+A note of kind `journal` is a journal, as
+[decision 0010](../../decisions/0010-commonplace-journals.md) describes. Its body's label names it.
+Its `journal` map has these keys.
+
+| Key         | Type         | Value                                                         |
+| ----------- | ------------ | ------------------------------------------------------------- |
+| `color`     | String       | The journal's color, from the list below.                     |
+| `questions` | Movable list | The [questions](#questions), in order, each a map value.      |
+| `schedules` | Map          | The [schedules](#schedules), each a map value, by identifier. |
+| `handled`   | Map          | What happened to each [prompt](#prompts), by its key.         |
+
+The colors are `blue`, `green`, `yellow`, `orange`, `red`, `purple`, `brown`, and `gray`, and
+readers treat a missing or unknown `color` as `blue`. Identifiers of questions, options, and
+schedules take the form of note identifiers, and writers make a new one for each.
+
+#### Questions
+
+Each question is a map value, which writers replace whole to change it.
+
+| Key        | Type    | Value                                                                    |
+| ---------- | ------- | ------------------------------------------------------------------------ |
+| `id`       | String  | The question's identifier, which never changes.                          |
+| `prompt`   | String  | The question as it shows.                                                |
+| `type`     | String  | The kind of answer it takes, from the list below.                        |
+| `retired`  | Integer | When the owner removed the question. Absent while it's current.          |
+| `unit`     | String  | For `number`, an optional unit.                                          |
+| `min`      | Number  | For `number`, an optional least value, and for `scale`, the least value. |
+| `max`      | Number  | For `number`, an optional greatest value, and for `scale`, the greatest. |
+| `low`      | String  | For `scale`, an optional label for `min`.                                |
+| `high`     | String  | For `scale`, an optional label for `max`.                                |
+| `multiple` | Boolean | For `choice`, whether an answer can pick more than one option.           |
+| `options`  | List    | For `choice`, the options in order.                                      |
+
+The types are `text`, `short_text`, `number`, `scale`, `choice`, `yes_no`, `duration`, and `time`.
+Each option is a map of `id`, `label`, and an optional `retired`. A scale with no `min` runs from 1,
+and one with no `max` runs to 5. Readers skip a question with no `id` or an unknown `type`. A
+retired question or option asks nothing, but keeps its place so old answers keep their labels.
+
+#### Schedules
+
+Each schedule is a map value. Its `rule` is an `RRULE` of dates: `FREQ=DAILY`, or `FREQ=WEEKLY` with
+a `BYDAY` that names days without ordinals. Its `kind` is `fixed` or `random`. Times are local to
+the device that reads them, written `HH:MM`.
+
+- **Fixed:** `times` is a list of times.
+- **Random:** `start` and `end` bound a window, `mean` is a whole number of minutes, at least 1, and
+  `min_gap` is a whole number of minutes.
+
+Readers skip a schedule whose rule or fields they can't read.
+
+#### Prompts
+
+A schedule makes its prompts for each day its rule includes. A fixed schedule prompts at each of its
+times. A random schedule seeds a generator with the 64-bit Fowler-Noll-Vo (FNV) hash, in its FNV-1a
+variant, of the UTF-8 text of the journal's identifier, a space, the schedule's identifier, a space,
+and the date, written `YYYY-MM-DD`. The generator is SplitMix64, whose state starts at the seed and
+which, for each output, adds `0x9E3779B97F4A7C15` to its state and mixes the result with the
+standard SplitMix64 mixing function. The schedule then walks each minute from `start` up to but not
+including `end`. A minute less than `min_gap` minutes after the last prompt draws nothing. Every
+other minute draws one output, and prompts if the output is a multiple of `mean`. A `min_gap` of 0
+counts as 1.
+
+A prompt's key is the schedule's identifier, the date, and the time, joined by `/`, as in
+`<schedule>/2026-10-26/14:00`. Each value in `handled` is a map value with a `state` of `answered`,
+with the entry's identifier in `entry`; `skipped`; or `snoozed`, with a timestamp in `until`. It
+also holds, in `at`, the timestamp of the write that made it. A prompt has come due once its time
+has passed and nothing has handled it, or once its snooze has run out. An implementation shows only
+the latest prompt due today in each journal, and never a prompt from an earlier day.
+
+### Entry fields
+
+A note of kind `entry` is an entry in one journal. Its `entry` map has these keys.
+
+| Key        | Type    | Value                                                                    |
+| ---------- | ------- | ------------------------------------------------------------------------ |
+| `journal`  | String  | The identifier of its journal, which is in the same library.             |
+| `at`       | Integer | When the entry happened, as a timestamp.                                 |
+| `prompt`   | String  | The key of the prompt it answers. Absent for an entry started by hand.   |
+| `prompted` | Integer | When that prompt came due. Absent for an entry started by hand.          |
+| `answers`  | Map     | The answers to the questions that aren't `text`, by question identifier. |
+
+An answer to a `number`, `scale`, or `duration` question holds a number, with durations in minutes.
+An answer to a `short_text` or `time` question is a string, with times written `HH:MM`. An answer to
+a `yes_no` question is a Boolean, and one to a `choice` question is a list of option identifiers.
+Readers treat an entry with a missing `at` as happening at its `created` time, and show an entry
+with no `journal` as a memo.
 
 ### `actions`
 
@@ -184,10 +276,19 @@ Readers ignore a tombstone for a note that `notes` still holds.
   create its node, all in one commit.
 - **Delete an action with its subtree.** To delete an action, delete its node and its subtree's
   nodes and notes.
-- **Leave a tombstone.** In the commit that deletes a note for good, write a tombstone for it, and
-  for each action in its subtree. Moving a note to another library leaves none, because the note
-  still exists.
+- **Leave a tombstone.** In the commit that deletes a note for good, write a tombstone for it, for
+  each action in its subtree, and for each entry in it if it's a journal. Moving a note to another
+  library leaves none, because the note still exists.
 - **Promote parents.** When an action gets its first child, set its `project` to `true`.
+- **Answer a prompt with its entry.** Create an entry that answers a prompt in the same commit as
+  the `handled` record that names it.
+- **Forget old prompts.** A writer may remove `handled` records whose prompts' dates come before
+  yesterday, since those prompts never show again.
+- **Turn a memo into an entry in one commit.** Create the entry with the memo's body and `at` set to
+  the memo's `created`, replace the memo's body with a wikilink to the entry, and set the memo's
+  `archived`, all in one commit.
+- **Move a journal with its entries.** Moving a journal to another library moves every entry in it,
+  and an entry never moves on its own.
 - **Close and reopen.** Set `closed` when `state` becomes `done`, and remove it when `state` becomes
   `open`.
 - **Preserve what you don't understand.** Never remove or overwrite a key or a root container that
@@ -210,6 +311,10 @@ A note is in the trash if it has `trashed`, or if it's an action with an ancesto
 project in the trash takes its whole subtree with it, and restoring the project restores the
 subtree. Restoring an action also restores any ancestors in the trash, so that it leaves the trash
 rather than staying there through one of them.
+
+An entry is in the trash if its journal is, so a journal in the trash takes its entries with it.
+Restoring an entry also restores its journal. Deleting a journal for good deletes its entries, with
+a tombstone for each.
 
 ## Archive
 

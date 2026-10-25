@@ -309,9 +309,7 @@ impl Browser {
                 .filter(|note| match scope {
                     Scope::All => !in_trash.contains(&note.id),
                     Scope::Memos => {
-                        note.action.is_none()
-                            && note.archived.is_none()
-                            && !in_trash.contains(&note.id)
+                        note.is_memo() && note.archived.is_none() && !in_trash.contains(&note.id)
                     }
                     Scope::Trash => note.is_trashed(),
                 })

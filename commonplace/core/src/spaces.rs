@@ -3,7 +3,7 @@
 //! Every library on a device, shown together as spaces, as decision 0007 describes.
 
 use std::cmp::Reverse;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs::{self, File, TryLockError};
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
@@ -13,8 +13,8 @@ use loro::{ExportMode, LoroMap, ValueOrContainer};
 use crate::actions::order_key;
 use crate::library::{MODIFIED, loro_error, now};
 use crate::{
-    ActionChange, ActionDates, ActionEntry, ActionView, Date, Error, Library, Note, NoteId,
-    plain_links,
+    ActionChange, ActionDates, ActionEntry, ActionView, Answer, Date, Error, Handled, Library,
+    Note, NoteId, Question, Schedule, plain_links,
 };
 
 const LIBRARIES: &str = "libraries";
@@ -338,6 +338,92 @@ impl Spaces {
         self.owner_mut(id)?.set_archived(id, archived)
     }
 
+    pub fn create_journal(&mut self, space: &str, name: &str) -> Result<NoteId, Error> {
+        self.library_mut(space)?.create_journal(name)
+    }
+
+    /// The journals outside the trash in every library, shown or not, by label.
+    pub fn all_journals(&self) -> Vec<Note> {
+        journals_by_label(self.all())
+    }
+
+    /// The journals outside the trash in the libraries that show, by label.
+    pub fn journals(&self) -> Vec<Note> {
+        journals_by_label(self.shown())
+    }
+
+    pub fn journal_entries(&self, journal: NoteId) -> Vec<NoteId> {
+        self.owner(journal).map(|library| library.journal_entries(journal)).unwrap_or_default()
+    }
+
+    pub fn set_journal_color(&mut self, id: NoteId, color: &str) -> Result<(), Error> {
+        self.owner_mut(id)?.set_journal_color(id, color)
+    }
+
+    pub fn add_question(&mut self, id: NoteId, question: &Question) -> Result<(), Error> {
+        self.owner_mut(id)?.add_question(id, question)
+    }
+
+    pub fn set_question(&mut self, id: NoteId, question: &Question) -> Result<(), Error> {
+        self.owner_mut(id)?.set_question(id, question)
+    }
+
+    pub fn move_question(&mut self, id: NoteId, question: &str, up: bool) -> Result<(), Error> {
+        self.owner_mut(id)?.move_question(id, question, up)
+    }
+
+    pub fn set_schedule(&mut self, id: NoteId, schedule: &Schedule) -> Result<(), Error> {
+        self.owner_mut(id)?.set_schedule(id, schedule)
+    }
+
+    pub fn remove_schedule(&mut self, id: NoteId, schedule: &str) -> Result<(), Error> {
+        self.owner_mut(id)?.remove_schedule(id, schedule)
+    }
+
+    pub fn handle_prompt(
+        &mut self,
+        journal: NoteId,
+        key: &str,
+        handled: Handled,
+        today: Date,
+    ) -> Result<(), Error> {
+        self.owner_mut(journal)?.handle_prompt(journal, key, handled, today)
+    }
+
+    /// Creates an entry in `journal`, in the journal's library.
+    pub fn create_entry(
+        &mut self,
+        journal: NoteId,
+        body: &str,
+        at: i64,
+        prompt: Option<(&str, i64)>,
+        answers: &BTreeMap<String, Answer>,
+        today: Date,
+    ) -> Result<NoteId, Error> {
+        self.owner_mut(journal)?.create_entry(journal, body, at, prompt, answers, today)
+    }
+
+    pub fn set_entry_at(&mut self, id: NoteId, at: i64) -> Result<(), Error> {
+        self.owner_mut(id)?.set_entry_at(id, at)
+    }
+
+    pub fn set_answer(
+        &mut self,
+        id: NoteId,
+        question: &str,
+        answer: Option<&Answer>,
+    ) -> Result<(), Error> {
+        self.owner_mut(id)?.set_answer(id, question, answer)
+    }
+
+    /// Turns a memo into an entry in `journal`, which must be in the memo's library.
+    pub fn convert_memo(&mut self, memo: NoteId, journal: NoteId) -> Result<NoteId, Error> {
+        if self.owner_index(memo)? != self.owner_index(journal)? {
+            return Err(Error::NotAJournal(journal));
+        }
+        self.owner_mut(memo)?.convert_memo(memo, journal)
+    }
+
     pub fn change_action(&mut self, id: NoteId, change: ActionChange) -> Result<(), Error> {
         self.owner_mut(id)?.change_action(id, change)
     }
@@ -388,6 +474,9 @@ impl Spaces {
 
     /// Moves a note, with its steps if it's an action, to the top level of another library.
     pub fn move_to_space(&mut self, id: NoteId, space: &str) -> Result<(), Error> {
+        if self.note(id).is_some_and(|note| note.entry.is_some()) {
+            return Err(Error::EntryMovesWithJournal(id));
+        }
         let to = self.index(space)?;
         if to != self.owner_index(id)? {
             self.transfer(id, to, None)?;
@@ -395,15 +484,18 @@ impl Spaces {
         Ok(())
     }
 
-    /// Writes a note, and its subtree if it's an action, into another library under `parent`, then
-    /// deletes it from its own, skipping the trash so it doesn't linger there.
+    /// Writes a note, with its subtree if it's an action or its entries if it's a journal, into
+    /// another library under `parent`, then deletes it from its own, skipping the trash so it
+    /// doesn't linger there.
     fn transfer(&mut self, id: NoteId, to: usize, parent: Option<NoteId>) -> Result<(), Error> {
         let from = self.owner_index(id)?;
         let (source, target) = pair(&mut self.spaces, from, to);
         source.check_writable()?;
         target.check_writable()?;
-        let is_action = source.note(id).ok_or(Error::NotFound(id))?.action.is_some();
+        let note = source.note(id).ok_or(Error::NotFound(id))?;
+        let is_action = note.action.is_some();
         let mut moving = vec![(id, parent)];
+        let entries = if note.journal.is_some() { source.journal_entries(id) } else { Vec::new() };
         if is_action {
             let hierarchy = source.hierarchy();
             moving.extend(
@@ -416,12 +508,18 @@ impl Spaces {
                 target.place_node(note, parent)?;
             }
         }
+        for &entry in &entries {
+            target.insert_copy(entry, &source.note_map(entry)?)?;
+        }
         target.note_map(id)?.insert(MODIFIED, now()).map_err(loro_error)?;
         target.commit()?;
         if is_action {
             source.delete_action_subtree(id)?;
         } else {
             source.notes_map().delete(&id.to_string()).map_err(loro_error)?;
+        }
+        for entry in entries {
+            source.notes_map().delete(&entry.to_string()).map_err(loro_error)?;
         }
         source.commit()
     }
@@ -461,6 +559,17 @@ impl Spaces {
         let index = self.owner_index(id)?;
         Ok(&mut self.spaces[index].library)
     }
+}
+
+/// The journals outside the trash in `libraries`, by label, ignoring case.
+fn journals_by_label<'a>(libraries: impl Iterator<Item = &'a Library>) -> Vec<Note> {
+    let mut journals: Vec<Note> = libraries
+        .flat_map(|library| {
+            library.journals().into_iter().filter(|note| !library.is_in_trash(note.id))
+        })
+        .collect();
+    journals.sort_by_key(|note| (note.label().unwrap_or_default().to_lowercase(), note.id));
+    journals
 }
 
 /// Moves the files of a library kept directly in `dir` into a folder of its own, and returns the
@@ -547,6 +656,25 @@ mod tests {
             .map(|entry| entry.note.id)
             .collect();
         assert_eq!(next, [sooner, later, undated]);
+    }
+
+    #[test]
+    fn moves_a_journal_with_its_entries() {
+        let mut spaces = Spaces::in_memory(&["home", "work"]);
+        let journal = spaces.create_journal("home", "Work log").unwrap();
+        let today: Date = "2026-10-26".parse().unwrap();
+        let entry = spaces.create_entry(journal, "x", 1, None, &BTreeMap::new(), today).unwrap();
+        assert!(matches!(
+            spaces.move_to_space(entry, "work"),
+            Err(Error::EntryMovesWithJournal(_))
+        ));
+        spaces.move_to_space(journal, "work").unwrap();
+        assert_eq!(spaces.space_of(journal), Some("work"));
+        assert_eq!(spaces.space_of(entry), Some("work"));
+        assert_eq!(spaces.journal_entries(journal), [entry]);
+        let names: Vec<String> =
+            spaces.journals().iter().filter_map(|journal| journal.label()).collect();
+        assert_eq!(names, ["Work log"]);
     }
 
     #[test]
