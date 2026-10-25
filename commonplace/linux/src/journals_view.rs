@@ -689,9 +689,12 @@ fn local_date(at: i64) -> Option<Date> {
 /// What a day grid draws in one cell.
 #[derive(Clone, Copy, PartialEq)]
 enum Mark {
+    /// Nothing, for an option not picked on a day that answered.
     Empty,
-    /// A hollow ring, for a no.
-    Ring,
+    /// A faint dashed ring, for a day with no answer.
+    Missing,
+    /// An ×, for a no.
+    Cross,
     /// A filled dot, for a yes or an option picked.
     Dot,
 }
@@ -717,6 +720,19 @@ fn day_grid(
         days.push(day.add_days(1));
     }
     let column = |at: i64| local_date(at).and_then(|date| days.iter().position(|day| *day == date));
+    let mut answered = vec![false; days.len()];
+    for (at, _) in answers {
+        if let Some(index) = column(*at) {
+            answered[index] = true;
+        }
+    }
+    let unanswered = |marks: &mut Vec<Mark>| {
+        for (mark, answered) in marks.iter_mut().zip(&answered) {
+            if !answered {
+                *mark = Mark::Missing;
+            }
+        }
+    };
     let mut rows: Vec<(String, Vec<Mark>, String)> = Vec::new();
     let caption;
     match &question.kind {
@@ -730,12 +746,17 @@ fn day_grid(
                         marks[index] = Mark::Dot;
                     }
                 }
+                unanswered(&mut marks);
                 let count = marks.iter().filter(|mark| **mark == Mark::Dot).count();
                 if option.retired.is_none() || count > 0 {
                     rows.push((option.label.clone(), marks, count.to_string()));
                 }
             }
-            caption = "A dot for each day that picked the option".to_owned();
+            caption = [
+                "A dot for each day that picked the option,",
+                "and a dashed ring for days with no answer",
+            ]
+            .join(" ");
         }
         _ => {
             let mut marks = vec![Mark::Empty; days.len()];
@@ -743,13 +764,15 @@ fn day_grid(
                 if let (Answer::Bool(yes), Some(index)) = (answer, column(*at)) {
                     // A day with both answers shows the yes.
                     if *yes || marks[index] == Mark::Empty {
-                        marks[index] = if *yes { Mark::Dot } else { Mark::Ring };
+                        marks[index] = if *yes { Mark::Dot } else { Mark::Cross };
                     }
                 }
             }
+            unanswered(&mut marks);
             let yes = marks.iter().filter(|mark| **mark == Mark::Dot).count();
-            let answered = marks.iter().filter(|mark| **mark != Mark::Empty).count();
-            caption = format!("A dot for yes and a ring for no · Yes on {yes} of {answered} days");
+            let answered = marks.iter().filter(|mark| **mark != Mark::Missing).count();
+            let key = "A dot for yes, an × for no, and a dashed ring for no answer";
+            caption = format!("{key} · Yes on {yes} of {answered} days");
             rows.push(("Yes".to_owned(), marks, format!("{yes} of {answered}")));
         }
     }
@@ -775,24 +798,34 @@ fn day_grid(
             cr.move_to(12.0, middle + 4.0);
             let _ = cr.show_text(label);
             text_right(cr, count, width - 12.0, middle + 4.0);
-            cr.set_source_rgba(ir, ig, ib, 0.08);
-            for index in 0..marks.len() {
-                let x = GRID_LABELS + cell * (index as f64 + 0.5);
-                cr.arc(x, middle, 1.0, 0.0, std::f64::consts::TAU);
-                let _ = cr.fill();
-            }
+            cr.new_path();
             cr.set_source_rgb(r, g, b);
             cr.set_line_width(2.0);
+            cr.set_line_cap(cairo::LineCap::Round);
             for (index, mark) in marks.iter().enumerate() {
                 let x = GRID_LABELS + cell * (index as f64 + 0.5);
+                cr.new_sub_path();
                 match mark {
                     Mark::Dot => {
                         cr.arc(x, middle, radius, 0.0, std::f64::consts::TAU);
                         let _ = cr.fill();
                     }
-                    Mark::Ring => {
+                    Mark::Cross => {
+                        let arm = (radius * 0.8).max(1.5);
+                        cr.move_to(x - arm, middle - arm);
+                        cr.line_to(x + arm, middle + arm);
+                        cr.move_to(x + arm, middle - arm);
+                        cr.line_to(x - arm, middle + arm);
+                        let _ = cr.stroke();
+                    }
+                    Mark::Missing => {
+                        cr.save().ok();
+                        cr.set_source_rgba(r, g, b, 0.55);
+                        cr.set_line_width(1.0);
+                        cr.set_dash(&[1.5, 1.5], 0.0);
                         cr.arc(x, middle, (radius - 1.0).max(1.0), 0.0, std::f64::consts::TAU);
                         let _ = cr.stroke();
+                        cr.restore().ok();
                     }
                     Mark::Empty => {}
                 }
@@ -820,8 +853,9 @@ fn day_grid(
         };
         let state = match (yes_no, marks[index as usize]) {
             (true, Mark::Dot) => "Yes",
-            (true, Mark::Ring) => "No",
+            (true, Mark::Cross) => "No",
             (false, Mark::Dot) => "Picked",
+            (false, Mark::Empty) => "Not picked",
             (_, _) => "No answer",
         };
         tooltip.set_text(Some(&format!("{}\n{label}: {state}", format_date(*day))));
