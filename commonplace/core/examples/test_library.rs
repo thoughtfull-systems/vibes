@@ -114,6 +114,10 @@ fn memos(library: &mut Library) -> Result<NoteId, Error> {
     library.create_memo("")?;
     let trashed = library.create_memo("A trashed memo\n\nRestore it or delete it for good.\n")?;
     library.trash(trashed)?;
+    library.create_memo(&format!(
+        "A link into the trash\n\nOpen {}, then delete it for good to return here.\n",
+        wikilink(trashed, None)
+    ))?;
     let archived = library
         .create_memo("An archived memo\n\nAll Notes lists it, and the Memos tab doesn't.\n")?;
     library.set_archived(archived, true)?;

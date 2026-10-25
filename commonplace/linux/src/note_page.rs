@@ -500,8 +500,7 @@ impl NotePage {
         this
     }
 
-    /// Calls `f` when the user presses Escape, or deletes the open note, so the view has nothing
-    /// to show.
+    /// Calls `f` when the user presses Escape.
     pub fn connect_leave(&self, f: impl Fn() + 'static) {
         *self.on_leave.borrow_mut() = Some(Rc::new(f));
     }
@@ -1067,7 +1066,6 @@ impl NotePage {
                 self,
                 move |_, _| {
                     this.report(this.state.write(|library| library.delete(id)));
-                    this.leave();
                 }
             ),
         );

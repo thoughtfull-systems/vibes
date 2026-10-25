@@ -102,6 +102,25 @@ impl Location {
     }
 }
 
+fn remove_missing_notes(
+    current: Location,
+    back: &mut Vec<Location>,
+    forward: &mut Vec<Location>,
+    exists: impl Fn(NoteId) -> bool,
+) -> Option<Location> {
+    let valid = |location: &Location| match location {
+        Location::List(_) => true,
+        Location::Note(id, _) => exists(*id),
+    };
+    back.retain(valid);
+    forward.retain(valid);
+    if valid(&current) {
+        None
+    } else {
+        Some(back.pop().unwrap_or(Location::List(current.listing())))
+    }
+}
+
 /// The setting that holds the screen the user last viewed, so the window can return to it.
 const SCREEN: &str = "linux.screen";
 
@@ -420,6 +439,28 @@ impl Window {
         }
     }
 
+    fn remove_missing_notes(&self) {
+        let next = self.state.read(|spaces| {
+            remove_missing_notes(
+                self.location.get(),
+                &mut self.back.borrow_mut(),
+                &mut self.forward.borrow_mut(),
+                |id| spaces.note(id).is_some(),
+            )
+        });
+        if let Some(next) = next {
+            self.show(next);
+        }
+    }
+
+    fn cycle_tab(&self, backwards: bool) {
+        let pages = self.tabs.pages();
+        let count = pages.n_items();
+        let current = (0..count).find(|&index| pages.is_selected(index)).unwrap_or(0);
+        let next = if backwards { (current + count - 1) % count } else { (current + 1) % count };
+        pages.select_item(next, true);
+    }
+
     fn show(&self, location: Location) {
         self.restoring.set(true);
         let listing = location.listing();
@@ -490,6 +531,7 @@ impl Window {
             #[weak(rename_to = this)]
             self,
             move || {
+                this.remove_missing_notes();
                 this.refresh();
                 this.note.refresh();
             }
@@ -603,18 +645,27 @@ impl Window {
             ));
         }
 
-        // The capture phase sees Alt+Left and Alt+Right before the editor uses them to move words.
-        let history_keys = gtk::EventControllerKey::builder()
+        // The editor uses Alt+Left/Right to move words and Ctrl+Tab to move focus unless the
+        // window handles them first.
+        let navigation_keys = gtk::EventControllerKey::builder()
             .propagation_phase(gtk::PropagationPhase::Capture)
             .build();
-        history_keys.connect_key_pressed(glib::clone!(
+        navigation_keys.connect_key_pressed(glib::clone!(
             #[weak(rename_to = this)]
             self,
             #[upgrade_or]
             glib::Propagation::Proceed,
             move |_, key, _, modifiers| {
-                let alt = modifiers & gtk::accelerator_get_default_mod_mask()
-                    == gdk::ModifierType::ALT_MASK;
+                let modifiers = modifiers & gtk::accelerator_get_default_mod_mask();
+                let control = gdk::ModifierType::CONTROL_MASK;
+                let shift = gdk::ModifierType::SHIFT_MASK;
+                if matches!(key, gdk::Key::Tab | gdk::Key::ISO_Left_Tab)
+                    && (modifiers == control || modifiers == control | shift)
+                {
+                    this.cycle_tab(modifiers.contains(shift) || key == gdk::Key::ISO_Left_Tab);
+                    return glib::Propagation::Stop;
+                }
+                let alt = modifiers == gdk::ModifierType::ALT_MASK;
                 let stepped = match key {
                     gdk::Key::Back => this.step(&this.back, &this.forward),
                     gdk::Key::Left if alt => this.step(&this.back, &this.forward),
@@ -625,7 +676,7 @@ impl Window {
                 if stepped { glib::Propagation::Stop } else { glib::Propagation::Proceed }
             }
         ));
-        self.window.add_controller(history_keys);
+        self.window.add_controller(navigation_keys);
         let history_buttons = gtk::GestureClick::builder()
             .button(0)
             .propagation_phase(gtk::PropagationPhase::Capture)
@@ -957,4 +1008,57 @@ impl Window {
 
 fn section(title: &'static str, entries: Vec<ActionEntry>, plan: bool) -> Section {
     Section { entries, plan, stamp: None, title }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deleting_notes_prunes_both_directions_and_returns_to_previous_note() {
+        let deleted = NoteId::generate();
+        let previous = Location::Note(NoteId::generate(), Listing::Memos);
+        let next = Location::Note(NoteId::generate(), Listing::AllNotes);
+        let current = Location::Note(deleted, Listing::Trash);
+        let list = Location::List(Listing::Memos);
+        let mut back = vec![list, current, previous, current];
+        let mut forward = vec![current, next, current];
+
+        let destination =
+            remove_missing_notes(current, &mut back, &mut forward, |id| id != deleted);
+
+        assert_eq!(destination, Some(previous));
+        assert_eq!(back, vec![list]);
+        assert_eq!(forward, vec![next]);
+    }
+
+    #[test]
+    fn deleting_without_history_returns_to_the_notes_listing() {
+        let current = Location::Note(NoteId::generate(), Listing::Trash);
+        let mut back = vec![current];
+        let mut forward = vec![current];
+
+        let destination = remove_missing_notes(current, &mut back, &mut forward, |_| false);
+
+        assert_eq!(destination, Some(Location::List(Listing::Trash)));
+        assert!(back.is_empty());
+        assert!(forward.is_empty());
+    }
+
+    #[test]
+    fn deleting_another_note_preserves_the_current_location_and_history_order() {
+        let deleted = NoteId::generate();
+        let current = Location::Note(NoteId::generate(), Listing::Memos);
+        let list = Location::List(Listing::Memos);
+        let removed = Location::Note(deleted, Listing::Trash);
+        let mut back = vec![list, removed, current];
+        let mut forward = vec![removed, list];
+
+        let destination =
+            remove_missing_notes(current, &mut back, &mut forward, |id| id != deleted);
+
+        assert_eq!(destination, None);
+        assert_eq!(back, vec![list, current]);
+        assert_eq!(forward, vec![list]);
+    }
 }

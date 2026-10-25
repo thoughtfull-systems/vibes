@@ -10,6 +10,7 @@ use commonplace_core::{
 };
 use gtk::glib;
 
+use crate::journals_view::{dot, journal_color};
 use crate::state::State;
 
 /// The question types in the order the picker lists them, with their names.
@@ -54,6 +55,24 @@ impl JournalPanel {
         let names: Vec<String> = COLORS.iter().map(|color| capitalized(color)).collect();
         let color =
             gtk::DropDown::from_strings(&names.iter().map(String::as_str).collect::<Vec<_>>());
+        let factory = gtk::SignalListItemFactory::new();
+        factory.connect_bind(|_, item| {
+            let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
+                return;
+            };
+            let Some(name) = item.item().and_downcast::<gtk::StringObject>() else {
+                return;
+            };
+            let Some(color) = COLORS.get(item.position() as usize) else {
+                return;
+            };
+            let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+            row.append(&dot(journal_color(color)));
+            row.append(&gtk::Label::new(Some(&name.string())));
+            item.set_child(Some(&row));
+        });
+        color.set_factory(Some(&factory));
+        color.set_list_factory(Some(&factory));
         let fields = gtk::Grid::builder().column_spacing(12).row_spacing(6).build();
         let label = |text: &str| {
             gtk::Label::builder().label(text).xalign(0.0).css_classes(["dimmed"]).build()
