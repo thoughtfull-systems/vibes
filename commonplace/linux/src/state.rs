@@ -2,13 +2,16 @@
 
 use std::cell::RefCell;
 
-use commonplace_core::{Error, Spaces};
+use commonplace_core::{Error, NoteId, Spaces};
 
 use crate::device::Device;
 
 /// The prefix of the settings this app kept in the library before spaces, and keeps on the device
 /// now.
 const CARRIED_SETTINGS: &str = "linux.";
+
+/// The identifier of the journal that capture last saved into.
+const CAPTURE_JOURNAL: &str = "linux.capture.journal";
 
 /// The key of the library that capture last saved into.
 const CAPTURE_SPACE: &str = "linux.capture.space";
@@ -137,6 +140,32 @@ impl State {
 
     pub fn set_capture_space(&self, key: &str) {
         self.device.set_text_setting(CAPTURE_SPACE, key);
+    }
+
+    /// Whether a journal prompts on this device.
+    pub fn prompts_here(&self, journal: NoteId) -> bool {
+        self.device.prompts(&journal.to_string())
+    }
+
+    pub fn set_prompts_here(&self, journal: NoteId, prompts: bool) {
+        self.device.set_prompts(&journal.to_string(), prompts);
+        self.notify();
+    }
+
+    /// Creates a journal, which prompts on the device that creates it.
+    pub fn create_journal(&self, space: &str, name: &str) -> Result<NoteId, Error> {
+        let id = self.write(|spaces| spaces.create_journal(space, name))?;
+        self.device.set_prompts(&id.to_string(), true);
+        Ok(id)
+    }
+
+    /// The journal that capture last saved an entry into.
+    pub fn capture_journal(&self) -> Option<NoteId> {
+        self.device.text_setting(CAPTURE_JOURNAL)?.parse().ok()
+    }
+
+    pub fn set_capture_journal(&self, id: NoteId) {
+        self.device.set_text_setting(CAPTURE_JOURNAL, &id.to_string());
     }
 }
 

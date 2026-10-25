@@ -10,10 +10,10 @@ use crate::editor;
 use crate::state::State;
 
 /// The widget name that marks a capture window.
-const NAME: &str = "capture";
+pub const NAME: &str = "capture";
 
 /// The window action that saves a capture and closes its window.
-const SAVE_ACTION: &str = "capture";
+pub const SAVE_ACTION: &str = "capture";
 
 /// Whether `window` is a capture window.
 pub fn is_capture(window: &gtk::Window) -> bool {

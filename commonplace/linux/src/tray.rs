@@ -18,14 +18,16 @@ pub enum Event {
     /// A click on the icon.
     Activate,
     CaptureAction,
+    CaptureEntry,
     CaptureMemo,
     Quit,
 }
 
 /// The menu's items, in the order it shows them, by their ID in the menu's layout. ID 0 is the
 /// menu itself.
-const ITEMS: [(i32, &str, Event); 3] = [
+const ITEMS: [(i32, &str, Event); 4] = [
     (1, "Quick Capture _Action", Event::CaptureAction),
+    (4, "Quick Capture _Journal Entry", Event::CaptureEntry),
     (2, "Quick Capture _Memo", Event::CaptureMemo),
     (3, "_Quit", Event::Quit),
 ];

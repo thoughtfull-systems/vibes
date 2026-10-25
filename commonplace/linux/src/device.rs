@@ -7,10 +7,11 @@ use gtk::glib;
 const FILE: &str = "device.ini";
 const HIDDEN: &str = "hidden";
 const NAMES: &str = "names";
+const PROMPTS: &str = "prompts";
 const SETTINGS: &str = "settings";
 
-/// Preferences that belong to this device and never sync: the window's layout and filters, and
-/// the name and visibility of each library.
+/// Preferences that belong to this device and never sync: the window's layout and filters, the
+/// name and visibility of each library, and which journals prompt here.
 pub struct Device {
     file: glib::KeyFile,
     path: PathBuf,
@@ -70,6 +71,20 @@ impl Device {
             let _ = self.file.remove_key(HIDDEN, key);
         } else {
             self.file.set_boolean(HIDDEN, key, true);
+        }
+        self.save();
+    }
+
+    /// Whether a journal prompts on this device.
+    pub fn prompts(&self, journal: &str) -> bool {
+        self.file.boolean(PROMPTS, journal).unwrap_or(false)
+    }
+
+    pub fn set_prompts(&self, journal: &str, prompts: bool) {
+        if prompts {
+            self.file.set_boolean(PROMPTS, journal, true);
+        } else {
+            let _ = self.file.remove_key(PROMPTS, journal);
         }
         self.save();
     }

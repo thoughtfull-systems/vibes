@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0-no-copyleft-exception
 
-//! Builds two libraries of sample memos and actions, Personal and Work, for trying the apps by
-//! hand:
+//! Builds two libraries of sample memos, actions, and journals, Personal and Work, for trying the
+//! apps by hand:
 //!
 //! ```sh
 //! cargo run --example test_library -- DIRECTORY
@@ -11,12 +11,14 @@
 //! count from the day it runs, so overdue, due-soon, and upcoming actions stay that way. When a
 //! feature is ready to ship, add samples of it here.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use commonplace_core::{
-    ActionChange, ActionList, ActionState, Date, Error, Library, NoteId, Spaces, wikilink,
+    ActionChange, ActionList, ActionState, Answer, ChoiceOption, Date, Days, Error, Library,
+    NoteId, Question, QuestionKind, Schedule, Spaces, Times, wikilink,
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -35,6 +37,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let trip = memos(spaces.library_mut(&personal)?)?;
     actions(spaces.library_mut(&personal)?, today)?;
     work_notes(spaces.library_mut(&work)?, trip, today)?;
+    health_journal(spaces.library_mut(&personal)?, today)?;
+    work_log(spaces.library_mut(&work)?, today)?;
     // The Linux app keeps the names it gives libraries in its device settings.
     fs::write(dir.join("device.ini"), format!("[names]\n{personal}=Personal\n{work}=Work\n"))?;
     Ok(())
@@ -196,6 +200,79 @@ fn actions(library: &mut Library, today: Date) -> Result<(), Error> {
     library.create_task("Its step goes with it", Some(trashed))?;
     library.trash(trashed)?;
     Ok(())
+}
+
+/// A journal of structured answers, with a week of entries to chart.
+fn health_journal(library: &mut Library, today: Date) -> Result<(), Error> {
+    let journal = library.create_journal("Health")?;
+    library.set_journal_color(journal, "green")?;
+    let unit = Some("h".to_owned());
+    let sleep =
+        Question::new("Sleep", QuestionKind::Number { unit, min: Some(0.0), max: Some(24.0) });
+    let (low, high) = (Some("Awful".to_owned()), Some("Great".to_owned()));
+    let mood = Question::new("Mood", QuestionKind::Scale { min: 1, max: 5, low, high });
+    let options = ["Run", "Swim", "Lift"].map(ChoiceOption::new).to_vec();
+    let exercise = Question::new(
+        "Exercise",
+        QuestionKind::Choice { multiple: true, options: options.clone() },
+    );
+    let caffeine = Question::new("Coffee after noon?", QuestionKind::YesNo);
+    let notes = Question::new("Anything else?", QuestionKind::Text);
+    for question in [&sleep, &mood, &exercise, &caffeine, &notes] {
+        library.add_question(journal, question)?;
+    }
+    let mornings = Schedule::new(Days::EVERY_DAY, Times::Fixed(vec![8 * 60]));
+    library.set_schedule(journal, &mornings)?;
+    let hours = [7.5, 6.0, 8.0, 5.5, 7.0, 8.5, 6.5];
+    for (day, &hour) in hours.iter().enumerate() {
+        let mut answers = BTreeMap::from([
+            (sleep.id.clone(), Answer::Number(hour)),
+            (mood.id.clone(), Answer::Number(((day % 5) + 1) as f64)),
+            (caffeine.id.clone(), Answer::Bool(day % 3 == 0)),
+        ]);
+        if day % 2 == 0 {
+            let picked = vec![options[day % 3].id.clone()];
+            answers.insert(exercise.id.clone(), Answer::Choices(picked));
+        }
+        let body = format!("## Anything else?\n\nDay {} of the week.\n", day + 1);
+        library.create_entry(
+            journal,
+            &body,
+            hours_ago(24 * (6 - day as i64) + 2),
+            None,
+            &answers,
+            today,
+        )?;
+    }
+    Ok(())
+}
+
+/// A work log that prompts on random workday times, for standup reports.
+fn work_log(library: &mut Library, today: Date) -> Result<(), Error> {
+    let journal = library.create_journal("Work log\n\nWhat I did, for standups.")?;
+    library.set_journal_color(journal, "orange")?;
+    for prompt in ["What have you been working on?", "Blockers"] {
+        library.add_question(journal, &Question::new(prompt, QuestionKind::Text))?;
+    }
+    let random = Times::Random { start: 9 * 60, end: 17 * 60, mean: 45, min_gap: 30 };
+    library.set_schedule(journal, &Schedule::new(Days::WORKDAYS, random))?;
+    for (hours, text) in [
+        (2, "Reviewed the quarterly numbers."),
+        (5, "Paired on the release checklist."),
+        (26, "Fixed the flaky export test."),
+    ] {
+        let body = format!("## What have you been working on?\n\n{text}\n\n## Blockers\n\nNone.\n");
+        library.create_entry(journal, &body, hours_ago(hours), None, &BTreeMap::new(), today)?;
+    }
+    let memo = library.create_memo("Shipped the hotfix\n\nTurned into a work log entry.\n")?;
+    library.convert_memo(memo, journal)?;
+    Ok(())
+}
+
+/// The timestamp `hours` hours ago.
+fn hours_ago(hours: i64) -> i64 {
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |time| time.as_millis());
+    now as i64 - hours * 60 * 60 * 1000
 }
 
 /// Today's date in UTC, which is close enough for samples.
