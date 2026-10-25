@@ -244,6 +244,14 @@ fn health_journal(library: &mut Library, today: Date) -> Result<(), Error> {
             today,
         )?;
     }
+    library.create_entry(
+        journal,
+        "",
+        hours_ago(1),
+        None,
+        &BTreeMap::from([(sleep.id.clone(), Answer::Number(7.0))]),
+        today,
+    )?;
     Ok(())
 }
 

@@ -491,6 +491,7 @@ pub fn display_label(spaces: &Spaces, note: &Note) -> String {
         match &note.action {
             Some(action) if action.project => "Empty project",
             Some(_) => "Empty task",
+            None if note.entry.is_some() => "Empty entry",
             None => "Empty memo",
         }
         .to_owned()
