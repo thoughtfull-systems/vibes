@@ -208,9 +208,9 @@ impl Window {
         let trash = Browser::new(state.clone(), Scope::Trash);
         // The order of the tabs.
         for (page, name, title, icon) in [
-            (memos.widget.upcast_ref::<gtk::Widget>(), "memos", "Memos", "document-edit-symbolic"),
+            (memos.widget.upcast_ref::<gtk::Widget>(), "memos", "Memos", crate::rows::MEMO_ICON),
             (actions_stack.upcast_ref(), "actions", "Actions", "object-select-symbolic"),
-            (journals.widget.upcast_ref(), "journals", "Journals", "x-office-calendar-symbolic"),
+            (journals.widget.upcast_ref(), "journals", "Journals", crate::rows::JOURNAL_ICON),
             (all_notes.widget.upcast_ref(), "all", "All Notes", "view-list-bullet-symbolic"),
             (trash.widget.upcast_ref(), "trash", "Trash", "user-trash-symbolic"),
         ] {

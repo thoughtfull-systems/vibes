@@ -343,7 +343,7 @@ impl Browser {
                 ("document-edit-symbolic", "No Notes", "Capture a memo or an action to start")
             }
             (Scope::Memos, false) => {
-                ("document-edit-symbolic", "No Memos", "Capture one with commonplace capture memo")
+                (crate::rows::MEMO_ICON, "No Memos", "Capture one with commonplace capture memo")
             }
             (Scope::Trash, false) => {
                 ("user-trash-symbolic", "Trash Is Empty", "Notes you trash wait here")

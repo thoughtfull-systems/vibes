@@ -141,7 +141,7 @@ impl JournalsView {
             .hscrollbar_policy(gtk::PolicyType::Never)
             .build();
         let empty = adw::StatusPage::builder()
-            .icon_name("x-office-calendar-symbolic")
+            .icon_name(crate::rows::JOURNAL_ICON)
             .vexpand(true)
             .visible(false)
             .build();
@@ -294,15 +294,11 @@ impl JournalsView {
         self.hint.set_visible(shown.len() > 1 && chartable && !entries.is_empty());
         self.fill_list(&entries);
         let (icon, title, description) = if journals.is_empty() {
-            ("x-office-calendar-symbolic", "No Journals", "Start one with New Journal")
+            (crate::rows::JOURNAL_ICON, "No Journals", "Start one with New Journal")
         } else if !query.trim().is_empty() {
             ("system-search-symbolic", "No Entries Found", "Try other words or a longer range")
         } else {
-            (
-                "x-office-calendar-symbolic",
-                "No Entries",
-                "Write one with commonplace capture journal",
-            )
+            (crate::rows::JOURNAL_ICON, "No Entries", "Write one with commonplace capture journal")
         };
         let blank = entries.is_empty() && !self.charts.is_visible();
         self.empty.set_icon_name(Some(icon));

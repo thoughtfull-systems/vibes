@@ -278,6 +278,10 @@ fn stamped_note_row(
     row
 }
 
+/// The app's own icons for memos and journals, which the tabs and the note rows share.
+pub const MEMO_ICON: &str = "systems.thoughtfull.Commonplace-memo-symbolic";
+pub const JOURNAL_ICON: &str = "systems.thoughtfull.Commonplace-journal-symbolic";
+
 /// The icon that tells a memo, a journal, and an entry apart: the Memos and Journals tabs' icons,
 /// and a dot in an entry's journal's color.
 fn kind_icon(note: &Note, journal: Option<&Note>) -> gtk::Widget {
@@ -287,11 +291,7 @@ fn kind_icon(note: &Note, journal: Option<&Note>) -> gtk::Widget {
             .map_or("blue", |fields| fields.color.as_str());
         return crate::journals_view::dot(crate::journals_view::journal_color(color)).upcast();
     }
-    let icon = if note.journal.is_some() {
-        "x-office-calendar-symbolic"
-    } else {
-        "document-edit-symbolic"
-    };
+    let icon = if note.journal.is_some() { JOURNAL_ICON } else { MEMO_ICON };
     gtk::Image::builder()
         .icon_name(icon)
         .valign(gtk::Align::Center)

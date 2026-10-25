@@ -1,0 +1,6 @@
+<!-- SPDX-License-Identifier: MPL-2.0-no-copyleft-exception -->
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+  <path d="M3 1.5a1.5 1.5 0 0 0 -1.5 1.5v10a1.5 1.5 0 0 0 1.5 1.5h7l4.5 -4.5v-7
+           a1.5 1.5 0 0 0 -1.5 -1.5z
+           M3 3h10v6h-3a1 1 0 0 0 -1 1v3h-6z" fill="#222" fill-rule="evenodd"/>
+</svg>
