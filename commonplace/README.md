@@ -191,7 +191,9 @@ a typical remapping produces for it, shown in the Emacs column.
 
 | Keys                 | Emacs   | Action                                                     |
 | -------------------- | ------- | ---------------------------------------------------------- |
-| Ctrl+F               | C-s     | Search memos and actions                                   |
+| Ctrl+F               | C-s     | Search the current tab                                     |
+| Ctrl+Tab             |         | Switch to the next tab                                     |
+| Ctrl+Shift+Tab       |         | Switch to the previous tab                                 |
 | Ctrl+S               | C-x C-s | Save now                                                   |
 | Ctrl+Return          |         | Save and close a capture, or add or tick a list's checkbox |
 | Alt+\[, or type `[[` |         | Link to a note                                             |
