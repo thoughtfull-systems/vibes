@@ -86,7 +86,7 @@ pub struct JournalsView {
 
 impl JournalsView {
     pub fn new(state: Rc<State>) -> Rc<Self> {
-        let chips = gtk::Box::builder().spacing(6).hexpand(true).build();
+        let chips = gtk::Box::builder().spacing(6).build();
         let range = gtk::DropDown::from_strings(&RANGES.map(|(name, _)| name));
         let saved = state.device().setting(RANGE).and_then(|index| u32::try_from(index).ok());
         range.set_selected(saved.filter(|&index| (index as usize) < RANGES.len()).unwrap_or(1));
@@ -97,17 +97,12 @@ impl JournalsView {
             .menu_model(&menu)
             .build();
         let show_label = gtk::Label::builder().label("Show").css_classes(["dimmed"]).build();
-        let controls = gtk::Box::builder()
-            .spacing(6)
-            .margin_top(6)
-            .margin_bottom(6)
-            .margin_start(12)
-            .margin_end(12)
-            .build();
+        let controls =
+            gtk::Box::builder().spacing(6).halign(gtk::Align::Center).hexpand(true).build();
         let chips_scroller = gtk::ScrolledWindow::builder()
             .child(&chips)
             .vscrollbar_policy(gtk::PolicyType::Never)
-            .hexpand(true)
+            .propagate_natural_width(true)
             .build();
         controls.append(&menu_button);
         controls.append(&gtk::Separator::new(gtk::Orientation::Vertical));
@@ -151,7 +146,9 @@ impl JournalsView {
             .visible(false)
             .build();
         let widget = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        widget.append(&controls);
+        let bar = gtk::Box::builder().css_classes(["toolbar"]).build();
+        bar.append(&controls);
+        widget.append(&bar);
         widget.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
         widget.append(&scrolled);
         widget.append(&empty);
