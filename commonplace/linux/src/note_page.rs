@@ -36,6 +36,8 @@ struct SpaceRow {
 
 /// The view that edits one note, with its outline beside it and its backlinks below.
 pub struct NotePage {
+    /// Archives the note, or takes it out of the archive.
+    archive_button: gtk::Button,
     backlink_ids: RefCell<Vec<NoteId>>,
     backlinks: gtk::ListBox,
     backlinks_section: gtk::Box,
@@ -269,10 +271,19 @@ impl NotePage {
         let details_content = gtk::Box::new(gtk::Orientation::Vertical, 6);
         details_content.append(&space_row);
         details_content.append(&action_panel.widget);
+        let archive_button = gtk::Button::builder()
+            .label("Archive")
+            .valign(gtk::Align::End)
+            .vexpand(true)
+            .margin_start(12)
+            .margin_end(12)
+            .margin_bottom(12)
+            .visible(false)
+            .build();
+        details_content.append(&archive_button);
         details_scrolled.set_child(Some(&details_content));
 
-        // Whether the user, or the window's width, leaves each sidebar shown. Only actions, and
-        // notes with libraries to move between, have details to show.
+        // Whether the user, or the window's width, leaves each sidebar shown.
         let outline_shown = Rc::new(Cell::new(true));
         let details_shown = Rc::new(Cell::new(true));
         let outline_width = Rc::new(Cell::new(0));
@@ -298,6 +309,8 @@ impl NotePage {
             action_panel.widget,
             #[weak]
             space_row,
+            #[weak]
+            archive_button,
             move || {
                 if outline_box.get_visible() && outline_box.width() > 0 {
                     outline_width.set(outline_box.width());
@@ -307,7 +320,8 @@ impl NotePage {
                 }
                 outline_box.set_visible(outline_shown.get());
                 hidden_bar.set_visible(!outline_shown.get());
-                let any = panel.get_visible() || space_row.get_visible();
+                let any =
+                    panel.get_visible() || space_row.get_visible() || archive_button.get_visible();
                 details.set_visible(any && details_shown.get());
                 details_hidden_bar.set_visible(any && !details_shown.get());
             }
@@ -325,7 +339,11 @@ impl NotePage {
                 update();
             });
         }
-        for details in [action_panel.widget.upcast_ref::<gtk::Widget>(), space_row.upcast_ref()] {
+        for details in [
+            action_panel.widget.upcast_ref::<gtk::Widget>(),
+            space_row.upcast_ref(),
+            archive_button.upcast_ref(),
+        ] {
             details.connect_visible_notify(glib::clone!(
                 #[strong]
                 update_sidebars,
@@ -407,6 +425,7 @@ impl NotePage {
         }
         update_bottom();
         let this = Rc::new(Self {
+            archive_button,
             backlink_ids: RefCell::default(),
             backlinks,
             backlinks_section,
@@ -574,6 +593,11 @@ impl NotePage {
                 }
             }
         ));
+        self.archive_button.connect_clicked(glib::clone!(
+            #[weak(rename_to = this)]
+            self,
+            move |_| this.toggle_archived()
+        ));
         self.trash_note.connect_activate(glib::clone!(
             #[weak(rename_to = this)]
             self,
@@ -730,6 +754,15 @@ impl NotePage {
         let read_only = self.state.read(|library| library.is_read_only());
         let writable = note.is_some() && !in_trash && !read_only;
         self.copy_link.set_enabled(note.is_some());
+        let archived = note.as_ref().is_some_and(|note| note.archived.is_some());
+        let (label, tooltip) = if archived {
+            ("Unarchive", "Take this note out of the archive")
+        } else {
+            ("Archive", "Set this note aside, out of every list, without changing it")
+        };
+        self.archive_button.set_label(label);
+        self.archive_button.set_tooltip_text(Some(tooltip));
+        self.archive_button.set_visible(writable);
         self.trash_note.set_enabled(writable);
         self.trash_bar.set_visible(in_trash && !read_only);
         self.trash_reason.set_label(if trashed {
@@ -902,6 +935,18 @@ impl NotePage {
         let handler = self.on_leave.borrow().clone();
         if let Some(handler) = handler {
             handler();
+        }
+    }
+
+    fn toggle_archived(&self) {
+        let Some(id) = self.current.get() else {
+            return;
+        };
+        let archived = self.state.read(|library| library.note(id)).and_then(|note| note.archived);
+        self.save_now();
+        if let Err(error) = self.state.write(|library| library.set_archived(id, archived.is_none()))
+        {
+            self.report_error(&error);
         }
     }
 

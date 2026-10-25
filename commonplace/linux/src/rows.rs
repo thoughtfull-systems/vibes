@@ -175,10 +175,9 @@ fn stamped_note_row(
         .xalign(0.0)
         .ellipsize(gtk::pango::EllipsizeMode::End)
         .build();
-    let stamp = stamp.map(|stamp| match stamp {
+    let stamp_text = stamp.map(|stamp| match stamp {
         Stamp::Archived => {
-            let archived = note.action.as_ref().and_then(|action| action.archived);
-            format!("Archived {}", format_time(archived.unwrap_or(note.modified)))
+            format!("Archived {}", format_time(note.archived.unwrap_or(note.modified)))
         }
         Stamp::Created => format!("Created {}", format_time(note.created)),
         Stamp::Modified => format!("Modified {}", format_time(note.modified)),
@@ -186,7 +185,7 @@ fn stamped_note_row(
             format!("Trashed {}", format_time(note.trashed.unwrap_or(note.modified)))
         }
     });
-    let summary = match (&note.action, stamp) {
+    let summary = match (&note.action, stamp_text) {
         (Some(action), stamp) => {
             let summary = action_summary(state, entry, action);
             [summary, stamp.unwrap_or_default()]
@@ -198,6 +197,13 @@ fn stamped_note_row(
         (None, Some(stamp)) => stamp,
         (None, None) => format_time(note.modified),
     };
+    // An action's summary already says whether it's archived.
+    let summary =
+        if note.action.is_none() && note.archived.is_some() && stamp != Some(Stamp::Archived) {
+            format!("Archived · {summary}")
+        } else {
+            summary
+        };
     let path = if show_path && !entry.parents.is_empty() {
         let labels: Vec<String> =
             parent_labels(state, &entry.parents).into_iter().map(|(_, label)| label).collect();
@@ -278,7 +284,7 @@ fn action_check(state: &Rc<State>, id: NoteId, action: &Action) -> gtk::CheckBut
 /// whether it's done or archived.
 fn action_summary(state: &State, entry: &ActionEntry, action: &Action) -> String {
     let mut parts = Vec::new();
-    if action.archived.is_some() {
+    if entry.note.archived.is_some() {
         parts.push("Archived".to_owned());
     }
     if action.project {

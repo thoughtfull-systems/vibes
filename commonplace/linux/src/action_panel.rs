@@ -31,8 +31,6 @@ pub struct ActionPanel {
     current: Cell<Option<NoteId>>,
     defer: DateButton,
     done: gtk::Switch,
-    /// Archives an open action, or reopens an archived one.
-    archive_button: gtk::Button,
     /// A line over the steps list that shows where a dragged step would go between two steps.
     drop_line: gtk::Box,
     due: DateButton,
@@ -266,7 +264,6 @@ impl ActionPanel {
     pub fn new(state: Rc<State>, picker: Rc<LinkPicker>) -> Rc<Self> {
         let done =
             gtk::Switch::builder().halign(gtk::Align::Start).valign(gtk::Align::Center).build();
-        let archive_button = gtk::Button::builder().label("Archive").build();
         let list = gtk::DropDown::builder()
             .model(&gtk::StringList::new(&LISTS.map(|(name, _)| name)))
             .hexpand(true)
@@ -317,8 +314,6 @@ impl ActionPanel {
         fields.attach(&planning, 1, 6, 1, 1);
         let path = gtk::Label::builder().xalign(0.0).build();
         let move_button = gtk::Button::builder().label("Move…").halign(gtk::Align::Start).build();
-        archive_button.set_valign(gtk::Align::End);
-        archive_button.set_vexpand(true);
         let widget = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
             .spacing(18)
@@ -329,7 +324,6 @@ impl ActionPanel {
             .visible(false)
             .build();
         widget.append(&fields);
-        widget.append(&archive_button);
 
         let steps =
             gtk::ListBox::builder().css_classes(["navigation-sidebar", "step-list"]).build();
@@ -409,7 +403,6 @@ impl ActionPanel {
             current: Cell::new(None),
             defer,
             done,
-            archive_button,
             drop_line,
             due,
             editable: Cell::new(false),
@@ -537,13 +530,6 @@ impl ActionPanel {
         };
         self.loading.set(true);
         self.done.set_active(action.state == ActionState::Done);
-        let (label, tooltip) = if action.archived.is_some() {
-            ("Unarchive", "Take this action out of the archive")
-        } else {
-            ("Archive", "Set this action aside, out of every list, without changing it")
-        };
-        self.archive_button.set_label(label);
-        self.archive_button.set_tooltip_text(Some(tooltip));
         let list = self.lists.borrow().iter().position(|list| *list == action.list).unwrap_or(0);
         self.list.set_selected(list as u32);
         self.project.set_active(action.project);
@@ -737,17 +723,6 @@ impl ActionPanel {
             move |done| {
                 let state = if done.is_active() { ActionState::Done } else { ActionState::Open };
                 panel.change(ActionChange::State(state));
-            }
-        ));
-        self.archive_button.connect_clicked(glib::clone!(
-            #[weak(rename_to = panel)]
-            self,
-            move |_| {
-                let id = panel.current.get();
-                let action =
-                    id.and_then(|id| panel.state.read(|l| l.note(id))).and_then(|n| n.action);
-                let archived = action.is_some_and(|action| action.archived.is_some());
-                panel.change(ActionChange::Archived(!archived));
             }
         ));
         self.list.connect_selected_notify(glib::clone!(

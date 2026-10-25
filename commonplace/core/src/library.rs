@@ -14,8 +14,9 @@ use crate::{Error, NoteId, label, parse_links};
 const SETTINGS: &str = "settings";
 
 const FORMAT: &str = "commonplace-library";
-const VERSION: i64 = 2;
+const VERSION: i64 = 3;
 
+const ARCHIVED: &str = "archived";
 const BODY: &str = "body";
 const CREATED: &str = "created";
 const DELETED: &str = "deleted";
@@ -37,6 +38,8 @@ pub struct Note {
     pub modified: i64,
     /// The action's fields, for a note whose kind is action.
     pub action: Option<Action>,
+    /// When the owner set the note aside, out of every list.
+    pub archived: Option<i64>,
     pub trashed: Option<i64>,
 }
 
@@ -85,25 +88,57 @@ impl Library {
         library
     }
 
-    /// Writes the format and version, or opens read-only if a newer version wrote the library.
+    /// Writes the format and version, and brings older data up to date, or opens read-only if a
+    /// newer version wrote the library.
     fn prepare(&mut self) -> Result<(), Error> {
         let meta = self.doc.get_map("meta");
         let format = meta.get("format").and_then(value).and_then(string);
         let version = meta.get("version").and_then(value).and_then(integer);
-        match (format, version) {
+        let upgraded = match (format, version) {
             (None, _) => {
                 meta.insert("format", FORMAT).map_err(loro_error)?;
                 meta.insert("version", VERSION).map_err(loro_error)?;
+                true
             }
             (Some(format), _) if format != FORMAT => return Err(Error::NotALibrary(format)),
             (Some(_), Some(version)) if version > VERSION => {
                 self.read_only = true;
                 return Ok(());
             }
-            (Some(_), Some(VERSION)) => return Ok(()),
-            (Some(_), _) => meta.insert("version", VERSION).map_err(loro_error)?,
+            (Some(_), Some(VERSION)) => false,
+            (Some(_), _) => {
+                meta.insert("version", VERSION).map_err(loro_error)?;
+                true
+            }
+        };
+        if self.move_archived_to_notes()? || upgraded { self.commit() } else { Ok(()) }
+    }
+
+    /// Moves `archived` from the action fields, where version 2 kept it, to the note, and returns
+    /// whether it found any. A device still on version 2 can archive an action offline and sync it
+    /// after another device upgrades the library, so this runs on every open and import.
+    fn move_archived_to_notes(&self) -> Result<bool, Error> {
+        let notes = self.notes_map();
+        let mut keys = Vec::new();
+        notes.for_each(|key, _| keys.push(key.to_owned()));
+        let mut moved = false;
+        for key in keys {
+            let Some(ValueOrContainer::Container(Container::Map(note))) = notes.get(&key) else {
+                continue;
+            };
+            let Some(ValueOrContainer::Container(Container::Map(action))) = note.get(ACTION) else {
+                continue;
+            };
+            let Some(archived) = action.get(ARCHIVED).and_then(value) else {
+                continue;
+            };
+            if note.get(ARCHIVED).is_none() {
+                note.insert(ARCHIVED, archived).map_err(loro_error)?;
+            }
+            action.delete(ARCHIVED).map_err(loro_error)?;
+            moved = true;
         }
-        self.commit()
+        Ok(moved)
     }
 
     pub fn is_read_only(&self) -> bool {
@@ -169,6 +204,19 @@ impl Library {
             _ => None,
         }
         .ok_or(Error::Malformed(id))
+    }
+
+    /// Archives the note, or takes it out of the archive, without changing it.
+    pub fn set_archived(&mut self, id: NoteId, archived: bool) -> Result<(), Error> {
+        self.check_writable()?;
+        let note = self.note_map(id)?;
+        match archived {
+            true if note.get(ARCHIVED).is_some() => return Ok(()),
+            true => note.insert(ARCHIVED, now()),
+            false => note.delete(ARCHIVED),
+        }
+        .map_err(loro_error)?;
+        self.commit()
     }
 
     pub fn trash(&mut self, id: NoteId) -> Result<(), Error> {
@@ -365,6 +413,7 @@ impl Library {
     pub(crate) fn import(&mut self, bytes: &[u8]) -> Result<(), Error> {
         self.check_writable()?;
         self.doc.import(bytes).map_err(loro_error)?;
+        self.move_archived_to_notes()?;
         self.commit()
     }
 
@@ -452,12 +501,14 @@ fn note_from_value(id: NoteId, value: &LoroValue) -> Option<Note> {
     };
     let created = map.get(CREATED).and_then(|v| integer(v.clone()))?;
     let kind = map.get(KIND).and_then(|v| string(v.clone())).unwrap_or_else(|| MEMO.to_owned());
+    let action = (kind == ACTION_KIND).then(|| Action::from_value(map.get(ACTION)));
     Some(Note {
         body: map.get(BODY).and_then(|v| string(v.clone())).unwrap_or_default(),
         created,
         id,
         modified: map.get(MODIFIED).and_then(|v| integer(v.clone())).unwrap_or(created),
-        action: (kind == ACTION_KIND).then(|| Action::from_value(map.get(ACTION))),
+        action,
+        archived: map.get(ARCHIVED).and_then(|v| integer(v.clone())),
         trashed: map.get(TRASHED).and_then(|v| integer(v.clone())),
         kind,
     })
@@ -534,6 +585,41 @@ mod tests {
         assert_eq!(library.note(id), None);
         assert!(library.notes().is_empty());
         assert_eq!(library.deleted_label(id).as_deref(), Some("x"));
+    }
+
+    #[test]
+    fn archives_memos_without_modifying_them() {
+        let mut library = Library::in_memory();
+        let id = library.create_memo("x").unwrap();
+        let modified = library.note(id).unwrap().modified;
+        library.set_archived(id, true).unwrap();
+        let archived = library.note(id).unwrap().archived;
+        assert!(archived.is_some());
+        library.set_archived(id, true).unwrap();
+        assert_eq!(library.note(id).unwrap().archived, archived);
+        assert_eq!(library.note(id).unwrap().modified, modified);
+        library.set_archived(id, false).unwrap();
+        assert_eq!(library.note(id).unwrap().archived, None);
+        assert_eq!(library.note(id).unwrap().modified, modified);
+    }
+
+    #[test]
+    fn moves_archived_from_version_2_actions_to_notes() {
+        let mut library = Library::in_memory();
+        let id = library.create_task("x", None).unwrap();
+        let action = match library.note_map(id).unwrap().get(ACTION) {
+            Some(ValueOrContainer::Container(Container::Map(action))) => action,
+            _ => panic!("no action map"),
+        };
+        action.insert(ARCHIVED, 1_000).unwrap();
+        library.doc.get_map("meta").insert("version", 2).unwrap();
+        library.commit().unwrap();
+        assert_eq!(library.note(id).unwrap().archived, None);
+        library.prepare().unwrap();
+        assert_eq!(library.note(id).unwrap().archived, Some(1_000));
+        assert!(action.get(ARCHIVED).is_none());
+        let meta = library.doc.get_map("meta");
+        assert_eq!(meta.get("version").and_then(value).and_then(integer), Some(VERSION));
     }
 
     #[test]

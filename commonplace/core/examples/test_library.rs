@@ -110,6 +110,9 @@ fn memos(library: &mut Library) -> Result<NoteId, Error> {
     library.create_memo("")?;
     let trashed = library.create_memo("A trashed memo\n\nRestore it or delete it for good.\n")?;
     library.trash(trashed)?;
+    let archived = library
+        .create_memo("An archived memo\n\nAll Notes lists it, and the Memos tab doesn't.\n")?;
+    library.set_archived(archived, true)?;
     Ok(trip)
 }
 
@@ -188,7 +191,7 @@ fn actions(library: &mut Library, today: Date) -> Result<(), Error> {
     library.change_action(done, ActionChange::State(ActionState::Done))?;
     let archived = library.create_task("Start a podcast", None)?;
     library.create_task("Buy a microphone", Some(archived))?;
-    library.change_action(archived, ActionChange::Archived(true))?;
+    library.set_archived(archived, true)?;
     let trashed = library.create_task("A trashed action", None)?;
     library.create_task("Its step goes with it", Some(trashed))?;
     library.trash(trashed)?;
