@@ -38,7 +38,10 @@ The Linux app covers memos and actions:
 - Organize actions the Getting Things Done way, with projects, steps, lists, due dates, and start
   dates, and work with them in four modes, Execute, Plan, Review, and Inbox.
   [Where actions show](#where-actions-show) describes what each mode lists.
-- Mark an action done, or archive it to set it aside without changing it.
+- Mark an action done.
+- Archive any note with the button at the bottom of its details sidebar, to set it aside without
+  changing it. Archived memos leave the Memos tab, and archived actions leave the four modes. All
+  Notes lists archived notes, and ordering it by archive date lists only them.
 - Reorder a project's steps by dragging them, or with Alt+Shift+Up and Alt+Shift+Down. Drop a step
   on the middle of another to nest it there.
 - Link notes with wikilinks, follow links, and see each note's backlinks.

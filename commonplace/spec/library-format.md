@@ -1,12 +1,12 @@
 # Library format
 
-Version 2. This spec defines how a Commonplace library stores its notes, so that every
+Version 3. This spec defines how a Commonplace library stores its notes, so that every
 implementation can read and write the same data.
 [Decision 0002](../../decisions/0002-commonplace-library-storage.md) explains the choice of format,
 and [decision 0004](../../decisions/0004-commonplace-actions.md) explains actions.
 
-Version 1 covered memos. Version 2 adds actions. Later versions add curios, zettels, attachments,
-and spaced repetition.
+Version 1 covered memos. Version 2 adds actions. Version 3 lets every note go to the archive. Later
+versions add curios, zettels, attachments, and spaced repetition.
 
 ## Document
 
@@ -56,10 +56,11 @@ Each value is a map with these keys.
 | `kind`     | String  | The kind of note: `memo` or `action`.                                  |
 | `modified` | Integer | When the note last changed, as a timestamp.                            |
 | `action`   | Map     | The [action fields](#action-fields). Present for every action.         |
+| `archived` | Integer | When the note went to the [archive](#archive). Absent outside it.      |
 | `trashed`  | Integer | When the note moved to the trash. Absent for notes not in it.          |
 | `settings` | Map     | Preferences about this note alone, as [settings](#settings) describes. |
 
-Later versions use the names `curio` and `zettel` for the kinds they add, so version 2 reserves
+Later versions use the names `curio` and `zettel` for the kinds they add, so version 3 reserves
 them. An implementation shows a note of a kind it doesn't know as a memo, and leaves its `kind`
 alone.
 
@@ -71,7 +72,6 @@ An action is a project if its `project` is `true`, and a task otherwise.
 
 | Key           | Type    | Value                                                         |
 | ------------- | ------- | ------------------------------------------------------------- |
-| `archived`    | Integer | When its owner set the action aside, out of every list.       |
 | `closed`      | Integer | When the action became done, as a timestamp.                  |
 | `defer`       | String  | The [date](#dates) until which the action stays out of sight. |
 | `due`         | String  | The date the action is due.                                   |
@@ -86,11 +86,9 @@ someday and maybe list of GTD split in two. The next actions list is `active` he
 projects in progress as well as tasks to do now. An action on the someday list is one to do without
 a decided time, and an action on the maybe list is one that might not get done at all. A new action
 starts on the inbox list, and leaves it when its owner sorts it onto another. `closed` is absent
-while the action is open, `archived` is absent while it's outside the archive, and `defer`, `due`,
-`planning`, and `waiting_for` are optional. Archiving an action changes only `archived`, so taking
-it out of the archive restores it unchanged. The planning queue holds the actions their owner wants
-to plan next, and an action leaves it only when its owner removes `planning`, because planning can
-span more than one sitting.
+while the action is open, and `defer`, `due`, `planning`, and `waiting_for` are optional. The
+planning queue holds the actions their owner wants to plan next, and an action leaves it only when
+its owner removes `planning`, because planning can span more than one sitting.
 
 A reader treats a missing or unknown `state` as `open`, a missing or unknown `list` as `active`, and
 a missing `project` as `false`.
@@ -212,6 +210,18 @@ A note is in the trash if it has `trashed`, or if it's an action with an ancesto
 project in the trash takes its whole subtree with it, and restoring the project restores the
 subtree. Restoring an action also restores any ancestors in the trash, so that it leaves the trash
 rather than staying there through one of them.
+
+## Archive
+
+Archiving sets a note aside, out of every list, without changing it, so taking it out of the archive
+restores it unchanged. A note is in the archive if it has `archived`. Setting or removing `archived`
+doesn't change the note's `modified` time.
+
+Version 2 kept `archived` in the action fields. When an implementation opens or imports a library,
+it moves any `archived` it finds there to the note, in one commit, keeping the note's own if it
+already has one. A device still on version 2 can archive an action offline and sync it after another
+device upgrades the library, so the move runs every time, not only once.
+[Decision 0009](../../decisions/0009-commonplace-archived-notes.md) explains the choice.
 
 ## Dates
 

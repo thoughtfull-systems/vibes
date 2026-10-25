@@ -52,8 +52,8 @@ impl Scope {
 /// What a `Browser` orders notes by.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Order {
-    /// When an action was archived. Ordering by it lists only archived actions, so it doubles as
-    /// a way to find the archive.
+    /// When a note was archived. Ordering by it lists only archived notes, so it doubles as a way
+    /// to find the archive.
     Archived,
     Created,
     /// An action's own due date, not one it inherits.
@@ -109,9 +109,7 @@ impl Order {
             (key, date)
         };
         match self {
-            Self::Archived => {
-                note.action.as_ref().and_then(|action| action.archived).and_then(time)
-            }
+            Self::Archived => note.archived.and_then(time),
             Self::Created => time(note.created),
             Self::Modified => time(note.modified),
             Self::Trashed => time(note.trashed.unwrap_or(note.modified)),
@@ -310,7 +308,11 @@ impl Browser {
                 .into_iter()
                 .filter(|note| match scope {
                     Scope::All => !in_trash.contains(&note.id),
-                    Scope::Memos => note.action.is_none() && !in_trash.contains(&note.id),
+                    Scope::Memos => {
+                        note.action.is_none()
+                            && note.archived.is_none()
+                            && !in_trash.contains(&note.id)
+                    }
                     Scope::Trash => note.is_trashed(),
                 })
                 .filter(|note| note.matches(&query))

@@ -334,6 +334,10 @@ impl Spaces {
         self.owner_mut(id)?.delete(id)
     }
 
+    pub fn set_archived(&mut self, id: NoteId, archived: bool) -> Result<(), Error> {
+        self.owner_mut(id)?.set_archived(id, archived)
+    }
+
     pub fn change_action(&mut self, id: NoteId, change: ActionChange) -> Result<(), Error> {
         self.owner_mut(id)?.change_action(id, change)
     }

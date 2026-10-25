@@ -269,8 +269,7 @@ impl InboxView {
         archive.connect_clicked(glib::clone!(
             #[weak]
             view,
-            move |_| view
-                .sort(|library, id| library.change_action(id, ActionChange::Archived(true)))
+            move |_| view.sort(|library, id| library.set_archived(id, true))
         ));
         trash.connect_clicked(glib::clone!(
             #[weak]

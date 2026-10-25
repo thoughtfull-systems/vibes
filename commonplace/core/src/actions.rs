@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0-no-copyleft-exception
 
-//! Actions and their hierarchy, as version 2 of the library format spec defines them.
+//! Actions and their hierarchy, as version 3 of the library format spec defines them.
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -14,7 +14,6 @@ use crate::{Error, Library, Note, NoteId};
 
 pub(crate) const ACTION: &str = "action";
 const ACTIONS: &str = "actions";
-const ARCHIVED: &str = "archived";
 const CLOSED: &str = "closed";
 const DEFER: &str = "defer";
 const DUE: &str = "due";
@@ -209,8 +208,6 @@ impl ActionList {
 /// An action's fields.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Action {
-    /// When the action was set aside, out of every view whatever its state, if it's archived.
-    pub archived: Option<i64>,
     pub closed: Option<i64>,
     pub defer: Option<Date>,
     pub due: Option<Date>,
@@ -229,7 +226,6 @@ impl Action {
         };
         let text = |key| map.get(key).and_then(|v| string(v.clone()));
         Self {
-            archived: map.get(ARCHIVED).and_then(|v| integer(v.clone())),
             closed: map.get(CLOSED).and_then(|v| integer(v.clone())),
             defer: text(DEFER).and_then(|t| t.parse().ok()),
             due: text(DUE).and_then(|t| t.parse().ok()),
@@ -249,8 +245,6 @@ impl Action {
 /// A change to one of an action's fields.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ActionChange {
-    /// Archives the action, or takes it out of the archive, leaving its other fields alone.
-    Archived(bool),
     Defer(Option<Date>),
     Due(Option<Date>),
     List(ActionList),
@@ -432,12 +426,7 @@ impl Library {
             Some(text) => action.insert(key, text).map(|_| ()),
             None => action.delete(key),
         };
-        // Archiving sets an action aside without changing it.
-        let modifies = !matches!(change, ActionChange::Archived(_));
         match change {
-            ActionChange::Archived(true) if action.get(ARCHIVED).is_some() => Ok(()),
-            ActionChange::Archived(true) => action.insert(ARCHIVED, now()),
-            ActionChange::Archived(false) => action.delete(ARCHIVED),
             ActionChange::Defer(date) => optional(DEFER, date.map(|d| d.to_string())),
             ActionChange::Due(date) => optional(DUE, date.map(|d| d.to_string())),
             ActionChange::List(list) => action.insert(LIST, list.as_str()),
@@ -457,9 +446,7 @@ impl Library {
             }
         }
         .map_err(loro_error)?;
-        if modifies {
-            map.insert(MODIFIED, now()).map_err(loro_error)?;
-        }
+        map.insert(MODIFIED, now()).map_err(loro_error)?;
         self.commit()
     }
 
@@ -1063,7 +1050,7 @@ impl Walk<'_> {
             }
             let action = note.action.clone().unwrap_or_default();
             let context = Context {
-                archived: inherited.archived || action.archived.is_some(),
+                archived: inherited.archived || note.archived.is_some(),
                 closed_ancestor: inherited.closed_ancestor || !action.is_open(),
                 due: match (inherited.due, action.due) {
                     (Some(project), Some(own)) if project.date < own => Some(project),
@@ -1552,7 +1539,7 @@ mod tests {
             ]
         );
         library.change_action(paint, ActionChange::State(ActionState::Done)).unwrap();
-        library.change_action(call, ActionChange::Archived(true)).unwrap();
+        library.set_archived(call, true).unwrap();
         library.change_action(later, ActionChange::State(ActionState::Done)).unwrap();
         assert!(library.action_view(ActionView::Projects, today)[0].stalled);
     }
@@ -1626,16 +1613,16 @@ mod tests {
         library.create_task("Step", Some(task)).unwrap();
         let before = library.note(task).unwrap();
         for id in [done, task] {
-            library.change_action(id, ActionChange::Archived(true)).unwrap();
+            library.set_archived(id, true).unwrap();
         }
         let after = library.note(task).unwrap();
-        assert!(after.action.as_ref().unwrap().archived.is_some());
+        assert!(after.archived.is_some());
         assert_eq!(after.modified, before.modified);
         assert_eq!(after.action.unwrap().state, ActionState::Open);
         for view in [ActionView::All, ActionView::Closed, ActionView::Next, ActionView::Projects] {
             assert!(library.action_view(view, today()).is_empty(), "{view:?}");
         }
-        library.change_action(task, ActionChange::Archived(false)).unwrap();
+        library.set_archived(task, false).unwrap();
         assert_eq!(titles(library.action_view(ActionView::Next, today())), [(0, "Step".into())]);
     }
 
