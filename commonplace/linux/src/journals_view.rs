@@ -6,7 +6,7 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use commonplace_core::{Answer, Date, Journal, Note, NoteId, Question, QuestionKind, format_time};
-use gtk::{cairo, glib};
+use gtk::{cairo, gio, glib};
 
 use crate::prompts::local_millis;
 use crate::rows::{format_date, today};
@@ -27,30 +27,18 @@ const RANGES: [(&str, Option<i32>); 6] = [
     ("All Time", None),
 ];
 
-/// The chart colors, from the dataviz skill's validated categorical palette, light then dark,
-/// in its fixed order.
-const SERIES: [(&str, &str); 8] = [
-    ("#2a78d6", "#3987e5"),
-    ("#eb6834", "#d95926"),
-    ("#1baf7a", "#199e70"),
-    ("#eda100", "#c98500"),
-    ("#e87ba4", "#d55181"),
-    ("#008300", "#008300"),
-    ("#6250d6", "#9085e9"),
-    ("#e34948", "#e66767"),
-];
-
-/// Each journal color's light and dark shades, drawn from the same palette where it has the hue.
+/// Each journal color's light and dark shades, from the dataviz skill's validated categorical
+/// palette where it has the hue. Charts draw in their journal's color alone.
 pub fn journal_color(name: &str) -> (&'static str, &'static str) {
     match name {
-        "green" => SERIES[5],
-        "yellow" => SERIES[3],
-        "orange" => SERIES[1],
-        "red" => SERIES[7],
-        "purple" => SERIES[6],
+        "green" => ("#008300", "#008300"),
+        "yellow" => ("#eda100", "#c98500"),
+        "orange" => ("#eb6834", "#d95926"),
+        "red" => ("#e34948", "#e66767"),
+        "purple" => ("#6250d6", "#9085e9"),
         "brown" => ("#8f6a45", "#b08a63"),
         "gray" => ("#7a7a74", "#9a9a93"),
-        _ => SERIES[0],
+        _ => ("#2a78d6", "#3987e5"),
     }
 }
 
@@ -80,7 +68,10 @@ pub struct JournalsView {
     pub widget: gtk::Box,
     charts: gtk::Box,
     chips: gtk::Box,
-    edit_button: gtk::Button,
+    /// Says how to see charts while more than one journal shows.
+    hint: gtk::Label,
+    /// The journals menu, which starts a journal or opens one to edit.
+    menu: gio::Menu,
     empty: adw::StatusPage,
     list: gtk::ListBox,
     /// The entry each row of the list opens, or `None` for a day's heading.
@@ -99,8 +90,13 @@ impl JournalsView {
         let range = gtk::DropDown::from_strings(&RANGES.map(|(name, _)| name));
         let saved = state.device().setting(RANGE).and_then(|index| u32::try_from(index).ok());
         range.set_selected(saved.filter(|&index| (index as usize) < RANGES.len()).unwrap_or(1));
-        let edit_button = gtk::Button::builder().label("Edit Journal").visible(false).build();
-        let new_button = gtk::Button::builder().label("New Journal").build();
+        let menu = gio::Menu::new();
+        let menu_button = gtk::MenuButton::builder()
+            .label("Journals")
+            .tooltip_text("Start a journal, or edit one")
+            .menu_model(&menu)
+            .build();
+        let show_label = gtk::Label::builder().label("Show").css_classes(["dimmed"]).build();
         let controls = gtk::Box::builder()
             .spacing(6)
             .margin_top(6)
@@ -113,10 +109,11 @@ impl JournalsView {
             .vscrollbar_policy(gtk::PolicyType::Never)
             .hexpand(true)
             .build();
+        controls.append(&menu_button);
+        controls.append(&gtk::Separator::new(gtk::Orientation::Vertical));
+        controls.append(&show_label);
         controls.append(&chips_scroller);
         controls.append(&range);
-        controls.append(&edit_button);
-        controls.append(&new_button);
         let charts = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
             .spacing(12)
@@ -134,6 +131,13 @@ impl JournalsView {
             .margin_start(12)
             .margin_end(12)
             .build();
+        let hint = gtk::Label::builder()
+            .label("Show one journal alone to chart its answers")
+            .xalign(0.0)
+            .css_classes(["caption", "dimmed"])
+            .visible(false)
+            .build();
+        content.append(&hint);
         content.append(&charts);
         content.append(&list);
         let scrolled = gtk::ScrolledWindow::builder()
@@ -155,8 +159,9 @@ impl JournalsView {
             widget,
             charts,
             chips,
-            edit_button,
             empty,
+            hint,
+            menu,
             list,
             row_ids: RefCell::default(),
             on_open: RefCell::default(),
@@ -174,26 +179,35 @@ impl JournalsView {
                 this.show();
             }
         ));
-        new_button.connect_clicked(glib::clone!(
+        let actions = gio::SimpleActionGroup::new();
+        let new = gio::SimpleAction::new("new", None);
+        new.connect_activate(glib::clone!(
             #[weak]
             this,
-            move |_| {
+            move |_, _| {
                 let handler = this.on_new.borrow().clone();
                 if let Some(handler) = handler {
                     handler();
                 }
             }
         ));
-        this.edit_button.connect_clicked(glib::clone!(
+        actions.add_action(&new);
+        let edit = gio::SimpleAction::new("edit", Some(glib::VariantTy::STRING));
+        edit.connect_activate(glib::clone!(
             #[weak]
             this,
-            move |_| {
-                let shown = this.shown_journals();
-                if let ([journal], Some(handler)) = (&shown[..], this.on_open.borrow().clone()) {
-                    handler(journal.id);
+            move |_, parameter| {
+                let id = parameter
+                    .and_then(|value| value.get::<String>())
+                    .and_then(|id| id.parse().ok());
+                let handler = this.on_open.borrow().clone();
+                if let (Some(id), Some(handler)) = (id, handler) {
+                    handler(id);
                 }
             }
         ));
+        actions.add_action(&edit);
+        this.widget.insert_action_group("journals", Some(&actions));
         this.list.connect_row_activated(glib::clone!(
             #[weak]
             this,
@@ -256,10 +270,10 @@ impl JournalsView {
         let journals = self.state.read(|spaces| spaces.journals());
         self.fill_chips(&journals);
         let shown = self.shown_journals();
-        self.edit_button.set_visible(shown.len() == 1);
-        let since = RANGES[self.range.selected() as usize % RANGES.len()]
+        let start = RANGES[self.range.selected() as usize % RANGES.len()]
             .1
-            .map(|days| local_millis(today().add_days(1 - days), 0));
+            .map(|days| today().add_days(1 - days));
+        let since = start.map(|start| local_millis(start, 0));
         let query = self.query.borrow().clone();
         let in_trash = self.state.read(|spaces| spaces.notes_in_trash());
         let mut entries: Vec<Shown> = self
@@ -275,7 +289,12 @@ impl JournalsView {
             })
             .collect();
         entries.sort_by_key(|shown| std::cmp::Reverse(shown.at));
-        self.fill_charts(&shown, &entries);
+        self.fill_charts(&shown, &entries, start);
+        let chartable = shown
+            .iter()
+            .flat_map(|journal| journal.journal.iter())
+            .any(|fields| fields.current_questions().any(|question| charts(&question.kind)));
+        self.hint.set_visible(shown.len() > 1 && chartable && !entries.is_empty());
         self.fill_list(&entries);
         let (icon, title, description) = if journals.is_empty() {
             ("x-office-calendar-symbolic", "No Journals", "Start one with New Journal")
@@ -297,6 +316,19 @@ impl JournalsView {
     }
 
     fn fill_chips(self: &Rc<Self>, journals: &[Note]) {
+        self.menu.remove_all();
+        self.menu.append(Some("_New Journal…"), Some("journals.new"));
+        let edits = gio::Menu::new();
+        for journal in journals {
+            let name = journal.label().unwrap_or_else(|| "Untitled journal".to_owned());
+            let item = gio::MenuItem::new(Some(&format!("Edit {name}")), None);
+            item.set_action_and_target_value(
+                Some("journals.edit"),
+                Some(&journal.id.to_string().to_variant()),
+            );
+            edits.append_item(&item);
+        }
+        self.menu.append_section(None, &edits);
         while let Some(child) = self.chips.first_child() {
             self.chips.remove(&child);
         }
@@ -357,7 +389,9 @@ impl JournalsView {
         self.row_ids.replace(ids);
     }
 
-    fn fill_charts(&self, journals: &[Note], entries: &[Shown]) {
+    /// Charts each of the one journal's questions that charts, over the days from `start`, or from
+    /// its first entry, until today.
+    fn fill_charts(&self, journals: &[Note], entries: &[Shown], start: Option<Date>) {
         while let Some(child) = self.charts.first_child() {
             self.charts.remove(&child);
         }
@@ -390,19 +424,10 @@ impl JournalsView {
                         .collect();
                     line_chart(question, points, &color).upcast::<gtk::Widget>()
                 }
-                QuestionKind::Choice { options, .. } => {
-                    let series: Vec<(String, String)> = options
-                        .iter()
-                        .map(|option| (option.id.clone(), option.label.clone()))
-                        .collect();
-                    count_chart(&series, &answers).upcast()
-                }
-                QuestionKind::YesNo => {
-                    let series = vec![
-                        ("yes".to_owned(), "Yes".to_owned()),
-                        ("no".to_owned(), "No".to_owned()),
-                    ];
-                    count_chart(&series, &answers).upcast()
+                QuestionKind::Choice { .. } | QuestionKind::YesNo => {
+                    let first = answers.iter().filter_map(|(at, _)| local_date(*at)).min();
+                    let Some(first) = start.or(first) else { continue };
+                    day_grid(question, &answers, first, today(), &color).upcast()
                 }
                 _ => continue,
             };
@@ -526,16 +551,16 @@ fn describe(question: &Question, answer: &Answer) -> String {
 }
 
 /// A small dot in a journal's color.
-fn dot(colors: (&'static str, &'static str)) -> gtk::DrawingArea {
+pub fn dot(colors: (&'static str, &'static str)) -> gtk::DrawingArea {
     let area = gtk::DrawingArea::builder()
-        .content_width(10)
-        .content_height(10)
+        .content_width(16)
+        .content_height(16)
         .valign(gtk::Align::Center)
         .build();
     area.set_draw_func(move |_, cr, width, height| {
         let (r, g, b) = rgb(shade(colors));
         cr.set_source_rgb(r, g, b);
-        let radius = f64::from(width.min(height)) / 2.0;
+        let radius = 5.0_f64.min(f64::from(width.min(height)) / 2.0);
         cr.arc(f64::from(width) / 2.0, f64::from(height) / 2.0, radius, 0.0, std::f64::consts::TAU);
         let _ = cr.fill();
     });
@@ -657,130 +682,169 @@ fn line_chart(question: &Question, mut points: Vec<(i64, f64)>, color: &str) -> 
     area
 }
 
-/// Stacked bars per day counting each answer's options, with a legend that names them.
-fn count_chart(series: &[(String, String)], answers: &[(i64, &Answer)]) -> gtk::Box {
-    let mut days: BTreeMap<(i32, i32, i32), Vec<usize>> = BTreeMap::new();
-    for (at, answer) in answers {
-        let Ok(time) = glib::DateTime::from_unix_local(at.div_euclid(1000)) else {
-            continue;
-        };
-        let ids: Vec<String> = match answer {
-            Answer::Choices(ids) => ids.clone(),
-            Answer::Bool(true) => vec!["yes".to_owned()],
-            Answer::Bool(false) => vec!["no".to_owned()],
-            _ => Vec::new(),
-        };
-        let counts = days.entry(time.ymd()).or_insert_with(|| vec![0; series.len()]);
-        for id in ids {
-            if let Some(index) = series.iter().position(|(option, _)| *option == id) {
-                counts[index] += 1;
+/// Whether the Journals tab charts a kind of question.
+fn charts(kind: &QuestionKind) -> bool {
+    kind.is_numeric() || matches!(kind, QuestionKind::Choice { .. } | QuestionKind::YesNo)
+}
+
+/// The local date of a timestamp.
+fn local_date(at: i64) -> Option<Date> {
+    let time = glib::DateTime::from_unix_local(at.div_euclid(1000)).ok()?;
+    Date::new(time.year() as u16, time.month() as u8, time.day_of_month() as u8)
+}
+
+/// What a day grid draws in one cell.
+#[derive(Clone, Copy, PartialEq)]
+enum Mark {
+    Empty,
+    /// A hollow ring, for a no.
+    Ring,
+    /// A filled dot, for a yes or an option picked.
+    Dot,
+}
+
+const GRID_ROW: f64 = 22.0;
+const GRID_LABELS: f64 = 96.0;
+const GRID_COUNTS: f64 = 64.0;
+
+/// A grid with a column for each day from `first` to `last`, in the journal's color. A choice
+/// question gets a row per option, with a dot on each day that picked it. A yes or no question
+/// gets one row, with a dot for yes and a ring for no.
+fn day_grid(
+    question: &Question,
+    answers: &[(i64, &Answer)],
+    first: Date,
+    last: Date,
+    color: &str,
+) -> gtk::Box {
+    let mut days = vec![first];
+    while let Some(&day) = days.last()
+        && day < last
+    {
+        days.push(day.add_days(1));
+    }
+    let column = |at: i64| local_date(at).and_then(|date| days.iter().position(|day| *day == date));
+    let mut rows: Vec<(String, Vec<Mark>, String)> = Vec::new();
+    let caption;
+    match &question.kind {
+        QuestionKind::Choice { options, .. } => {
+            for option in options {
+                let mut marks = vec![Mark::Empty; days.len()];
+                for (at, answer) in answers {
+                    if let (Answer::Choices(ids), Some(index)) = (answer, column(*at))
+                        && ids.contains(&option.id)
+                    {
+                        marks[index] = Mark::Dot;
+                    }
+                }
+                let count = marks.iter().filter(|mark| **mark == Mark::Dot).count();
+                if option.retired.is_none() || count > 0 {
+                    rows.push((option.label.clone(), marks, count.to_string()));
+                }
             }
+            caption = "A dot for each day that picked the option".to_owned();
+        }
+        _ => {
+            let mut marks = vec![Mark::Empty; days.len()];
+            for (at, answer) in answers {
+                if let (Answer::Bool(yes), Some(index)) = (answer, column(*at)) {
+                    // A day with both answers shows the yes.
+                    if *yes || marks[index] == Mark::Empty {
+                        marks[index] = if *yes { Mark::Dot } else { Mark::Ring };
+                    }
+                }
+            }
+            let yes = marks.iter().filter(|mark| **mark == Mark::Dot).count();
+            let answered = marks.iter().filter(|mark| **mark != Mark::Empty).count();
+            caption = format!("A dot for yes and a ring for no · Yes on {yes} of {answered} days");
+            rows.push(("Yes".to_owned(), marks, format!("{yes} of {answered}")));
         }
     }
-    let days: Vec<((i32, i32, i32), Vec<usize>)> = days.into_iter().collect();
-    let most =
-        days.iter().map(|(_, counts)| counts.iter().sum::<usize>()).max().unwrap_or(1).max(1);
-    let colors: Vec<(f64, f64, f64)> =
-        (0..series.len()).map(|index| rgb(shade(SERIES[index % SERIES.len()]))).collect();
-    let area = gtk::DrawingArea::builder()
-        .content_height(CHART_HEIGHT)
-        .hexpand(true)
-        .has_tooltip(true)
-        .build();
-    let geometry = move |width: f64, count: usize| {
-        let slot = (width - PAD_LEFT - PAD_RIGHT) / count.max(1) as f64;
-        let bar = (slot - 2.0).clamp(2.0, 28.0);
-        (slot, bar)
-    };
-    let drawn = days.clone();
-    let drawn_colors = colors.clone();
+    let yes_no = question.kind == QuestionKind::YesNo;
+    let height = (GRID_ROW * rows.len() as f64 + 22.0).ceil() as i32;
+    let area =
+        gtk::DrawingArea::builder().content_height(height).hexpand(true).has_tooltip(true).build();
+    let (r, g, b) = rgb(color);
+    let geometry =
+        move |width: f64, count: usize| (width - GRID_LABELS - GRID_COUNTS) / count.max(1) as f64;
+    let drawn = rows.clone();
+    let day_count = days.len();
+    let (first_label, last_label) = (format_date(first), format_date(last));
     area.set_draw_func(move |area, cr, width, height| {
-        let (width, height) = (f64::from(width), f64::from(height));
+        let width = f64::from(width);
+        let cell = geometry(width, day_count);
+        let radius = (cell.min(GRID_ROW) / 2.0 - 1.5).clamp(1.5, 6.0);
         let (ir, ig, ib, _) = ink(area.upcast_ref(), 1.0);
-        let plot = height - PAD_TOP - PAD_BOTTOM;
-        cr.set_source_rgba(ir, ig, ib, 0.15);
-        cr.set_line_width(1.0);
-        cr.move_to(PAD_LEFT, (height - PAD_BOTTOM).round() + 0.5);
-        cr.line_to(width - PAD_RIGHT, (height - PAD_BOTTOM).round() + 0.5);
-        let _ = cr.stroke();
-        cr.set_source_rgba(ir, ig, ib, 0.6);
         cr.set_font_size(11.0);
-        text_right(cr, &most.to_string(), PAD_LEFT - 8.0, PAD_TOP + 8.0);
-        let (slot, bar) = geometry(width, drawn.len());
-        for (index, ((year, month, day), counts)) in drawn.iter().enumerate() {
-            let x = PAD_LEFT + slot * index as f64 + (slot - bar) / 2.0;
-            let mut y = height - PAD_BOTTOM;
-            for (series, count) in counts.iter().enumerate().filter(|(_, count)| **count > 0) {
-                let segment = plot * *count as f64 / most as f64;
-                let (r, g, b) = drawn_colors[series];
-                cr.set_source_rgb(r, g, b);
-                cr.rectangle(x, y - segment + 1.0, bar, (segment - 2.0).max(1.0));
+        for (row, (label, marks, count)) in drawn.iter().enumerate() {
+            let middle = GRID_ROW * row as f64 + GRID_ROW / 2.0;
+            cr.set_source_rgba(ir, ig, ib, 0.7);
+            cr.move_to(12.0, middle + 4.0);
+            let _ = cr.show_text(label);
+            text_right(cr, count, width - 12.0, middle + 4.0);
+            cr.set_source_rgba(ir, ig, ib, 0.08);
+            for index in 0..marks.len() {
+                let x = GRID_LABELS + cell * (index as f64 + 0.5);
+                cr.arc(x, middle, 1.0, 0.0, std::f64::consts::TAU);
                 let _ = cr.fill();
-                y -= segment;
             }
-            if index == 0 || index + 1 == drawn.len() {
-                let label = Date::new(*year as u16, *month as u8, *day as u8)
-                    .map(|date| date_label(local_millis(date, 12 * 60)))
-                    .unwrap_or_default();
-                cr.set_source_rgba(ir, ig, ib, 0.6);
-                if index == 0 {
-                    cr.move_to(PAD_LEFT, height - 6.0);
-                    let _ = cr.show_text(&label);
-                } else {
-                    text_right(cr, &label, width - PAD_RIGHT, height - 6.0);
+            cr.set_source_rgb(r, g, b);
+            cr.set_line_width(2.0);
+            for (index, mark) in marks.iter().enumerate() {
+                let x = GRID_LABELS + cell * (index as f64 + 0.5);
+                match mark {
+                    Mark::Dot => {
+                        cr.arc(x, middle, radius, 0.0, std::f64::consts::TAU);
+                        let _ = cr.fill();
+                    }
+                    Mark::Ring => {
+                        cr.arc(x, middle, (radius - 1.0).max(1.0), 0.0, std::f64::consts::TAU);
+                        let _ = cr.stroke();
+                    }
+                    Mark::Empty => {}
                 }
             }
         }
+        cr.set_source_rgba(ir, ig, ib, 0.6);
+        let baseline = f64::from(height) - 6.0;
+        cr.move_to(GRID_LABELS, baseline);
+        let _ = cr.show_text(&first_label);
+        if day_count > 1 {
+            text_right(cr, &last_label, width - GRID_COUNTS, baseline);
+        }
     });
-    let tip_series: Vec<String> = series.iter().map(|(_, label)| label.clone()).collect();
-    area.connect_query_tooltip(move |area, x, _, _, tooltip| {
-        let (slot, _) = geometry(f64::from(area.width()), days.len());
-        let index = ((f64::from(x) - PAD_LEFT) / slot).floor();
-        if index < 0.0 {
+    area.connect_query_tooltip(move |area, x, y, _, tooltip| {
+        let cell = geometry(f64::from(area.width()), days.len());
+        let index = ((f64::from(x) - GRID_LABELS) / cell).floor();
+        let row = (f64::from(y) / GRID_ROW).floor();
+        if index < 0.0 || row < 0.0 {
             return false;
         }
-        let Some(((year, month, day), counts)) = days.get(index as usize) else {
+        let (Some(day), Some((label, marks, _))) =
+            (days.get(index as usize), rows.get(row as usize))
+        else {
             return false;
         };
-        let date =
-            Date::new(*year as u16, *month as u8, *day as u8).map(format_date).unwrap_or_default();
-        let parts: Vec<String> = counts
-            .iter()
-            .zip(&tip_series)
-            .filter(|(count, _)| **count > 0)
-            .map(|(count, label)| format!("{label}: {count}"))
-            .collect();
-        tooltip.set_text(Some(&format!("{date}\n{}", parts.join("\n"))));
+        let state = match (yes_no, marks[index as usize]) {
+            (true, Mark::Dot) => "Yes",
+            (true, Mark::Ring) => "No",
+            (false, Mark::Dot) => "Picked",
+            (_, _) => "No answer",
+        };
+        tooltip.set_text(Some(&format!("{}\n{label}: {state}", format_date(*day))));
         true
     });
-    let legend = gtk::FlowBox::builder()
-        .selection_mode(gtk::SelectionMode::None)
-        .max_children_per_line(6)
-        .margin_start(12)
-        .margin_end(12)
-        .margin_bottom(12)
-        .build();
-    for (index, (_, label)) in series.iter().enumerate() {
-        let item = gtk::Box::builder().spacing(6).build();
-        let swatch = gtk::DrawingArea::builder()
-            .content_width(10)
-            .content_height(10)
-            .valign(gtk::Align::Center)
-            .build();
-        let color = SERIES[index % SERIES.len()];
-        swatch.set_draw_func(move |_, cr, width, height| {
-            let (r, g, b) = rgb(shade(color));
-            cr.set_source_rgb(r, g, b);
-            cr.rectangle(0.0, 0.0, f64::from(width), f64::from(height));
-            let _ = cr.fill();
-        });
-        item.append(&swatch);
-        item.append(&gtk::Label::builder().label(label).css_classes(["caption"]).build());
-        legend.append(&item);
-    }
     let holder = gtk::Box::new(gtk::Orientation::Vertical, 6);
     holder.append(&area);
-    holder.append(&legend);
+    holder.append(
+        &gtk::Label::builder()
+            .label(caption)
+            .xalign(0.0)
+            .css_classes(["caption", "dimmed"])
+            .margin_start(12)
+            .margin_bottom(12)
+            .build(),
+    );
     holder
 }
 

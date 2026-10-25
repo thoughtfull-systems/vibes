@@ -342,12 +342,12 @@ impl Spaces {
         self.library_mut(space)?.create_journal(name)
     }
 
-    /// The journals outside the trash in every library, shown or not, by label.
+    /// The journals outside the trash and the archive in every library, shown or not, by label.
     pub fn all_journals(&self) -> Vec<Note> {
         journals_by_label(self.all())
     }
 
-    /// The journals outside the trash in the libraries that show, by label.
+    /// The journals outside the trash and the archive in the libraries that show, by label.
     pub fn journals(&self) -> Vec<Note> {
         journals_by_label(self.shown())
     }
@@ -561,11 +561,14 @@ impl Spaces {
     }
 }
 
-/// The journals outside the trash in `libraries`, by label, ignoring case.
+/// The journals outside the trash and the archive in `libraries`, by label, ignoring case.
 fn journals_by_label<'a>(libraries: impl Iterator<Item = &'a Library>) -> Vec<Note> {
     let mut journals: Vec<Note> = libraries
         .flat_map(|library| {
-            library.journals().into_iter().filter(|note| !library.is_in_trash(note.id))
+            library
+                .journals()
+                .into_iter()
+                .filter(|note| note.archived.is_none() && !library.is_in_trash(note.id))
         })
         .collect();
     journals.sort_by_key(|note| (note.label().unwrap_or_default().to_lowercase(), note.id));
@@ -675,6 +678,9 @@ mod tests {
         let names: Vec<String> =
             spaces.journals().iter().filter_map(|journal| journal.label()).collect();
         assert_eq!(names, ["Work log"]);
+        spaces.set_archived(journal, true).unwrap();
+        assert!(spaces.journals().is_empty());
+        assert!(spaces.all_journals().is_empty());
     }
 
     #[test]

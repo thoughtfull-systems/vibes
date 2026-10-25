@@ -320,7 +320,8 @@ a tombstone for each.
 
 Archiving sets a note aside, out of every list, without changing it, so taking it out of the archive
 restores it unchanged. A note is in the archive if it has `archived`. Setting or removing `archived`
-doesn't change the note's `modified` time.
+doesn't change the note's `modified` time. An entry counts as archived while its journal is, and an
+archived journal doesn't prompt.
 
 Version 2 kept `archived` in the action fields. When an implementation opens or imports a library,
 it moves any `archived` it finds there to the note, in one commit, keeping the note's own if it
