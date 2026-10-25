@@ -27,7 +27,10 @@ const KINDS: [(&str, &str); 8] = [
 /// Each option's identifier, if it has one already, and its entry.
 type Options = Rc<RefCell<Vec<(Option<String>, gtk::Entry)>>>;
 
-const WEEKDAY_NAMES: [&str; 7] = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
+/// The days of the week as the app shows them, starting on Sunday, each with its index in
+/// `Days::weekdays`, which starts on Monday.
+const WEEKDAYS: [(usize, &str); 7] =
+    [(6, "Su"), (0, "Mo"), (1, "Tu"), (2, "We"), (3, "Th"), (4, "Fr"), (5, "Sa")];
 
 /// The details sidebar's fields for a journal: whether it prompts here, its color, its questions,
 /// and its schedules.
@@ -541,11 +544,11 @@ impl ScheduleEditor {
         let weekdays = schedule.map_or(Days::WORKDAYS, |schedule| schedule.days).weekdays;
         let day_row =
             gtk::Box::builder().css_classes(["linked"]).halign(gtk::Align::Center).build();
-        let days: Vec<gtk::ToggleButton> = WEEKDAY_NAMES
+        let days: Vec<gtk::ToggleButton> = WEEKDAYS
             .iter()
-            .zip(weekdays)
-            .map(|(name, on)| {
-                let button = gtk::ToggleButton::builder().label(*name).active(on).build();
+            .map(|&(index, name)| {
+                let button =
+                    gtk::ToggleButton::builder().label(name).active(weekdays[index]).build();
                 day_row.append(&button);
                 button
             })
@@ -614,8 +617,8 @@ impl ScheduleEditor {
     /// The schedule the widgets describe, keeping `existing`'s identifier.
     fn schedule(&self, existing: Option<&Schedule>) -> Option<Schedule> {
         let mut weekdays = [false; 7];
-        for (on, button) in weekdays.iter_mut().zip(&self.days) {
-            *on = button.is_active();
+        for (&(index, _), button) in WEEKDAYS.iter().zip(&self.days) {
+            weekdays[index] = button.is_active();
         }
         if !weekdays.contains(&true) {
             return None;
@@ -691,11 +694,10 @@ pub fn describe_days(days: &Days) -> String {
     if *days == Days::WORKDAYS {
         return "Workdays".to_owned();
     }
-    let names: Vec<&str> = WEEKDAY_NAMES
+    let names: Vec<&str> = WEEKDAYS
         .iter()
-        .zip(days.weekdays)
-        .filter(|(_, on)| *on)
-        .map(|(name, _)| *name)
+        .filter(|&&(index, _)| days.weekdays[index])
+        .map(|&(_, name)| name)
         .collect();
     names.join(", ")
 }
