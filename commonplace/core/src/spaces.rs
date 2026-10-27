@@ -8,7 +8,7 @@ use std::fs::{self, File, TryLockError};
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
-use loro::{ExportMode, LoroMap, ValueOrContainer};
+use loro::ExportMode;
 
 use crate::actions::order_key;
 use crate::library::{MODIFIED, loro_error};
@@ -147,23 +147,7 @@ impl Spaces {
         // A note that a move left in both libraries, or deleted from one, can lose to the other
         // side's deletion, so the merge writes back each note that either library held.
         let originals = [source_library.doc.get_map("notes"), before.get_map("notes")];
-        let held: HashSet<NoteId> = originals
-            .iter()
-            .flat_map(|notes| notes.keys())
-            .filter_map(|key| key.parse().ok())
-            .collect();
-        let mut repaired = false;
-        for id in held {
-            if target_library.note_map(id).is_ok() {
-                continue;
-            }
-            let original = originals.iter().find_map(|notes| note_map_in(notes, id));
-            if let Some(original) = original {
-                target_library.insert_copy(id, &original)?;
-                repaired = true;
-            }
-        }
-        if repaired {
+        if target_library.restore_lost(&originals)? {
             target_library.commit()?;
         }
         self.remove(source)
@@ -608,13 +592,6 @@ fn pair(spaces: &mut [Space], first: usize, second: usize) -> (&mut Library, &mu
 fn newest_first(mut notes: Vec<Note>) -> Vec<Note> {
     notes.sort_by(|a, b| b.modified.cmp(&a.modified).then(b.id.cmp(&a.id)));
     notes
-}
-
-fn note_map_in(notes: &LoroMap, id: NoteId) -> Option<LoroMap> {
-    match notes.get(&id.to_string()) {
-        Some(ValueOrContainer::Container(container)) => container.into_map().ok(),
-        _ => None,
-    }
 }
 
 #[cfg(test)]

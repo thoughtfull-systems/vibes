@@ -22,6 +22,7 @@ mod note_page;
 mod prompts;
 mod rows;
 mod state;
+mod sync;
 mod tray;
 mod window;
 
@@ -151,6 +152,7 @@ fn main() -> glib::ExitCode {
             };
             if let Ok(state) = &state {
                 prompts::start(app, state.clone());
+                sync::start(state, &library_dir());
             }
             shared.borrow_mut().state = Some(state);
             let quit = gio::ActionEntry::builder("quit")

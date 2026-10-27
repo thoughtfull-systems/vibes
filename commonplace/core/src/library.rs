@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: MPL-2.0-no-copyleft-exception
 
+use std::collections::HashSet;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use loro::{
-    Container, LoroDoc, LoroList, LoroMap, LoroText, LoroValue, UpdateOptions, ValueOrContainer,
+    Container, ExportMode, LoroDoc, LoroList, LoroMap, LoroText, LoroValue, UpdateOptions,
+    ValueOrContainer, VersionVector,
 };
 
 use crate::actions::{ACTION, Action};
@@ -450,6 +452,69 @@ impl Library {
     pub(crate) fn validate_snapshot(bytes: &[u8]) -> Result<(), Error> {
         let doc = LoroDoc::new();
         doc.import(bytes).map_err(loro_error)?;
+        Self::validate(&doc)
+    }
+
+    /// The library's version vector, in Loro's encoding, which names every change it holds.
+    pub fn version(&self) -> Vec<u8> {
+        self.doc.oplog_vv().encode()
+    }
+
+    /// The changes that a library at `version` lacks, in Loro's update encoding, or `None` if it
+    /// lacks none.
+    pub fn updates_since(&self, version: &[u8]) -> Result<Option<Vec<u8>>, Error> {
+        let version = VersionVector::decode(version).map_err(loro_error)?;
+        if version.includes_vv(&self.doc.oplog_vv()) {
+            return Ok(None);
+        }
+        self.doc.export(ExportMode::updates(&version)).map(Some).map_err(loro_error)
+    }
+
+    /// Merges changes from another device, after checking in a copy that they leave a library this
+    /// version can write. With `repair`, it then writes back each note that either side held and
+    /// the merge lost, as merging libraries does.
+    pub fn merge_updates(&mut self, bytes: &[u8], repair: bool) -> Result<(), Error> {
+        self.check_writable()?;
+        let trial = self.doc.fork();
+        trial.import(bytes).map_err(loro_error)?;
+        Self::validate(&trial)?;
+        let before = repair.then(|| self.doc.fork());
+        self.doc.import(bytes).map_err(loro_error)?;
+        self.move_archived_to_notes()?;
+        if let Some(before) = before {
+            // Changes that build on history this library lacks don't import on their own, but
+            // then the two sides share history, and nothing needs repair on their account.
+            let incoming = LoroDoc::new();
+            let _ = incoming.import(bytes);
+            self.restore_lost(&[before.get_map("notes"), incoming.get_map("notes")])?;
+        }
+        self.commit()
+    }
+
+    /// Writes back, without committing, each note in `originals` that the library no longer holds,
+    /// and returns whether it wrote any.
+    pub(crate) fn restore_lost(&mut self, originals: &[LoroMap]) -> Result<bool, Error> {
+        let held: HashSet<NoteId> = originals
+            .iter()
+            .flat_map(|notes| notes.keys())
+            .filter_map(|key| key.parse().ok())
+            .collect();
+        let mut restored = false;
+        for id in held {
+            if self.note_map(id).is_ok() {
+                continue;
+            }
+            let original = originals.iter().find_map(|notes| note_map_in(notes, id));
+            if let Some(original) = original {
+                self.insert_copy(id, &original)?;
+                restored = true;
+            }
+        }
+        Ok(restored)
+    }
+
+    /// Checks that `doc` is a library that this version can write.
+    fn validate(doc: &LoroDoc) -> Result<(), Error> {
         let meta = doc.get_map("meta");
         let format = meta.get("format").and_then(value).and_then(string);
         if format.as_deref() != Some(FORMAT) {
@@ -492,6 +557,13 @@ impl Library {
             Some(store) => store.save(&self.doc),
             None => Ok(()),
         }
+    }
+}
+
+fn note_map_in(notes: &LoroMap, id: NoteId) -> Option<LoroMap> {
+    match notes.get(&id.to_string()) {
+        Some(ValueOrContainer::Container(container)) => container.into_map().ok(),
+        _ => None,
     }
 }
 

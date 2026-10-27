@@ -239,6 +239,7 @@ impl Window {
         header.pack_start(&spaces_bar);
         let menu = gio::Menu::new();
         menu.append(Some("_Libraries"), Some("win.libraries"));
+        menu.append(Some("_Sync"), Some("win.sync"));
         header.pack_end(
             &gtk::MenuButton::builder()
                 .icon_name("open-menu-symbolic")
@@ -745,8 +746,14 @@ impl Window {
             self,
             move |_, _| libraries::present_dialog(&this.state, &this.window)
         ));
+        let sync = gio::SimpleAction::new("sync", None);
+        sync.connect_activate(glib::clone!(
+            #[weak(rename_to = this)]
+            self,
+            move |_, _| crate::sync::present_dialog(&this.state, &this.window)
+        ));
         for action in
-            [follow_link, insert_link, libraries, save, search, toggle_checkbox, toggle_space]
+            [follow_link, insert_link, libraries, save, search, sync, toggle_checkbox, toggle_space]
         {
             self.window.add_action(&action);
         }

@@ -25,6 +25,7 @@ Gradle
 GTK('s)?
 iCalendar
 interoperate
+iroh('s)?
 Jetpack
 libnotify
 Logseq
@@ -39,8 +40,12 @@ Nygard
 Org
 Pandoc
 PDFs
+postcard
 strikethrough
+Syncthing('s)?
+Tailscale
 Tauri
+Tokio
 toolkits
 URIs
 UUIDs

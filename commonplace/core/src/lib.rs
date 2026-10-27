@@ -44,6 +44,8 @@ pub use markup::{
     spans_and_links, toggle_checkbox,
 };
 pub use spaces::Spaces;
+#[cfg(feature = "sync")]
+pub mod sync;
 pub use words::word_count;
 
 #[derive(Debug, thiserror::Error)]
@@ -54,6 +56,10 @@ pub enum Error {
     DifferentLibraries,
     #[error("an entry moves with its journal")]
     EntryMovesWithJournal(NoteId),
+    #[error("{0:?} isn't a device address")]
+    InvalidAddress(String),
+    #[error("{0:?} isn't a relay address")]
+    InvalidRelay(String),
     #[error("a schedule needs times within the day, and a random one needs a window")]
     InvalidSchedule,
     #[error(transparent)]
@@ -72,6 +78,8 @@ pub enum Error {
     NotAMemo(NoteId),
     #[error("not a Commonplace library: its format is {0:?}")]
     NotALibrary(String),
+    #[error("there's no device {0}")]
+    NoSuchDevice(String),
     #[error("there's no library {0}")]
     NoSuchLibrary(String),
     #[error("note {0} isn't an action")]
@@ -86,4 +94,8 @@ pub enum Error {
     ReadOnly,
     #[error("a library can't merge into itself")]
     SameLibrary,
+    #[error("share {0} syncs another library")]
+    ShareInOtherLibrary(String),
+    #[error("sync failed: {0}")]
+    Sync(String),
 }
