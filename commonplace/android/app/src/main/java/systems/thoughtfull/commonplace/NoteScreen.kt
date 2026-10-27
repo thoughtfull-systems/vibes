@@ -227,13 +227,21 @@ internal fun NoteScreen(
           Modifier.padding(20.dp)
         )
       } else {
-        if (current.readOnly) Text("A newer version wrote this library. Update to edit it.")
-        if (current.inTrash) {
+        if (current.readOnly) ReadOnlyBanner()
+        if (current.inTrash && !current.readOnly) {
           Row(
             Modifier.padding(horizontal = 16.dp),
             verticalAlignment = Alignment.CenterVertically
           ) {
-            Text("In the trash", Modifier.weight(1f))
+            Text(
+              if (current.trashed != null) {
+                "This note is in the trash"
+              } else {
+                "In the trash with a project above it, which restoring brings back too"
+              },
+              Modifier.weight(1f),
+              color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
             TextButton(onClick = { model.perform { it.restore(id) } }) { Text("Restore") }
           }
         }
@@ -457,25 +465,23 @@ internal fun ActionDetails(model: NotebookModel, note: MobileNote) {
       Switch(action.project, { change(ActionChange.Project(it)) })
     }
     ActionField("Starts", "detail-starts") {
-      TextButton(onClick = { dateField = "Starts" }) { Text(action.defer ?: "None") }
+      TextButton(onClick = { dateField = "Starts" }) {
+        Text(action.defer?.let { formatDate(it) } ?: "None")
+      }
     }
     ActionField("Due", "detail-due") {
-      TextButton(onClick = { dateField = "Due" }) { Text(action.due ?: "None") }
-    }
-    val inherited = listOf(
-      "Starts" to dates?.start?.takeIf {
-        it.date > today
-      },
-      "Due" to dates?.due
-    )
-      .mapNotNull { (label, dated) ->
-        dated?.takeIf { it.from != note.id }?.let {
-          val parent = state.notes.find { parent -> parent.id == it.from }
-          "$label ${it.date} from ${parent?.title ?: it.from}"
-        }
+      TextButton(onClick = { dateField = "Due" }) {
+        Text(action.due?.let { formatDate(it) } ?: "None")
       }
+    }
+    val context = rememberRowContext(state)
+    val inherited = dates?.let { inheritedDates(note.id, it, context::label) }.orEmpty()
     if (inherited.isNotEmpty()) {
-      Text(inherited.joinToString(" · "), style = MaterialTheme.typography.bodySmall)
+      Text(
+        inherited,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        style = MaterialTheme.typography.bodySmall
+      )
     }
     if (action.state == ActionState.OPEN) {
       ActionField("Unclear?", "detail-unclear") {
@@ -531,11 +537,15 @@ internal fun TextInputDialog(
   hint: String,
   dismiss: () -> Unit,
   valid: (String) -> Boolean = { true },
+  message: String? = null,
   save: (String) -> Unit
 ) {
   var text by rememberSaveable { mutableStateOf(initial) }
   AlertDialog(onDismissRequest = dismiss, title = { Text(title) }, text = {
-    OutlinedTextField(text, { text = it }, label = { Text(hint) }, isError = !valid(text))
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+      message?.let { Text(it) }
+      OutlinedTextField(text, { text = it }, label = { Text(hint) }, isError = !valid(text))
+    }
   }, confirmButton = {
     TextButton(enabled = valid(text), onClick = { save(text) }) { Text("Save") }
   }, dismissButton = { TextButton(onClick = dismiss) { Text("Cancel") } })

@@ -86,6 +86,7 @@ internal fun stepDrop(rows: List<StepDropRow>, dragged: String, pointer: Offset)
 internal fun StepRows(
   model: NotebookModel,
   steps: List<MobileAction>,
+  context: RowContext,
   editable: Boolean,
   scroll: ScrollState,
   viewport: Rect,
@@ -179,7 +180,11 @@ internal fun StepRows(
           Box(Modifier.weight(1f)) {
             NoteRow(
               step.note,
+              context,
               open,
+              dates = step.dates,
+              showPath = false,
+              stalled = step.stalled,
               complete = if (editable) {
                 { toggleAction(model, step.note) }
               } else {

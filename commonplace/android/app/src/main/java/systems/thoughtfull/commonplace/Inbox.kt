@@ -30,7 +30,6 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -77,20 +76,23 @@ internal fun InboxScreen(
   LaunchedEffect(current?.note?.id) { currentId = current?.note?.id }
   DisposableEffect(Unit) { onDispose { editingChanged(false) } }
   if (current == null) {
-    Column(Modifier.fillMaxSize().padding(20.dp).testTag("inbox-empty")) {
-      Text(
-        if (skipped.isEmpty()) "Inbox Is Empty" else "Nothing Left to Sort",
-        style = MaterialTheme.typography.titleLarge
-      )
-      Text(
-        if (skipped.isEmpty()) {
-          "Tasks you capture wait here until you sort them."
-        } else {
-          "Start over to sort the actions you skipped."
-        }
-      )
-      if (skipped.isNotEmpty()) {
-        TextButton(onClick = { skipped = emptyList() }) { Text("Start over") }
+    Column(
+      Modifier.fillMaxSize().testTag("inbox-empty"),
+      horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+      if (skipped.isEmpty()) {
+        EmptyNotes(
+          R.drawable.inbox,
+          "Inbox Is Empty",
+          "Tasks you capture wait here until you sort them"
+        )
+      } else {
+        EmptyNotes(
+          R.drawable.inbox,
+          "Nothing Left to Sort",
+          "Start over to sort the actions you skipped"
+        )
+        Button(onClick = { skipped = emptyList() }) { Text("Start over") }
       }
     }
   } else {
@@ -203,7 +205,6 @@ private fun InboxItem(
       if (!editing) {
         HorizontalDivider()
         Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-          if (note.readOnly) Text("A newer version wrote this library. Update to sort it.")
           FlowRow(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             itemVerticalAlignment = Alignment.CenterVertically
@@ -220,7 +221,7 @@ private fun InboxItem(
                 contentPadding = PaddingValues(horizontal = 12.dp),
                 modifier = Modifier.testTag("inbox-due")
               ) {
-                Text(action.due ?: "None")
+                Text(action.due?.let { formatDate(it) } ?: "None")
                 AppIcon(R.drawable.dropdown)
               }
             }
@@ -237,7 +238,11 @@ private fun InboxItem(
             ) {
               Text("In", color = MaterialTheme.colorScheme.onSurfaceVariant)
               Text(
-                state.notes.find { it.id == note.parent }?.title ?: "Top level",
+                formattedTitle(
+                  state.actionPaths[note.id].orEmpty()
+                    .mapNotNull { id -> state.notes.find { it.id == id }?.let(::displayLabel) }
+                    .joinToString(" › ").ifEmpty { "Top level" }
+                ),
                 Modifier.weight(1f, fill = false)
               )
               OutlinedButton(
@@ -250,11 +255,22 @@ private fun InboxItem(
             }
           }
           // The button order follows the Linux inbox.
-          Text("Sort onto", style = MaterialTheme.typography.labelLarge)
-          Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+          FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            itemVerticalAlignment = Alignment.CenterVertically
+          ) {
+            Text("Sort onto", color = MaterialTheme.colorScheme.onSurfaceVariant)
             Button(enabled = enabled, onClick = { sort(ActionList.ACTIVE) }) { Text("Active") }
-            Button(enabled = enabled, onClick = { waiting = true }) { Text("Waiting…") }
-            Button(enabled = enabled, onClick = { dateField = "Schedule" }) { Text("Schedule…") }
+            listOf(
+              "Waiting…" to { waiting = true },
+              "Schedule…" to { dateField = "Schedule" },
+              "Someday" to { sort(ActionList.SOMEDAY) },
+              "Maybe" to { sort(ActionList.MAYBE) }
+            ).forEach { (label, choose) ->
+              OutlinedButton(colors = neutralButtonColors(), enabled = enabled, onClick = choose) {
+                Text(label)
+              }
+            }
           }
           if (waiting) {
             fun saveWaiting() {
@@ -280,10 +296,6 @@ private fun InboxItem(
                 .testTag("inbox-waiting")
             )
           }
-          Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(enabled = enabled, onClick = { sort(ActionList.SOMEDAY) }) { Text("Someday") }
-            Button(enabled = enabled, onClick = { sort(ActionList.MAYBE) }) { Text("Maybe") }
-          }
         }
       }
     }
@@ -294,6 +306,7 @@ private fun InboxItem(
       horizontalArrangement = Arrangement.spacedBy(6.dp),
       verticalAlignment = Alignment.CenterVertically
     ) {
+      Text("Or", color = MaterialTheme.colorScheme.onSurfaceVariant)
       OutlinedButton(
         colors = neutralButtonColors(),
         enabled = enabled,

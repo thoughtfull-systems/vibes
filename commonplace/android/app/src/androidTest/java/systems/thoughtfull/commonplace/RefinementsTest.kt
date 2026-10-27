@@ -14,6 +14,7 @@ import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onFirst
+import androidx.compose.ui.test.onLast
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
@@ -200,16 +201,14 @@ class RefinementsTest {
     compose.onNodeWithTag("entry-journal").performClick()
     compose.waitUntil(10_000) { repository.preferences.getString("selected", null) == journal }
     compose.onNodeWithText("Details").performClick()
-    compose.onAllNodesWithContentDescription("Edit question").assertCountEquals(2)
-    compose.onAllNodesWithContentDescription("Move question down").onFirst()
+    compose.onAllNodesWithContentDescription("Move down").assertCountEquals(2)
+    compose.onAllNodesWithContentDescription("Move down").onFirst()
       .performScrollTo().performClick()
     compose.waitUntil(10_000) {
       model.state.value.journals.find { it.id == journal }?.journal?.questions?.first()?.id == "two"
     }
-    compose.onAllNodesWithContentDescription(
-      "Edit schedule"
-    ).onFirst().performScrollTo().performClick()
-    compose.onNodeWithText("Journal schedule").assertExists()
+    compose.onAllNodesWithContentDescription("Edit").onLast().performScrollTo().performClick()
+    compose.onNodeWithText("Edit schedule").assertExists()
     compose.onNodeWithText("Cancel").performClick()
   }
 }

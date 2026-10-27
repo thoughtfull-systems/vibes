@@ -177,6 +177,7 @@ fun CommonplaceApp(model: NotebookModel, incoming: Intent?, consumed: () -> Unit
       }
     ) { padding ->
       Column(Modifier.padding(padding).fillMaxSize()) {
+        if (state.spaces.any { it.readOnly }) ReadOnlyBanner()
         if (state.spaces.size > 1 && !inboxEditing) {
           ChipRow {
             state.spaces.sortedBy { model.repository.name(it.key) }.forEach { space ->
@@ -222,6 +223,7 @@ fun CommonplaceApp(model: NotebookModel, incoming: Intent?, consumed: () -> Unit
     CaptureDialog(model, state, request, { capture = null }) { capture = null }
   }
   if (libraries) LibrariesDialog(model, state) { libraries = false }
+  NameUnnamedLibrary(model, state)
   state.error?.let { error ->
     AlertDialog(
       onDismissRequest = { model.clearError() },
@@ -251,3 +253,24 @@ internal fun MobileNote.matches(query: String) = query.trim().split(Regex("\\s+"
 
 internal fun dateLabel(timestamp: Long): String = Instant.ofEpochMilli(timestamp)
   .atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("MMM d, yyyy · HH:mm"))
+
+/** Asks for the name of a library this device hasn't named yet, once there's more than one. */
+@Composable
+private fun NameUnnamedLibrary(model: NotebookModel, state: NotebookState) {
+  var declined by remember { mutableStateOf(emptySet<String>()) }
+  val space = state.spaces.takeIf { it.size > 1 }
+    ?.firstOrNull { !model.repository.named(it.key) && it.key !in declined } ?: return
+  val count = state.notes.count { it.space == space.key }
+  TextInputDialog(
+    "Name this library",
+    "",
+    "Name on this device",
+    { declined = declined + space.key },
+    valid = { it.isNotBlank() },
+    message = "This device has a library with ${if (count == 1) "1 note" else "$count notes"} " +
+      "and no name yet"
+  ) { name ->
+    model.repository.preferences.edit().putString("name.${space.key}", name.trim()).apply()
+    model.refresh()
+  }
+}

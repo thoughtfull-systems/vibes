@@ -264,6 +264,14 @@ impl MobileNotebook {
         Ok(self.state()?.spaces.action_dates(today).remove(&id).unwrap_or_default())
     }
 
+    pub fn all_action_dates(&self, today: Date) -> Result<HashMap<NoteId, ActionDates>> {
+        Ok(self.state()?.spaces.action_dates(today))
+    }
+
+    pub fn action_paths(&self) -> Result<HashMap<NoteId, Vec<NoteId>>> {
+        Ok(self.state()?.spaces.action_paths())
+    }
+
     pub fn create_memo(&self, space: String, body: String) -> Result<NoteId> {
         Ok(self.state()?.spaces.create_memo(&space, &body)?)
     }

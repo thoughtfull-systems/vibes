@@ -322,3 +322,6 @@ private fun DayChart(
   }
   Text("$first – $last", style = MaterialTheme.typography.labelSmall)
 }
+
+internal fun charts(kind: QuestionKind) =
+  kind !is QuestionKind.Text && kind !is QuestionKind.ShortText
