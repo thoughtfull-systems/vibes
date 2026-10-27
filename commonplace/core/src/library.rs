@@ -72,6 +72,8 @@ impl Note {
 
 /// One person's collection of notes, stored as the library format spec defines.
 pub struct Library {
+    /// A fixed time for every change, in milliseconds since the epoch, for backdated samples.
+    clock: Option<i64>,
     /// How many changes this instance has committed, so callers can tell whether a write changed
     /// anything.
     commits: u64,
@@ -85,17 +87,32 @@ impl Library {
     pub fn open(dir: &Path) -> Result<Self, Error> {
         let doc = LoroDoc::new();
         let store = Store::open(dir, &doc)?;
-        let mut library = Self { commits: 0, doc, read_only: false, store: Some(store) };
+        let mut library =
+            Self { clock: None, commits: 0, doc, read_only: false, store: Some(store) };
         library.prepare()?;
         Ok(library)
     }
 
     /// Creates an empty library that's never saved.
     pub fn in_memory() -> Self {
-        let mut library = Self { commits: 0, doc: LoroDoc::new(), read_only: false, store: None };
+        let mut library =
+            Self { clock: None, commits: 0, doc: LoroDoc::new(), read_only: false, store: None };
         // Without a store, preparing a new library can't fail.
         library.prepare().unwrap();
         library
+    }
+
+    /// Creates an empty library that's never saved, and that dates every change `clock`, in
+    /// milliseconds since the epoch.
+    pub(crate) fn in_memory_at(clock: i64) -> Self {
+        let mut library = Self::in_memory();
+        library.clock = Some(clock);
+        library
+    }
+
+    /// The time to record for a change, in milliseconds since the epoch.
+    pub(crate) fn now(&self) -> i64 {
+        self.clock.unwrap_or_else(system_now)
     }
 
     /// Writes the format and version, and brings older data up to date, or opens read-only if a
@@ -165,7 +182,7 @@ impl Library {
     /// Inserts a note with the fields every kind has, without committing.
     pub(crate) fn insert_note(&mut self, body: &str, kind: &str) -> Result<NoteId, Error> {
         let id = NoteId::generate();
-        let now = now();
+        let now = self.now();
         let note = self
             .notes_map()
             .insert_container(&id.to_string(), LoroMap::new())
@@ -204,7 +221,7 @@ impl Library {
             return Ok(());
         }
         text.update(body, UpdateOptions::default()).map_err(loro_error)?;
-        note.insert(MODIFIED, now()).map_err(loro_error)?;
+        note.insert(MODIFIED, self.now()).map_err(loro_error)?;
         self.commit()
     }
 
@@ -222,7 +239,7 @@ impl Library {
         let note = self.note_map(id)?;
         match archived {
             true if note.get(ARCHIVED).is_some() => return Ok(()),
-            true => note.insert(ARCHIVED, now()),
+            true => note.insert(ARCHIVED, self.now()),
             false => note.delete(ARCHIVED),
         }
         .map_err(loro_error)?;
@@ -232,7 +249,7 @@ impl Library {
     pub fn trash(&mut self, id: NoteId) -> Result<(), Error> {
         self.check_writable()?;
         let note = self.note_map(id)?;
-        let now = now();
+        let now = self.now();
         note.insert(TRASHED, now).map_err(loro_error)?;
         note.insert(MODIFIED, now).map_err(loro_error)?;
         self.commit()
@@ -242,7 +259,7 @@ impl Library {
     /// again rather than staying in the trash through one of them.
     pub fn restore(&mut self, id: NoteId) -> Result<(), Error> {
         self.check_writable()?;
-        let now = now();
+        let now = self.now();
         let mut ancestors: Vec<NoteId> = self.hierarchy().ancestors(id).collect();
         ancestors.extend(self.entry_journal(id));
         for note in std::iter::once(id).chain(ancestors) {
@@ -268,7 +285,7 @@ impl Library {
         }
         let entries = if note.journal.is_some() { self.journal_entries(id) } else { Vec::new() };
         doomed.extend(&entries);
-        let now = now();
+        let now = self.now();
         for &note in &doomed {
             let label = self.note(note).and_then(|note| note.label());
             let tombstone = self
@@ -425,6 +442,32 @@ impl Library {
         copy_map(note, &copy)
     }
 
+    /// Exports the document in Loro's snapshot encoding, including its editing history.
+    pub fn export_snapshot(&self) -> Result<Vec<u8>, Error> {
+        self.doc.export(loro::ExportMode::Snapshot).map_err(loro_error)
+    }
+
+    pub(crate) fn validate_snapshot(bytes: &[u8]) -> Result<(), Error> {
+        let doc = LoroDoc::new();
+        doc.import(bytes).map_err(loro_error)?;
+        let meta = doc.get_map("meta");
+        let format = meta.get("format").and_then(value).and_then(string);
+        if format.as_deref() != Some(FORMAT) {
+            return Err(Error::NotALibrary(format.unwrap_or_default()));
+        }
+        if meta.get("version").and_then(value).and_then(integer).unwrap_or(0) > VERSION {
+            return Err(Error::ReadOnly);
+        }
+        Ok(())
+    }
+
+    /// Validates an incoming snapshot before merging any changes into this library.
+    pub fn import_snapshot(&mut self, bytes: &[u8]) -> Result<(), Error> {
+        Self::validate_snapshot(bytes)?;
+        self.import(bytes)?;
+        self.prepare()
+    }
+
     /// Merges another document's changes into the library, as a sync does.
     pub(crate) fn import(&mut self, bytes: &[u8]) -> Result<(), Error> {
         self.check_writable()?;
@@ -558,7 +601,7 @@ pub(crate) fn integer(value: LoroValue) -> Option<i64> {
     }
 }
 
-pub(crate) fn now() -> i64 {
+fn system_now() -> i64 {
     let elapsed = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
     i64::try_from(elapsed.as_millis()).unwrap_or(i64::MAX)
 }
@@ -570,6 +613,16 @@ pub(crate) fn loro_error(error: impl ToString) -> Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_fixed_clock_dates_every_change() {
+        let mut library = Library::in_memory_at(123);
+        let id = library.create_memo("Dated").unwrap();
+        library.set_archived(id, true).unwrap();
+        let note = library.note(id).unwrap();
+        assert_eq!((note.created, note.modified, note.archived), (123, 123, Some(123)));
+        assert!(Library::in_memory().now() > 123);
+    }
 
     #[test]
     fn keeps_settings() {
@@ -711,7 +764,7 @@ mod tests {
         let id = a.create_memo("one two").unwrap();
         let b_doc = LoroDoc::new();
         b_doc.import(&a.doc.export(loro::ExportMode::Snapshot).unwrap()).unwrap();
-        let mut b = Library { commits: 0, doc: b_doc, read_only: false, store: None };
+        let mut b = Library { clock: None, commits: 0, doc: b_doc, read_only: false, store: None };
         a.set_body(id, "zero one two").unwrap();
         b.set_body(id, "one two three").unwrap();
         a.doc.import(&b.doc.export(loro::ExportMode::all_updates()).unwrap()).unwrap();
@@ -725,7 +778,7 @@ mod tests {
         meta.insert("format", FORMAT).unwrap();
         meta.insert("version", VERSION + 1).unwrap();
         doc.commit();
-        let mut library = Library { commits: 0, doc, read_only: false, store: None };
+        let mut library = Library { clock: None, commits: 0, doc, read_only: false, store: None };
         library.prepare().unwrap();
         assert!(library.is_read_only());
         assert!(matches!(library.create_memo("x"), Err(Error::ReadOnly)));

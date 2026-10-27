@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: MPL-2.0-no-copyleft-exception -->
+<resources>
+  <style name="Theme.Commonplace" parent="android:style/Theme.Material.Light.NoActionBar">
+    <item name="android:fontFamily">sans</item>
+    <item name="android:windowLightStatusBar">true</item>
+  </style>
+  <style name="Theme.Commonplace.Capture" parent="Theme.Commonplace">
+    <item name="android:colorBackgroundCacheHint">@null</item>
+    <item name="android:windowBackground">@android:color/transparent</item>
+    <item name="android:windowIsTranslucent">true</item>
+    <item name="android:windowNoTitle">true</item>
+  </style>
+</resources>

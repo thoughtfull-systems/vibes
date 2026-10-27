@@ -5,10 +5,23 @@ name = "commonplace-core"
 publish.workspace = true
 version.workspace = true
 
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[[bin]]
+name = "commonplace-bindgen"
+path = "src/bin/bindgen.rs"
+required-features = ["bindgen"]
+
+[features]
+bindgen = ["mobile", "uniffi/cli"]
+mobile = ["dep:uniffi"]
+
 [dependencies]
 loro = "1.16.2"
 pulldown-cmark = "0.13.4"
 thiserror = "2.0.21"
+uniffi = { version = "0.32.2", optional = true }
 uuid = { version = "1.28.0", features = ["v7"] }
 
 [dev-dependencies]

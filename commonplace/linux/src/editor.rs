@@ -13,6 +13,7 @@ use commonplace_core::{
 use gtk::{gdk, glib, pango};
 
 use crate::highlight::Highlighter;
+use crate::link_icons::{self, Icons, source_iter, source_offset};
 use sourceview5::prelude::*;
 
 const BROKEN: &str = "broken-link";
@@ -62,17 +63,16 @@ pub fn new_view() -> sourceview5::View {
     add_preview_tags(&table);
     apply_scheme(&style_manager);
     style_manager.connect_dark_notify(apply_scheme);
-    attach_preview(&buffer);
 
-    let view = sourceview5::View::builder()
-        .buffer(&buffer)
-        .wrap_mode(gtk::WrapMode::WordChar)
-        .top_margin(12)
-        .bottom_margin(24)
-        .left_margin(16)
-        .right_margin(16)
-        .vexpand(true)
-        .build();
+    let view = link_icons::new_view(&buffer);
+    view.set_wrap_mode(gtk::WrapMode::WordChar);
+    view.set_top_margin(12);
+    view.set_bottom_margin(24);
+    view.set_left_margin(16);
+    view.set_right_margin(16);
+    view.set_vexpand(true);
+    link_icons::attach(&view);
+    attach_preview(&buffer);
     view.add_css_class("note-editor");
     // A tag's margin replaces the view's margin rather than adding to it, so the quote margin
     // follows the view's.
@@ -130,7 +130,8 @@ fn attach_wrap_keys(view: &sourceview5::View) {
             if start == end {
                 return glib::Propagation::Proceed;
             }
-            let (start_offset, end_offset) = (start.offset(), end.offset());
+            let (start_offset, end_offset) =
+                (source_offset(&buffer, start.offset()), source_offset(&buffer, end.offset()));
             let selected = buffer.text(&start, &end, true);
             // One insertion, rather than one per delimiter, so handlers that react to a typed
             // character, such as the link picker's `[[`, don't fire.
@@ -138,8 +139,8 @@ fn attach_wrap_keys(view: &sourceview5::View) {
             buffer.delete(&mut start, &mut end);
             buffer.insert(&mut start, &format!("{open}{selected}{close}"));
             buffer.select_range(
-                &buffer.iter_at_offset(start_offset + 1),
-                &buffer.iter_at_offset(end_offset + 1),
+                &source_iter(&buffer, start_offset + 1),
+                &source_iter(&buffer, end_offset + 1),
             );
             buffer.end_user_action();
             glib::Propagation::Stop
@@ -188,7 +189,7 @@ fn attach_list_keys(view: &sourceview5::View) {
 /// cursor was in a list item.
 fn apply_list_edit(buffer: &gtk::TextBuffer, key: ListKey) -> bool {
     let body = text(buffer);
-    let cursor = usize::try_from(buffer.cursor_position()).unwrap_or(0);
+    let cursor = usize::try_from(source_offset(buffer, buffer.cursor_position())).unwrap_or(0);
     let cursor = body.char_indices().nth(cursor).map_or(body.len(), |(byte, _)| byte);
     let Some(edit) = list_edit(&body, cursor, key) else {
         return false;
@@ -200,12 +201,12 @@ fn apply_list_edit(buffer: &gtk::TextBuffer, key: ListKey) -> bool {
     let mut changed = body;
     changed.replace_range(edit.range, &edit.text);
     let new_cursor = changed[..edit.cursor].chars().count();
-    let mut start = buffer.iter_at_offset(range.start as i32);
-    let mut end = buffer.iter_at_offset(range.end as i32);
+    let mut start = source_iter(buffer, range.start as i32);
+    let mut end = source_iter(buffer, range.end as i32);
     buffer.begin_user_action();
     buffer.delete(&mut start, &mut end);
     buffer.insert(&mut start, &edit.text);
-    buffer.place_cursor(&buffer.iter_at_offset(new_cursor as i32));
+    buffer.place_cursor(&source_iter(buffer, new_cursor as i32));
     buffer.end_user_action();
     true
 }
@@ -236,7 +237,7 @@ impl Preview {
     }
 
     /// The cursor or selection as a byte range.
-    fn selection(&self, buffer: &gtk::TextBuffer) -> Range<usize> {
+    fn selection(&self, buffer: &gtk::TextBuffer, icons: &Icons) -> Range<usize> {
         let (start, end) = buffer.selection_bounds().unwrap_or_else(|| {
             let cursor = buffer.iter_at_mark(&buffer.get_insert());
             (cursor, cursor)
@@ -245,7 +246,7 @@ impl Preview {
             let offset = usize::try_from(offset).unwrap_or(0);
             self.char_bytes[offset.min(self.char_bytes.len() - 1)]
         };
-        byte(start.offset())..byte(end.offset())
+        byte(icons.source_offset(start.offset()))..byte(icons.source_offset(end.offset()))
     }
 }
 
@@ -431,22 +432,26 @@ fn restyle(buffer: &gtk::TextBuffer, preview: &mut Preview) {
     preview.byte_chars = byte_chars;
     preview.char_bytes = char_bytes;
     preview.spans = spans(&body);
-    let selection = preview.selection(buffer);
+    let icons = Icons::of(buffer);
+    let selection = preview.selection(buffer, &icons);
     preview.revealed = preview.spans.iter().map(|span| span.touches(&selection)).collect();
     for (span, &revealed) in preview.spans.iter().zip(&preview.revealed) {
         if let Some(name) = style_tag(span.style) {
-            apply(buffer, name, preview.chars(&span.range));
+            apply(buffer, &icons, name, preview.chars(&span.range));
         }
         // GTK takes a line's paragraph properties, such as its margin and background, from the
         // tags at the line's first character. A block nested in a list item starts partway into its
         // first line, after the item's marker or indentation.
         let line_start = body[..span.range.start].rfind('\n').map_or(0, |i| i + 1);
         match span.style {
-            Style::CodeBlock => {
-                apply(buffer, CODE_BLOCK_SHADE, preview.chars(&(line_start..span.range.end)))
-            }
+            Style::CodeBlock => apply(
+                buffer,
+                &icons,
+                CODE_BLOCK_SHADE,
+                preview.chars(&(line_start..span.range.end)),
+            ),
             Style::BlockQuote if line_start == span.range.start => {
-                apply(buffer, QUOTE_MARGIN, preview.chars(&span.range));
+                apply(buffer, &icons, QUOTE_MARGIN, preview.chars(&span.range));
             }
             _ => {}
         }
@@ -455,33 +460,37 @@ fn restyle(buffer: &gtk::TextBuffer, preview: &mut Preview) {
             let mut start = span.range.start;
             for syntax in span.syntax.iter().chain([&(span.range.end..span.range.end)]) {
                 if start < syntax.start {
-                    apply(buffer, color, preview.chars(&(start..syntax.start)));
+                    apply(buffer, &icons, color, preview.chars(&(start..syntax.start)));
                 }
                 start = start.max(syntax.end);
             }
         }
         for syntax in &span.syntax {
             if !matches!(span.style, Style::Heading(_)) {
-                apply(buffer, SYNTAX, preview.chars(syntax));
+                apply(buffer, &icons, SYNTAX, preview.chars(syntax));
             }
             if !revealed {
-                apply(buffer, HIDDEN, preview.chars(syntax));
+                apply(buffer, &icons, HIDDEN, preview.chars(syntax));
             }
         }
     }
+    show_icons(buffer, &icons);
     if let Some(buffer) = buffer.downcast_ref::<sourceview5::Buffer>() {
         let byte_chars = &preview.byte_chars;
-        preview.highlighter.apply(buffer, &body, |byte| byte_chars[byte]);
+        preview
+            .highlighter
+            .apply(buffer, &body, |byte| icons.buffer_offset(byte_chars[byte] as i32) as usize);
     }
 }
 
 /// Shows the syntax of spans the cursor now touches, and hides it for spans it left.
 fn reveal(buffer: &gtk::TextBuffer, preview: &mut Preview) {
+    let icons = Icons::of(buffer);
     // Marks can move before the buffer reports a change, while the spans are stale.
-    if preview.char_bytes.len() != buffer.char_count() as usize + 1 {
+    if preview.char_bytes.len() != buffer.char_count() as usize - icons.offsets().len() + 1 {
         return;
     }
-    let selection = preview.selection(buffer);
+    let selection = preview.selection(buffer, &icons);
     for i in 0..preview.spans.len() {
         let revealed = preview.spans[i].touches(&selection);
         if revealed == preview.revealed[i] {
@@ -490,14 +499,23 @@ fn reveal(buffer: &gtk::TextBuffer, preview: &mut Preview) {
         preview.revealed[i] = revealed;
         for syntax in &preview.spans[i].syntax {
             let range = preview.chars(syntax);
-            let start = buffer.iter_at_offset(range.start as i32);
-            let end = buffer.iter_at_offset(range.end as i32);
+            let start = icons.source_iter(buffer, range.start as i32);
+            let end = icons.source_iter(buffer, range.end as i32);
             if revealed {
                 buffer.remove_tag_by_name(HIDDEN, &start, &end);
             } else {
                 buffer.apply_tag_by_name(HIDDEN, &start, &end);
             }
         }
+    }
+    show_icons(buffer, &icons);
+}
+
+fn show_icons(buffer: &gtk::TextBuffer, icons: &Icons) {
+    for &offset in icons.offsets() {
+        let start = buffer.iter_at_offset(offset);
+        let end = buffer.iter_at_offset(offset + 1);
+        buffer.remove_tag_by_name(HIDDEN, &start, &end);
     }
 }
 
@@ -508,14 +526,15 @@ pub fn highlight_links(buffer: &gtk::TextBuffer, exists: impl Fn(&Link) -> bool)
         buffer.remove_tag_by_name(name, &start, &end);
     }
     let body = text(buffer);
+    let icons = Icons::of(buffer);
     for link in parse_links(&body) {
         let range = char_range(&body, link.range.clone());
         let name = if exists(&link) { LINK } else { BROKEN };
-        apply(buffer, name, range.clone());
+        apply(buffer, &icons, name, range.clone());
         if link.syntax == LinkSyntax::Wiki
             && let Some(separator) = label_separator(&body, &link)
         {
-            apply(buffer, TARGET, char_range(&body, link.range.start..separator + 1));
+            apply(buffer, &icons, TARGET, char_range(&body, link.range.start..separator + 1));
         }
     }
 }
@@ -524,7 +543,7 @@ pub fn highlight_links(buffer: &gtk::TextBuffer, exists: impl Fn(&Link) -> bool)
 /// none, as one undoable edit. Returns whether there was an item to change.
 pub fn toggle_checkbox_at(buffer: &gtk::TextBuffer, offset: i32) -> bool {
     let body = text(buffer);
-    let Ok(offset) = usize::try_from(offset) else {
+    let Ok(offset) = usize::try_from(source_offset(buffer, offset)) else {
         return false;
     };
     let byte = body.char_indices().nth(offset).map_or(body.len(), |(byte, _)| byte);
@@ -532,8 +551,8 @@ pub fn toggle_checkbox_at(buffer: &gtk::TextBuffer, offset: i32) -> bool {
         return false;
     };
     let range = char_range(&body, mark);
-    let mut start = buffer.iter_at_offset(range.start as i32);
-    let mut end = buffer.iter_at_offset(range.end as i32);
+    let mut start = source_iter(buffer, range.start as i32);
+    let mut end = source_iter(buffer, range.end as i32);
     buffer.begin_user_action();
     buffer.delete(&mut start, &mut end);
     buffer.insert(&mut start, replacement);
@@ -544,7 +563,7 @@ pub fn toggle_checkbox_at(buffer: &gtk::TextBuffer, offset: i32) -> bool {
 /// Finds the link that contains the character at `offset`.
 pub fn link_at(buffer: &gtk::TextBuffer, offset: i32) -> Option<Link> {
     let body = text(buffer);
-    let offset = usize::try_from(offset).ok()?;
+    let offset = usize::try_from(source_offset(buffer, offset)).ok()?;
     parse_links(&body)
         .into_iter()
         .find(|link| char_range(&body, link.range.clone()).contains(&offset))
@@ -576,8 +595,8 @@ impl LinkTitles {
         buffer.begin_user_action();
         for (range, replacement) in updates.into_iter().rev() {
             let range = char_range(&body, range);
-            let mut start = buffer.iter_at_offset(range.start as i32);
-            let mut end = buffer.iter_at_offset(range.end as i32);
+            let mut start = source_iter(buffer, range.start as i32);
+            let mut end = source_iter(buffer, range.end as i32);
             buffer.delete(&mut start, &mut end);
             buffer.insert(&mut start, &replacement);
         }
@@ -591,9 +610,9 @@ pub fn collapse_titles(spaces: &Spaces, text: &str) -> String {
     ShownTitles::default().collapse(text, |id| spaces.link_title(id))
 }
 
-fn apply(buffer: &gtk::TextBuffer, name: &str, range: Range<usize>) {
-    let start = buffer.iter_at_offset(range.start as i32);
-    let end = buffer.iter_at_offset(range.end as i32);
+fn apply(buffer: &gtk::TextBuffer, icons: &Icons, name: &str, range: Range<usize>) {
+    let start = icons.source_iter(buffer, range.start as i32);
+    let end = icons.source_iter(buffer, range.end as i32);
     buffer.apply_tag_by_name(name, &start, &end);
 }
 

@@ -8,6 +8,7 @@ use commonplace_core::{Date, Note, NoteId, Question, format_time, parse_loose_ti
 use gtk::glib;
 
 use crate::answers::AnswerForm;
+use crate::journals_view::{dot, journal_color};
 use crate::prompts::local_millis;
 use crate::rows::{connect_day_clicked, day_picker, format_date};
 use crate::state::State;
@@ -25,6 +26,7 @@ pub struct EntryPanel {
     /// The journal's questions that the form shows, so it's rebuilt only when they change.
     form_questions: RefCell<Vec<Question>>,
     journal: gtk::Button,
+    journal_display: RefCell<Option<(String, String)>>,
     journal_id: Cell<Option<NoteId>>,
     on_open: RefCell<Option<OpenHandler>>,
     prompted: gtk::Label,
@@ -72,6 +74,7 @@ impl EntryPanel {
             form_holder,
             form_questions: RefCell::default(),
             journal,
+            journal_display: RefCell::default(),
             journal_id: Cell::new(None),
             on_open: RefCell::default(),
             prompted,
@@ -131,7 +134,18 @@ impl EntryPanel {
         self.journal_id.set(Some(entry.journal));
         let name =
             journal.as_ref().and_then(Note::label).unwrap_or_else(|| "Missing journal".to_owned());
-        self.journal.set_label(&name);
+        let color = journal
+            .as_ref()
+            .and_then(|note| note.journal.as_ref())
+            .map_or("blue", |fields| fields.color.as_str());
+        let display = (name, color.to_owned());
+        if self.journal_display.borrow().as_ref() != Some(&display) {
+            let content = gtk::Box::builder().spacing(6).build();
+            content.append(&dot(journal_color(color)));
+            content.append(&gtk::Label::new(Some(&display.0)));
+            self.journal.set_child(Some(&content));
+            self.journal_display.replace(Some(display));
+        }
         if let Ok(time) = glib::DateTime::from_unix_local(entry.at.div_euclid(1000)) {
             let date = Date::new(time.year() as u16, time.month() as u8, time.day_of_month() as u8);
             if let Some(date) = date {

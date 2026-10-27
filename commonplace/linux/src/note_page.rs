@@ -5,7 +5,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use adw::prelude::*;
-use commonplace_core::{Error, Link, Note, NoteId, note_uri, outline, wikilink, word_count};
+use commonplace_core::{Error, Link, Note, NoteId, note_uri, wikilink, word_count};
 use gtk::{gdk, gio, glib};
 
 use crate::action_panel::ActionPanel;
@@ -36,15 +36,13 @@ struct SpaceRow {
     spaces: Vec<Space>,
 }
 
-/// The view that edits one note, with its outline beside it and its backlinks below.
+/// The view that edits one note, with its details beside it and its backlinks below.
 pub struct NotePage {
     /// Archives the note, or takes it out of the archive.
     archive_button: gtk::Button,
     backlink_ids: RefCell<Vec<NoteId>>,
     backlinks: gtk::ListBox,
     backlinks_section: gtk::Box,
-    /// Divides the outline from the rest.
-    body: gtk::Paned,
     bottom: Rc<BottomPane>,
     /// Turns a memo into an entry in the journal its menu picks.
     convert_button: gtk::MenuButton,
@@ -53,7 +51,7 @@ pub struct NotePage {
     entry_panel: Rc<EntryPanel>,
     journal_panel: Rc<JournalPanel>,
     current: Cell<Option<NoteId>>,
-    delete_button: gtk::Button,
+    delete_note: gio::SimpleAction,
     details: gtk::Box,
     /// A width to give the details once they show, restored from an earlier session.
     details_restore: Rc<Cell<Option<i32>>>,
@@ -63,14 +61,10 @@ pub struct NotePage {
     /// Set while the view changes widgets itself, so their change signals don't echo back.
     loading: Cell<bool>,
     on_leave: RefCell<Option<Handler>>,
+    note_menu: gio::Menu,
     note_menu_button: gtk::MenuButton,
+    timestamps: gtk::Label,
     on_open: RefCell<Option<OpenHandler>>,
-    outline_box: gtk::Box,
-    outline_list: gtk::ListBox,
-    /// The outline's width when it last showed.
-    outline_width: Rc<Cell<i32>>,
-    /// The character offset where each heading in the outline starts.
-    outline_offsets: RefCell<Vec<i32>>,
     pub widget: gtk::Box,
     pending_save: RefCell<Option<glib::SourceId>>,
     picker: Rc<LinkPicker>,
@@ -100,11 +94,7 @@ impl NotePage {
         let copy_link = gio::SimpleAction::new("copy-link", None);
         let trash_note = gio::SimpleAction::new("trash-note", None);
         let restore_button = gtk::Button::builder().label("_Restore").use_underline(true).build();
-        let delete_button = gtk::Button::builder()
-            .label("_Delete")
-            .use_underline(true)
-            .css_classes(["destructive-action"])
-            .build();
+        let delete_note = gio::SimpleAction::new("delete-note", None);
         let trash_bar = gtk::Box::builder().spacing(6).css_classes(["toolbar"]).build();
         let trash_reason = gtk::Label::builder()
             .xalign(0.0)
@@ -115,7 +105,6 @@ impl NotePage {
             .build();
         trash_bar.append(&trash_reason);
         trash_bar.append(&restore_button);
-        trash_bar.append(&delete_button);
         let flat_button = |icon: &str, tooltip: &str| {
             gtk::Button::builder()
                 .icon_name(icon)
@@ -123,21 +112,6 @@ impl NotePage {
                 .css_classes(["flat"])
                 .build()
         };
-        let hide_outline = flat_button("sidebar-show-symbolic", "Hide Outline");
-        let show_outline = flat_button("sidebar-show-symbolic", "Show Outline");
-        let sidebar_bar = gtk::Box::builder().margin_top(6).margin_start(6).margin_end(6).build();
-        hide_outline.set_hexpand(true);
-        hide_outline.set_halign(gtk::Align::End);
-        sidebar_bar.append(&hide_outline);
-        // Stands in for the sidebar's button while the sidebar is hidden.
-        let hidden_bar = gtk::Box::builder()
-            .orientation(gtk::Orientation::Vertical)
-            .spacing(6)
-            .margin_top(6)
-            .margin_start(6)
-            .build();
-        hidden_bar.append(&show_outline);
-
         let view = editor::new_view();
         let editor_scrolled = gtk::ScrolledWindow::builder().child(&view).vexpand(true).build();
         let backlinks = gtk::ListBox::builder().css_classes(["navigation-sidebar"]).build();
@@ -192,32 +166,13 @@ impl NotePage {
             .css_classes(["view"])
             .build();
         text_box.append(&editor_overlay);
-        text_box.append(&word_count);
+        word_count.set_hexpand(true);
+        let status = gtk::Box::builder().height_request(32).spacing(6).build();
+        status.append(&word_count);
+        text_box.append(&status);
         let bottom = gtk::Box::new(gtk::Orientation::Vertical, 0);
         let bottom_pane = BottomPane::new(&text_box, &bottom);
         editor_box.append(&bottom_pane.widget);
-
-        let outline_list = gtk::ListBox::builder().css_classes(["navigation-sidebar"]).build();
-        outline_list.set_placeholder(Some(
-            &gtk::Label::builder()
-                .label("No headings")
-                .css_classes(["dimmed"])
-                .margin_top(12)
-                .build(),
-        ));
-        let outline_box = gtk::Box::builder()
-            .orientation(gtk::Orientation::Vertical)
-            .width_request(150)
-            .css_classes(["sidebar-pane"])
-            .build();
-        outline_box.append(&sidebar_bar);
-        outline_box.append(
-            &gtk::ScrolledWindow::builder()
-                .child(&outline_list)
-                .hscrollbar_policy(gtk::PolicyType::Never)
-                .vexpand(true)
-                .build(),
-        );
 
         let hide_details = flat_button("sidebar-show-right-symbolic", "Hide Details");
         let details_bar = gtk::Box::builder().margin_top(6).margin_start(6).margin_end(6).build();
@@ -239,7 +194,6 @@ impl NotePage {
         details_hidden_bar.append(&show_details);
 
         let content = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        content.append(&hidden_bar);
         content.append(&editor_box);
         content.append(&details_hidden_bar);
         editor_box.set_hexpand(true);
@@ -251,18 +205,8 @@ impl NotePage {
             .shrink_start_child(false)
             .shrink_end_child(false)
             .build();
-        let body = gtk::Paned::builder()
-            .wide_handle(true)
-            .start_child(&outline_box)
-            .end_child(&with_details)
-            .position(220)
-            .resize_start_child(false)
-            .shrink_start_child(false)
-            .shrink_end_child(false)
-            .build();
-
         let narrow = adw::BreakpointBin::builder().width_request(360).height_request(294).build();
-        narrow.set_child(Some(&body));
+        narrow.set_child(Some(&with_details));
         let widget = gtk::Box::new(gtk::Orientation::Vertical, 0);
         widget.append(&narrow);
 
@@ -293,10 +237,21 @@ impl NotePage {
             .visible(false)
             .build();
         details_content.append(&convert_button);
+        let timestamps = gtk::Label::builder()
+            .xalign(0.0)
+            .wrap(true)
+            .css_classes(["caption", "dimmed"])
+            .margin_start(12)
+            .margin_end(12)
+            .margin_top(12)
+            .valign(gtk::Align::End)
+            .vexpand(true)
+            .visible(false)
+            .build();
+        details_content.append(&timestamps);
         let archive_button = gtk::Button::builder()
             .label("Archive")
             .valign(gtk::Align::End)
-            .vexpand(true)
             .margin_start(12)
             .margin_end(12)
             .margin_bottom(12)
@@ -306,23 +261,13 @@ impl NotePage {
         details_scrolled.set_child(Some(&details_content));
 
         // Whether the user, or the window's width, leaves each sidebar shown.
-        let outline_shown = Rc::new(Cell::new(true));
         let details_shown = Rc::new(Cell::new(true));
-        let outline_width = Rc::new(Cell::new(0));
         let details_width = Rc::new(Cell::new(0));
         let update_sidebars: Rc<dyn Fn()> = Rc::new(glib::clone!(
             #[strong]
-            outline_shown,
-            #[strong]
             details_shown,
             #[strong]
-            outline_width,
-            #[strong]
             details_width,
-            #[weak]
-            outline_box,
-            #[weak]
-            hidden_bar,
             #[weak]
             details,
             #[weak]
@@ -332,28 +277,20 @@ impl NotePage {
             #[weak]
             space_row,
             #[weak]
-            archive_button,
+            timestamps,
             move || {
-                if outline_box.get_visible() && outline_box.width() > 0 {
-                    outline_width.set(outline_box.width());
-                }
                 if details.get_visible() && details.width() > 0 {
                     details_width.set(details.width());
                 }
-                outline_box.set_visible(outline_shown.get());
-                hidden_bar.set_visible(!outline_shown.get());
                 let any =
-                    panel.get_visible() || space_row.get_visible() || archive_button.get_visible();
+                    panel.get_visible() || space_row.get_visible() || timestamps.get_visible();
                 details.set_visible(any && details_shown.get());
                 details_hidden_bar.set_visible(any && !details_shown.get());
             }
         ));
-        for (button, flag, shown) in [
-            (&hide_outline, &outline_shown, false),
-            (&show_outline, &outline_shown, true),
-            (&hide_details, &details_shown, false),
-            (&show_details, &details_shown, true),
-        ] {
+        for (button, flag, shown) in
+            [(&hide_details, &details_shown, false), (&show_details, &details_shown, true)]
+        {
             let flag = flag.clone();
             let update = update_sidebars.clone();
             button.connect_clicked(move |_| {
@@ -368,6 +305,7 @@ impl NotePage {
             convert_button.upcast_ref(),
             space_row.upcast_ref(),
             archive_button.upcast_ref(),
+            timestamps.upcast_ref(),
         ] {
             details.connect_visible_notify(glib::clone!(
                 #[strong]
@@ -375,34 +313,25 @@ impl NotePage {
                 move |_| update_sidebars()
             ));
         }
-        // libadwaita applies only the last matching breakpoint, so the narrow one hides both
-        // sidebars itself. The outline gives way first, since the details matter more.
-        for (width, hides_details) in [(1000.0, false), (700.0, true)] {
-            let breakpoint = adw::Breakpoint::new(adw::BreakpointCondition::new_length(
-                adw::BreakpointConditionLengthType::MaxWidth,
-                width,
-                adw::LengthUnit::Sp,
-            ));
-            let show = glib::clone!(
-                #[strong]
-                outline_shown,
-                #[strong]
-                details_shown,
-                #[strong]
-                update_sidebars,
-                move |shown: bool| {
-                    outline_shown.set(shown);
-                    if hides_details {
-                        details_shown.set(shown);
-                    }
-                    update_sidebars();
-                }
-            );
-            let hide = show.clone();
-            breakpoint.connect_apply(move |_| hide(false));
-            breakpoint.connect_unapply(move |_| show(true));
-            narrow.add_breakpoint(breakpoint);
-        }
+        let breakpoint = adw::Breakpoint::new(adw::BreakpointCondition::new_length(
+            adw::BreakpointConditionLengthType::MaxWidth,
+            700.0,
+            adw::LengthUnit::Sp,
+        ));
+        let show = glib::clone!(
+            #[strong]
+            details_shown,
+            #[strong]
+            update_sidebars,
+            move |shown: bool| {
+                details_shown.set(shown);
+                update_sidebars();
+            }
+        );
+        let hide = show.clone();
+        breakpoint.connect_apply(move |_| hide(false));
+        breakpoint.connect_unapply(move |_| show(true));
+        narrow.add_breakpoint(breakpoint);
         update_sidebars();
         let details_restore = Rc::new(Cell::new(None::<i32>));
         // GtkPaned measures from the start, so the details' width becomes a position only once
@@ -423,7 +352,7 @@ impl NotePage {
             }
         ));
         editor_box.prepend(&trash_bar);
-        for action in [&convert_memo, &copy_link, &trash_note] {
+        for action in [&convert_memo, &copy_link, &delete_note, &trash_note] {
             window.add_action(action);
         }
         bottom.append(&action_panel.steps_section);
@@ -454,7 +383,6 @@ impl NotePage {
             backlink_ids: RefCell::default(),
             backlinks,
             backlinks_section,
-            body,
             bottom: bottom_pane,
             convert_button,
             convert_memo,
@@ -462,19 +390,17 @@ impl NotePage {
             entry_panel,
             journal_panel,
             current: Cell::new(None),
-            delete_button,
+            delete_note,
             details,
             details_restore,
             details_width,
             link_titles: editor::LinkTitles::default(),
             loading: Cell::new(false),
             on_leave: RefCell::default(),
+            note_menu,
             note_menu_button,
+            timestamps,
             on_open: RefCell::default(),
-            outline_box,
-            outline_list,
-            outline_width,
-            outline_offsets: RefCell::default(),
             widget,
             pending_save: RefCell::default(),
             picker,
@@ -492,11 +418,6 @@ impl NotePage {
             word_count,
         });
         this.connect_signals();
-        adw::StyleManager::default().connect_dark_notify(glib::clone!(
-            #[weak]
-            this,
-            move |_| this.refresh_outline()
-        ));
         this
     }
 
@@ -505,18 +426,15 @@ impl NotePage {
         *self.on_leave.borrow_mut() = Some(Rc::new(f));
     }
 
-    /// The widths of the outline and the details, as they show now or last showed.
-    pub fn sidebar_widths(&self) -> (i32, i32) {
-        let width = |sidebar: &gtk::Box, last: &Cell<i32>| {
-            if sidebar.get_visible() && sidebar.width() > 0 { sidebar.width() } else { last.get() }
-        };
-        (width(&self.outline_box, &self.outline_width), width(&self.details, &self.details_width))
+    pub fn details_width(&self) -> i32 {
+        if self.details.get_visible() && self.details.width() > 0 {
+            self.details.width()
+        } else {
+            self.details_width.get()
+        }
     }
 
-    /// Gives the outline and the details these widths.
-    pub fn set_sidebar_widths(&self, outline: i32, details: i32) {
-        self.body.set_position(outline);
-        self.outline_width.set(outline);
+    pub fn set_details_width(&self, details: i32) {
         self.details_width.set(details);
         self.details_restore.set(Some(details));
     }
@@ -590,19 +508,6 @@ impl NotePage {
                 }
             }
         ));
-        self.outline_list.connect_row_activated(glib::clone!(
-            #[weak(rename_to = this)]
-            self,
-            move |_, row| {
-                let offset = this.outline_offsets.borrow().get(row.index() as usize).copied();
-                if let Some(offset) = offset {
-                    let buffer = this.view.buffer();
-                    buffer.place_cursor(&buffer.iter_at_offset(offset));
-                    this.view.scroll_to_mark(&buffer.get_insert(), 0.0, true, 0.0, 0.1);
-                    this.view.grab_focus();
-                }
-            }
-        ));
         self.backlinks.connect_row_activated(glib::clone!(
             #[weak(rename_to = this)]
             self,
@@ -643,10 +548,10 @@ impl NotePage {
                 }
             }
         ));
-        self.delete_button.connect_clicked(glib::clone!(
+        self.delete_note.connect_activate(glib::clone!(
             #[weak(rename_to = this)]
             self,
-            move |_| this.confirm_delete()
+            move |_, _| this.confirm_delete()
         ));
         self.entry_panel.connect_open(glib::clone!(
             #[weak(rename_to = this)]
@@ -683,7 +588,6 @@ impl NotePage {
                 let count = word_count(&editor::text(buffer));
                 let unit = if count == 1 { "word" } else { "words" };
                 this.word_count.set_label(&format!("{count} {unit}"));
-                this.refresh_outline();
             }
         ));
         buffer.connect_changed(glib::clone!(
@@ -806,11 +710,11 @@ impl NotePage {
         match &note {
             Some(note) => {
                 let text = self.state.read(|spaces| self.link_titles.expand(spaces, &note.body));
-                self.view.buffer().set_text(&text);
+                crate::link_icons::load(&self.view, &text);
                 self.view.buffer().place_cursor(&self.view.buffer().start_iter());
                 self.view.set_editable(self.writable(note.id));
             }
-            None => self.view.buffer().set_text(""),
+            None => crate::link_icons::load(&self.view, ""),
         }
         self.loading.set(false);
         self.action_panel.show(note.as_ref(), self.view.is_editable());
@@ -857,7 +761,29 @@ impl NotePage {
         } else {
             "In the trash with a project above it, which restoring brings back too"
         });
-        self.note_menu_button.set_visible(note.is_some() && !in_trash);
+        self.note_menu_button.set_visible(note.is_some());
+        self.delete_note.set_enabled(in_trash && !read_only);
+        self.note_menu.remove_all();
+        self.note_menu.append(Some("_Copy Link"), Some("win.copy-link"));
+        if in_trash {
+            self.note_menu.append(Some("_Delete Permanently…"), Some("win.delete-note"));
+        } else {
+            self.note_menu.append(Some("_Move to Trash"), Some("win.trash-note"));
+        }
+        self.timestamps.set_visible(note.is_some());
+        if let Some(note) = &note {
+            let date = |at: i64| {
+                glib::DateTime::from_unix_local(at.div_euclid(1000))
+                    .and_then(|at| at.format("%b %-d, %Y · %H:%M"))
+                    .map(String::from)
+                    .unwrap_or_default()
+            };
+            self.timestamps.set_label(&format!(
+                "Created {}\nModified {}",
+                date(note.created),
+                date(note.modified),
+            ));
+        }
         self.refresh_convert_menu(note.as_ref().filter(|note| note.is_memo() && writable));
     }
 
@@ -929,32 +855,6 @@ impl NotePage {
             buttons.push(button);
         }
         self.space_row.set_visible(true);
-    }
-
-    fn refresh_outline(&self) {
-        let body = editor::text(&self.view.buffer());
-        let headings = outline(&body);
-        self.outline_list.remove_all();
-        let dark = adw::StyleManager::default().is_dark();
-        for heading in &headings {
-            let color = editor::heading_color(heading.level, dark);
-            let text = glib::markup_escape_text(&heading.text);
-            let label = gtk::Label::builder()
-                .label(format!("<span foreground=\"{color}\">{text}</span>"))
-                .use_markup(true)
-                .xalign(0.0)
-                .ellipsize(gtk::pango::EllipsizeMode::End)
-                .margin_start(12 * i32::from(heading.level - 1))
-                .build();
-            if heading.level == 1 {
-                label.add_css_class("heading");
-            }
-            self.outline_list.append(&label);
-        }
-        *self.outline_offsets.borrow_mut() = headings
-            .iter()
-            .map(|heading| body[..heading.range.start].chars().count() as i32)
-            .collect();
     }
 
     fn refresh_backlinks(&self) {
@@ -1053,10 +953,13 @@ impl NotePage {
             return;
         };
         let dialog = adw::AlertDialog::new(
-            Some("Delete Note?"),
-            Some("Commonplace deletes it permanently, on every device it syncs with"),
+            Some("Delete this note permanently?"),
+            Some(
+                "Commonplace deletes this note permanently, including its steps or journal \
+                entries, on every device it syncs with.",
+            ),
         );
-        dialog.add_responses(&[("cancel", "_Cancel"), ("delete", "_Delete")]);
+        dialog.add_responses(&[("cancel", "_Cancel"), ("delete", "_Delete permanently")]);
         dialog.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
         dialog.set_default_response(Some("cancel"));
         dialog.connect_response(
@@ -1141,14 +1044,16 @@ impl NotePage {
         }
     }
 
-    /// Follows the link at the character `offset`, or else toggles the checkbox of the list item
-    /// there, adding one if it has none.
     /// Follows the link at the cursor while the note's text has focus.
     pub fn follow_link_at_cursor(&self) {
+        if self.view.has_focus() {
+            self.follow_current_link();
+        }
+    }
+
+    fn follow_current_link(&self) {
         let buffer = self.view.buffer();
-        if self.view.has_focus()
-            && let Some(link) = editor::link_at(&buffer, buffer.cursor_position())
-        {
+        if let Some(link) = editor::link_at(&buffer, buffer.cursor_position()) {
             self.follow(&link);
         }
     }
@@ -1210,5 +1115,26 @@ impl NotePage {
 
     fn report_error(&self, error: &Error) {
         self.toast(&error.to_string());
+    }
+}
+
+#[cfg(test)]
+impl NotePage {
+    pub(crate) fn check_details_and_trash(self: &Rc<Self>, id: NoteId) {
+        self.show(id);
+        assert!(self.timestamps.text().starts_with("Created "));
+        assert!(self.timestamps.text().contains("\nModified "));
+        assert_eq!(self.timestamps.next_sibling(), Some(self.archive_button.clone().upcast()));
+        assert_eq!(self.note_menu.n_items(), 2);
+        self.state.write(|spaces| spaces.trash(id)).unwrap();
+        self.show(id);
+        assert!(self.trash_bar.get_visible());
+        assert!(self.restore_button.next_sibling().is_none());
+        assert_eq!(
+            self.note_menu.item_attribute_value(1, "action", None).unwrap().get::<String>(),
+            Some("win.delete-note".into())
+        );
+        assert!(self.delete_note.is_enabled());
+        self.state.write(|spaces| spaces.restore(id)).unwrap();
     }
 }

@@ -355,11 +355,11 @@ impl InboxView {
             self.save_now();
             self.current.set(Some(id));
             let text = self.state.read(|spaces| self.link_titles.expand(spaces, &note.body));
-            self.editor.buffer().set_text(&text);
+            crate::link_icons::load(&self.editor, &text);
             self.editor.buffer().place_cursor(&self.editor.buffer().start_iter());
         } else if !self.edited.get() && self.stored_text() != note.body {
             let text = self.state.read(|spaces| self.link_titles.expand(spaces, &note.body));
-            self.editor.buffer().set_text(&text);
+            crate::link_icons::load(&self.editor, &text);
         } else {
             self.state.read(|spaces| self.link_titles.update(&self.editor.buffer(), spaces));
         }

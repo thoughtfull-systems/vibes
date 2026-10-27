@@ -8,7 +8,30 @@
 }:
 
 let
+  androidAapt2 = "${androidHome}/build-tools/36.0.0/aapt2";
+  androidHome = "${androidSdk.androidsdk}/libexec/android-sdk";
+  androidSdk =
+    (pkgs.androidenv.override {
+      # keep-sorted start block=yes
+      licenseAccepted = true;
+      # keep-sorted end
+    }).composeAndroidPackages
+      {
+        # keep-sorted start block=yes
+        buildToolsVersions = [ "36.0.0" ];
+        cmakeVersions = [ ];
+        includeNDK = true;
+        ndkVersions = [ "28.2.13676358" ];
+        platformVersions = [ "36" ];
+        toolsVersion = null;
+        # keep-sorted end
+      };
   gtkSchemas = "${pkgs.gtk4}/share/gsettings-schemas/${pkgs.gtk4.name}";
+  kotlinFormatter = pkgs.ktlint.override {
+    # keep-sorted start block=yes
+    jre_headless = pkgs.jdk17;
+    # keep-sorted end
+  };
   vendored = "^\\.config/vale/styles/(Google|write-good)/";
 in
 {
@@ -69,8 +92,17 @@ in
       ];
       enable = true;
     };
+    ktlint = {
+      # keep-sorted start block=yes
+      enable = true;
+      entry = "${lib.getExe kotlinFormatter} --editorconfig=.config/ktlint.editorconfig";
+      files = "\\.kts?$";
+      name = "ktlint";
+      # keep-sorted end
+    };
     license-header = {
       enable = true;
+      excludes = [ "^commonplace/android/vendor/" ];
       entry = lib.getExe (
         pkgs.writeShellApplication {
           name = "license-header";
@@ -88,10 +120,12 @@ in
       );
       name = "license-header";
       types_or = [
+        "kotlin"
         "nix"
         "rust"
         "shell"
         "svg"
+        "xml"
       ];
     };
     # No stock hook checks line length in every file type, and nixfmt doesn't fail on long lines.
@@ -237,6 +271,7 @@ in
 
   packages = [
     # keep-sorted start
+    kotlinFormatter
     pkgs.gtk4
     pkgs.gtksourceview5
     pkgs.libadwaita
@@ -245,6 +280,39 @@ in
     pkgs.vale
     # keep-sorted end
   ];
+
+  profiles.android.module = {
+    # keep-sorted start block=yes
+    env = {
+      # keep-sorted start block=yes
+      ANDROID_HOME = androidHome;
+      ANDROID_NDK_HOME = "${androidHome}/ndk/28.2.13676358";
+      GRADLE_OPTS = "-Dorg.gradle.project.android.aapt2FromMavenOverride=${androidAapt2}";
+      JAVA_HOME = "${pkgs.jdk17}";
+      # keep-sorted end
+    };
+    languages.rust = {
+      # keep-sorted start block=yes
+      channel = "stable";
+      targets = [
+        # keep-sorted start
+        "aarch64-linux-android"
+        "x86_64-linux-android"
+        # keep-sorted end
+      ];
+      # keep-sorted end
+    };
+    packages = [
+      # keep-sorted start
+      androidSdk.androidsdk
+      pkgs.cargo-ndk
+      pkgs.gradle
+      pkgs.jdk17
+      pkgs.librsvg
+      # keep-sorted end
+    ];
+    # keep-sorted end
+  };
 
   scripts.commonplace-test-capture = {
     description = "Capture into the test copy: commonplace-test-capture memo|action|journal";
@@ -261,12 +329,47 @@ in
   };
 
   scripts.commonplace-test = {
-    description = "Run the working tree on $COMMONPLACE_LIBRARY, or on a fresh test library";
+    description = "Run on $COMMONPLACE_LIBRARY or fresh samples, with optional --date YYYY-MM-DD";
     # The separate app ID keeps the test copy from handing its work to an everyday copy.
     exec = ''
       set -eu
+      sample_date=""
+      while [ "$#" -gt 0 ]; do
+        case "$1" in
+          --date)
+            if [ "$#" -lt 2 ] || [ -z "$2" ] || [ -n "$sample_date" ]; then
+              echo "commonplace-test: use --date YYYY-MM-DD once" >&2
+              exit 2
+            fi
+            sample_date=$2
+            shift 2
+            ;;
+          --date=*)
+            if [ -z "''${1#--date=}" ] || [ -n "$sample_date" ]; then
+              echo "commonplace-test: use --date YYYY-MM-DD once" >&2
+              exit 2
+            fi
+            sample_date=''${1#--date=}
+            shift
+            ;;
+          -h|--help)
+            echo "Usage: commonplace-test [--date YYYY-MM-DD]"
+            echo "Generate samples at noon UTC on that date, then run with the real clock."
+            exit 0
+            ;;
+          *)
+            echo "commonplace-test: unknown argument: $1" >&2
+            echo "Usage: commonplace-test [--date YYYY-MM-DD]" >&2
+            exit 2
+            ;;
+        esac
+      done
       manifest=${config.devenv.root}/commonplace/Cargo.toml
       if [ -n "''${COMMONPLACE_LIBRARY:-}" ]; then
+        if [ -n "$sample_date" ]; then
+          echo "commonplace-test: --date creates fresh samples; unset COMMONPLACE_LIBRARY" >&2
+          exit 2
+        fi
         if [ ! -d "$COMMONPLACE_LIBRARY" ]; then
           echo "commonplace-test: no library at $COMMONPLACE_LIBRARY" >&2
           exit 1
@@ -275,7 +378,11 @@ in
       else
         dir=$(mktemp -d -t commonplace-test.XXXXXX)
         trap 'rm -rf "$dir"' EXIT
-        cargo run --quiet --manifest-path "$manifest" --example test_library -- "$dir/library"
+        set -- "$dir/library"
+        if [ -n "$sample_date" ]; then
+          set -- "$@" --date "$sample_date"
+        fi
+        cargo run --quiet --manifest-path "$manifest" --example test_library -- "$@"
         export COMMONPLACE_LIBRARY="$dir/library"
       fi
       COMMONPLACE_APP_ID=systems.thoughtfull.CommonplaceTest \

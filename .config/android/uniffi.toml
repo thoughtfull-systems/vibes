@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: MPL-2.0-no-copyleft-exception
+
+[crates.commonplace_core.bindings.kotlin]
+android = true
+cdylib_name = "commonplace_core"
+generate_immutable_records = true
+kotlin_target_version = "2.2.21"
+package_name = "systems.thoughtfull.commonplace.core"
+
+# Explicit converters avoid UniFFI 0.32 joining its last type alias to the first free function.
+[crates.commonplace_core.bindings.kotlin.custom_types.Date]
+lift = "{}"
+lower = "{}"
+type_name = "kotlin.String"
+
+[crates.commonplace_core.bindings.kotlin.custom_types.Days]
+lift = "{}"
+lower = "{}"
+type_name = "kotlin.String"
+
+[crates.commonplace_core.bindings.kotlin.custom_types.NoteId]
+lift = "{}"
+lower = "{}"
+type_name = "kotlin.String"

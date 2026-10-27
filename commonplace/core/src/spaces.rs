@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use loro::{ExportMode, LoroMap, ValueOrContainer};
 
 use crate::actions::order_key;
-use crate::library::{MODIFIED, loro_error, now};
+use crate::library::{MODIFIED, loro_error};
 use crate::{
     ActionChange, ActionDates, ActionEntry, ActionView, Answer, Date, Error, Handled, Library,
     Note, NoteId, Question, Schedule, plain_links,
@@ -511,7 +511,7 @@ impl Spaces {
         for &entry in &entries {
             target.insert_copy(entry, &source.note_map(entry)?)?;
         }
-        target.note_map(id)?.insert(MODIFIED, now()).map_err(loro_error)?;
+        target.note_map(id)?.insert(MODIFIED, target.now()).map_err(loro_error)?;
         target.commit()?;
         if is_action {
             source.delete_action_subtree(id)?;

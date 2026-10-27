@@ -2,6 +2,7 @@
 [Cc]ommonplace
 [Ll]ibadwaita
 [Mm]ergeable
+[Oo]utdent
 [Oo]utliners?
 [Ss]ubtasks?
 [Ss]ubtrees?('s)?
@@ -9,6 +10,8 @@
 [Vv]endored
 [Ww]ikilinks?
 [Zz]ettels?
+Adwaita
+Android
 autolinks
 Automerge
 Base32
@@ -17,6 +20,8 @@ Crockford('s)?
 Daylio
 devenv
 gitlint
+GNOME
+Gradle
 GTK('s)?
 iCalendar
 interoperate

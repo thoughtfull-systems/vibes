@@ -28,9 +28,9 @@ The Linux app covers memos, actions, and journals:
 
 - Switch between the five tabs, Memos, Actions, Journals, All Notes, and Trash. The search bar
   beside them filters each tab's notes until you clear it. A note opens below the tabs and the
-  search bar, and Back returns to the tab.
+  search bar. Back retraces visited notes and tabs; Escape returns to the listing.
 - Write and edit memos in an editor that renders Markdown as you write, shows the syntax of whatever
-  the cursor touches, and saves as you type. A memo shows its outline beside it and its backlinks
+  the cursor touches, and saves as you type. A memo shows its details beside it and its backlinks
   below it.
 - Capture a memo or a task from a small window or from the command line, or create one from the link
   picker. Only capture puts actions in the inbox, so an action's list picker offers Inbox only while
@@ -58,7 +58,9 @@ The Linux app covers memos, actions, and journals:
   the archive.
 - Reorder a project's steps by dragging them, or with Alt+Shift+Up and Alt+Shift+Down. Drop a step
   on the middle of another to nest it there.
-- Link notes with wikilinks, follow links, and see each note's backlinks.
+- Link notes with wikilinks, follow links, and see each note's backlinks. Clicking a link puts the
+  cursor in it for editing; the icon immediately before the link follows it. Control-click and the
+  keyboard shortcut also follow links.
 - Open web links in the browser.
 - Keep checklists in memos, and tick their boxes.
 - Edit lists like an outliner, where Enter starts the next item and Tab nests it.
@@ -85,7 +87,11 @@ The Linux app covers memos, actions, and journals:
 - Print an action with the bodies of the projects it belongs to, outermost first, with
   `commonplace print URI`, to hand it to a coding agent as a prompt.
 
-Curios, zettels, spaced repetition, sync, Android, and the web come next.
+The [Android app](android) uses Jetpack Compose and the same Rust core. It covers memos, actions,
+journals, spaces, links, and the trash, with capture from Android's share menu and journal prompts
+through Android notifications. Its README describes the build and device setup.
+
+Curios, zettels, spaced repetition, sync, and the web come next.
 
 ## Design
 
@@ -134,13 +140,28 @@ devenv shell -- commonplace-test
 
 The script builds a fresh library in a temporary directory, runs the app on it beside any copy
 that's already running, and deletes the library when the app quits, so nothing you change survives a
-restart. The samples come from `core/examples/test_library.rs`, which covers every state an action
-can be in and every kind of formatting the editor renders. Their dates count from the day you run
-it.
+restart. The samples come from `core/src/samples.rs`, which covers every state an action can be in
+and every kind of formatting the editor renders. Their dates count from the day you run it.
+
+To create samples on an older date, pass `--date`:
+
+```sh
+devenv shell -- commonplace-test --date 2026-01-15
+```
+
+The generator uses noon Coordinated Universal Time (UTC) on that date for creation, modification,
+archive, and trash timestamps. It also dates action states and journal entries from that time, and
+counts due and start dates from the chosen day. The app uses the real clock when it opens, so later
+edits use the current time. Choose **All Time** in Journals to see entries outside its recent date
+range. Run `commonplace-test --help` to see the options.
+
+Exit and reenter `devenv shell` after changing the launcher, or use the command here from outside
+the shell. An existing shell can keep an earlier copy of the script in its command path.
 
 To run the working tree on a library of your own instead, set `COMMONPLACE_LIBRARY` to an existing
 directory. The script prints the path, opens that library, and leaves it in place when the app
 quits. Only one copy can open a library at a time, so close any everyday copy that uses it first.
+`--date` only creates fresh samples; it refuses to run when you set `COMMONPLACE_LIBRARY`.
 
 To quick capture into the test copy while it runs, use `commonplace-test-capture` with `memo`,
 `action`, or `journal`, like the `capture` command. It refuses to run without a test copy open, so

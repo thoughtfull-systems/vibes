@@ -431,6 +431,9 @@ impl JournalsView {
                         .iter()
                         .filter_map(|(at, answer)| Some((*at, answer.number()?)))
                         .collect();
+                    if points.is_empty() {
+                        continue;
+                    }
                     line_chart(question, points, &color).upcast::<gtk::Widget>()
                 }
                 QuestionKind::Choice { .. } | QuestionKind::YesNo => {
@@ -488,7 +491,8 @@ fn entry_row(shown: &Shown, time: &glib::DateTime) -> gtk::Box {
     if !text.is_empty() {
         content.append(
             &gtk::Label::builder()
-                .label(&text)
+                .label(crate::rows::markdown_markup(&text))
+                .use_markup(true)
                 .xalign(0.0)
                 .wrap(true)
                 .lines(4)
@@ -596,31 +600,21 @@ fn date_label(at: i64) -> String {
         .unwrap_or_default()
 }
 
-/// A line over time through one question's numeric answers, with a tooltip for the nearest point.
-fn line_chart(question: &Question, mut points: Vec<(i64, f64)>, color: &str) -> gtk::DrawingArea {
+/// A line over time through numeric answers, with the nearest value under the pointer.
+fn line_chart(question: &Question, mut points: Vec<(i64, f64)>, color: &str) -> gtk::Box {
     points.sort_by_key(|(at, _)| *at);
-    let area = gtk::DrawingArea::builder()
-        .content_height(CHART_HEIGHT)
-        .hexpand(true)
-        .has_tooltip(true)
-        .build();
+    let area = gtk::DrawingArea::builder().content_height(CHART_HEIGHT).hexpand(true).build();
     let (first, last) = (points.first().map_or(0, |p| p.0), points.last().map_or(0, |p| p.0));
-    let (mut low, mut high) =
+    let (lowest, highest) =
         points.iter().fold((f64::MAX, f64::MIN), |(lo, hi), (_, v)| (lo.min(*v), hi.max(*v)));
+    let (mut low, mut high) = (lowest, highest);
     if let QuestionKind::Scale { min, max, .. } = question.kind {
         (low, high) = (min as f64, max as f64);
     }
     if (high - low).abs() < f64::EPSILON {
         (low, high) = (low - 1.0, high + 1.0);
     }
-    let is_time = question.kind == QuestionKind::TimeOfDay;
-    let format_value = move |value: f64| {
-        if is_time {
-            format_time(value.round().clamp(0.0, 1439.0) as u16)
-        } else {
-            format!("{}", (value * 100.0).round() / 100.0)
-        }
-    };
+    let axis_kind = question.kind.clone();
     let place = move |width: f64, height: f64, at: i64, value: f64| {
         let span = (last - first).max(1) as f64;
         let x = if last == first {
@@ -631,6 +625,15 @@ fn line_chart(question: &Question, mut points: Vec<(i64, f64)>, color: &str) -> 
         let y = PAD_TOP + (high - value) / (high - low) * (height - PAD_TOP - PAD_BOTTOM);
         (x, y)
     };
+    let value_label = |value: f64| chart_value(&question.kind, value);
+    let legend = if lowest == highest {
+        value_label(lowest)
+    } else {
+        format!("{} – {}", value_label(lowest), value_label(highest))
+    };
+    let header = chart_header(&legend);
+    let selected = Rc::new(Cell::new(None::<usize>));
+    let selection = selected.clone();
     let (r, g, b) = rgb(color);
     let drawn = points.clone();
     area.set_draw_func(move |area, cr, width, height| {
@@ -648,7 +651,7 @@ fn line_chart(question: &Question, mut points: Vec<(i64, f64)>, color: &str) -> 
         cr.set_font_size(11.0);
         for value in [low, high] {
             let (_, y) = place(width, height, first, value);
-            text_right(cr, &format_value(value), PAD_LEFT - 8.0, y + 4.0);
+            text_right(cr, &chart_number(&axis_kind, value), PAD_LEFT - 8.0, y + 4.0);
         }
         cr.move_to(PAD_LEFT, height - 6.0);
         let _ = cr.show_text(&date_label(first));
@@ -668,27 +671,52 @@ fn line_chart(question: &Question, mut points: Vec<(i64, f64)>, color: &str) -> 
             cr.arc(x, y, 4.0, 0.0, std::f64::consts::TAU);
             let _ = cr.fill();
         }
+        if let Some(index) = selection.get()
+            && let Some((at, value)) = drawn.get(index)
+        {
+            let (x, _) = place(width, height, *at, *value);
+            cr.set_source_rgba(ir, ig, ib, 0.45);
+            cr.set_line_width(1.0);
+            cr.move_to(x, PAD_TOP);
+            cr.line_to(x, height - PAD_BOTTOM);
+            let _ = cr.stroke();
+        }
     });
-    area.connect_query_tooltip(move |area, x, _, _, tooltip| {
-        let (width, height) = (f64::from(area.width()), f64::from(area.height()));
-        let nearest = points.iter().min_by(|a, b| {
-            let distance = |point: &(i64, f64)| {
-                (place(width, height, point.0, point.1).0 - f64::from(x)).abs()
-            };
-            distance(a).total_cmp(&distance(b))
-        });
-        let Some((at, value)) = nearest else {
-            return false;
-        };
-        let when = glib::DateTime::from_unix_local(at.div_euclid(1000))
-            .ok()
-            .and_then(|time| time.format("%b %-d, %H:%M").ok())
-            .map(String::from)
-            .unwrap_or_default();
-        tooltip.set_text(Some(&format!("{when}: {}", format_value(*value))));
-        true
-    });
-    area
+    let motion = gtk::EventControllerMotion::new();
+    let kind = question.kind.clone();
+    motion.connect_motion(glib::clone!(
+        #[weak]
+        area,
+        #[weak]
+        header,
+        #[strong]
+        selected,
+        move |_, x, _| {
+            let width = f64::from(area.width());
+            let height = f64::from(area.height());
+            let nearest = points.iter().enumerate().min_by(|(_, a), (_, b)| {
+                let distance =
+                    |point: &(i64, f64)| (place(width, height, point.0, point.1).0 - x).abs();
+                distance(a).total_cmp(&distance(b))
+            });
+            if let Some((index, (at, value))) = nearest {
+                selected.set(Some(index));
+                let when = glib::DateTime::from_unix_local(at.div_euclid(1000))
+                    .ok()
+                    .and_then(|time| time.format("%b %-d, %Y · %H:%M").ok())
+                    .map(String::from)
+                    .unwrap_or_default();
+                header.set_label(&format!("{when} · {}", chart_value(&kind, *value)));
+                area.queue_draw();
+            }
+        }
+    ));
+    clear_chart_hover(&motion, &area, &header, selected, legend);
+    area.add_controller(motion);
+    let holder = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    holder.append(&header);
+    holder.append(&area);
+    holder
 }
 
 /// Whether the Journals tab charts a kind of question.
@@ -768,11 +796,9 @@ fn day_grid(
                     rows.push((option.label.clone(), marks, count.to_string()));
                 }
             }
-            caption = [
-                "A dot for each day that picked the option,",
-                "and a dashed ring for days with no answer",
-            ]
-            .join(" ");
+            caption = "A dot for each day that picked the option, and a dashed ring for days with \
+                no answer"
+                .to_owned();
         }
         _ => {
             let mut marks = vec![Mark::Empty; days.len()];
@@ -794,11 +820,13 @@ fn day_grid(
     }
     let yes_no = question.kind == QuestionKind::YesNo;
     let height = (GRID_ROW * rows.len() as f64 + 22.0).ceil() as i32;
-    let area =
-        gtk::DrawingArea::builder().content_height(height).hexpand(true).has_tooltip(true).build();
+    let area = gtk::DrawingArea::builder().content_height(height).hexpand(true).build();
     let (r, g, b) = rgb(color);
     let geometry =
         move |width: f64, count: usize| (width - GRID_LABELS - GRID_COUNTS) / count.max(1) as f64;
+    let selected = Rc::new(Cell::new(None::<usize>));
+    let selection = selected.clone();
+    let header = chart_header(&caption);
     let drawn = rows.clone();
     let day_count = days.len();
     let (first_label, last_label) = (format_date(first), format_date(last));
@@ -847,6 +875,14 @@ fn day_grid(
                 }
             }
         }
+        if let Some(index) = selection.get() {
+            let x = GRID_LABELS + cell * (index as f64 + 0.5);
+            cr.set_source_rgba(ir, ig, ib, 0.45);
+            cr.set_line_width(1.0);
+            cr.move_to(x, 0.0);
+            cr.line_to(x, GRID_ROW * drawn.len() as f64);
+            let _ = cr.stroke();
+        }
         cr.set_source_rgba(ir, ig, ib, 0.6);
         let baseline = f64::from(height) - 6.0;
         cr.move_to(GRID_LABELS, baseline);
@@ -855,44 +891,149 @@ fn day_grid(
             text_right(cr, &last_label, width - GRID_COUNTS, baseline);
         }
     });
-    area.connect_query_tooltip(move |area, x, y, _, tooltip| {
-        let cell = geometry(f64::from(area.width()), days.len());
-        let index = ((f64::from(x) - GRID_LABELS) / cell).floor();
-        let row = (f64::from(y) / GRID_ROW).floor();
-        if index < 0.0 || row < 0.0 {
-            return false;
+    let motion = gtk::EventControllerMotion::new();
+    motion.connect_motion(glib::clone!(
+        #[weak]
+        area,
+        #[weak]
+        header,
+        #[strong]
+        selected,
+        move |_, x, _| {
+            let cell = geometry(f64::from(area.width()), days.len());
+            let index =
+                ((x - GRID_LABELS) / cell).floor().clamp(0.0, (days.len() - 1) as f64) as usize;
+            selected.set(Some(index));
+            header.set_label(&grid_value(days[index], &rows, index, yes_no));
+            area.queue_draw();
         }
-        let (Some(day), Some((label, marks, _))) =
-            (days.get(index as usize), rows.get(row as usize))
-        else {
-            return false;
-        };
-        let state = match (yes_no, marks[index as usize]) {
-            (true, Mark::Dot) => "Yes",
-            (true, Mark::Cross) => "No",
-            (false, Mark::Dot) => "Picked",
-            (false, Mark::Empty) => "Not picked",
-            (_, _) => "No answer",
-        };
-        tooltip.set_text(Some(&format!("{}\n{label}: {state}", format_date(*day))));
-        true
-    });
+    ));
+    clear_chart_hover(&motion, &area, &header, selected, caption);
+    area.add_controller(motion);
     let holder = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    holder.append(&header);
     holder.append(&area);
-    holder.append(
-        &gtk::Label::builder()
-            .label(caption)
-            .xalign(0.0)
-            .css_classes(["caption", "dimmed"])
-            .margin_start(12)
-            .margin_bottom(12)
-            .build(),
-    );
     holder
+}
+
+fn chart_header(text: &str) -> gtk::Label {
+    gtk::Label::builder()
+        .label(text)
+        .xalign(0.0)
+        .wrap(true)
+        .css_classes(["caption", "dimmed"])
+        .margin_start(12)
+        .margin_end(12)
+        .build()
+}
+
+/// A value without its unit, as the chart's axis shows it.
+fn chart_number(kind: &QuestionKind, value: f64) -> String {
+    if *kind == QuestionKind::TimeOfDay {
+        return format_time(value.round().clamp(0.0, 1439.0) as u16);
+    }
+    let value = (value * 100.0).round() / 100.0;
+    if value.fract() == 0.0 { format!("{value:.1}") } else { value.to_string() }
+}
+
+fn chart_value(kind: &QuestionKind, value: f64) -> String {
+    let number = chart_number(kind, value);
+    match kind {
+        QuestionKind::Duration => format!("{number} min"),
+        QuestionKind::Number { unit, .. } => {
+            format!("{number}{}", unit.as_ref().map(|unit| format!(" {unit}")).unwrap_or_default())
+        }
+        _ => number,
+    }
+}
+
+fn grid_value(
+    day: Date,
+    rows: &[(String, Vec<Mark>, String)],
+    index: usize,
+    yes_no: bool,
+) -> String {
+    let values: Vec<String> = rows
+        .iter()
+        .map(|(label, marks, _)| {
+            let value = match (yes_no, marks[index]) {
+                (true, Mark::Dot) => "Yes",
+                (true, Mark::Cross) => "No",
+                (false, Mark::Dot) => "Picked",
+                (false, Mark::Empty) => "Not picked",
+                _ => "No answer",
+            };
+            format!("{label}: {value}")
+        })
+        .collect();
+    format!("{day} · {}", values.join(" · "))
+}
+
+fn clear_chart_hover(
+    motion: &gtk::EventControllerMotion,
+    area: &gtk::DrawingArea,
+    header: &gtk::Label,
+    selected: Rc<Cell<Option<usize>>>,
+    legend: String,
+) {
+    motion.connect_leave(glib::clone!(
+        #[weak]
+        area,
+        #[weak]
+        header,
+        move |_| {
+            selected.set(None);
+            header.set_label(&legend);
+            area.queue_draw();
+        }
+    ));
 }
 
 fn text_right(cr: &cairo::Context, text: &str, right: f64, baseline: f64) {
     let width = cr.text_extents(text).map_or(0.0, |extents| extents.x_advance());
     cr.move_to(right - width, baseline);
     let _ = cr.show_text(text);
+}
+
+#[cfg(test)]
+pub(crate) fn check_chart_hover() {
+    let question = Question::new(
+        "Weight",
+        QuestionKind::Number { unit: Some("kg".into()), min: None, max: None },
+    );
+    let chart = line_chart(&question, vec![(1000, 7.5), (2000, 9.5)], "#2a78d6");
+    let header = chart.first_child().unwrap().downcast::<gtk::Label>().unwrap();
+    let area = header.next_sibling().unwrap().downcast::<gtk::DrawingArea>().unwrap();
+    let controllers = area.observe_controllers();
+    let motion = (0..controllers.n_items())
+        .filter_map(|index| controllers.item(index)?.downcast::<gtk::EventControllerMotion>().ok())
+        .next()
+        .unwrap();
+    assert_eq!(header.text(), "7.5 kg – 9.5 kg");
+    motion.emit_by_name::<()>("motion", &[&PAD_LEFT, &20.0_f64]);
+    assert!(header.text().ends_with(" · 7.5 kg"));
+    motion.emit_by_name::<()>("leave", &[]);
+    assert_eq!(header.text(), "7.5 kg – 9.5 kg");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn choice_hover_names_every_option_state() {
+        let day = Date::new(2026, 10, 27).unwrap();
+        let rows = vec![
+            ("Walk".into(), vec![Mark::Dot], "1".into()),
+            ("Swim".into(), vec![Mark::Empty], "0".into()),
+            ("Cycle".into(), vec![Mark::Missing], "0".into()),
+        ];
+        assert_eq!(
+            grid_value(day, &rows, 0, false),
+            "2026-10-27 · Walk: Picked · Swim: Not picked · Cycle: No answer"
+        );
+        assert_eq!(chart_value(&QuestionKind::Duration, 12.345), "12.35 min");
+        assert_eq!(chart_number(&QuestionKind::Duration, 8.0), "8.0");
+        assert_eq!(chart_value(&QuestionKind::TimeOfDay, 1330.4), "22:10");
+    }
 }

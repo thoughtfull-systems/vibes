@@ -28,7 +28,7 @@ enum Mode {
     Review,
 }
 
-// In the order the sidebar lists them.
+// In the order the action mode menu lists them.
 const MODES: [(&str, &str, Mode); 4] = [
     ("Execute", "media-playback-start-symbolic", Mode::Execute),
     ("Plan", "document-edit-symbolic", Mode::Plan),
@@ -131,8 +131,6 @@ pub struct Window {
     /// Shows the actions in a list, or the inbox's own view.
     actions_content: gtk::Stack,
     actions_results: NoteList,
-    /// Set while the window is too narrow to keep the modes beside the actions.
-    actions_narrow: Cell<bool>,
     actions_stack: gtk::Stack,
     all_notes: Rc<Browser>,
     journals: Rc<JournalsView>,
@@ -145,10 +143,7 @@ pub struct Window {
     /// Shows the tabs or the open note.
     main: gtk::Stack,
     memos: Rc<Browser>,
-    modes: gtk::ListBox,
-    modes_pane: gtk::Box,
-    /// The modes' width when they last showed.
-    modes_width: Cell<i32>,
+    modes: gtk::DropDown,
     note: Rc<NotePage>,
     /// Set while the window shows a location itself, so the tabs' and modes' change signals don't
     /// record it.
@@ -156,7 +151,6 @@ pub struct Window {
     search: gtk::SearchEntry,
     /// Whether the search bar holds text.
     searching: Cell<bool>,
-    sidebar_button: gtk::ToggleButton,
     /// A button for each library, which shows or hides its notes.
     spaces_bar: gtk::Box,
     /// The libraries the space buttons stand for, as they last showed.
@@ -186,41 +180,27 @@ impl Window {
         let all_notes = Browser::new(state.clone(), Scope::All);
         let journals = JournalsView::new(state.clone());
         let actions = NoteList::new(state.clone());
-        let modes = gtk::ListBox::builder().css_classes(["navigation-sidebar"]).build();
-        for (name, icon, _) in MODES {
-            let row = gtk::Box::builder().spacing(12).margin_top(6).margin_bottom(6).build();
-            row.append(&gtk::Image::from_icon_name(icon));
-            row.append(&gtk::Label::new(Some(name)));
-            modes.append(&row);
-        }
-        let execute = MODES.iter().position(|(_, _, mode)| *mode == Mode::Execute);
-        modes.select_row(execute.and_then(|index| modes.row_at_index(index as i32)).as_ref());
-        let modes_pane = gtk::Box::builder()
-            .orientation(gtk::Orientation::Vertical)
-            .width_request(120)
-            .css_classes(["sidebar-pane"])
-            .build();
-        modes.set_vexpand(true);
-        modes_pane.append(&modes);
+        let modes = gtk::DropDown::from_strings(&MODES.map(|(name, _, _)| name));
+        let execute = MODES.iter().position(|(_, _, mode)| *mode == Mode::Execute).unwrap_or(0);
+        modes.set_selected(execute as u32);
+        let mode_bar =
+            gtk::Box::builder().css_classes(["toolbar"]).halign(gtk::Align::Center).build();
+        mode_bar.append(&modes);
         let sizes = layout::load(&state);
         let inbox = InboxView::new(state.clone(), toasts.clone());
         // The inbox sorts one action at a time rather than listing them.
         let actions_content = gtk::Stack::new();
         actions_content.add_named(&actions.widget, Some("list"));
         actions_content.add_named(&inbox.widget, Some("inbox"));
-        let actions_paned = gtk::Paned::builder()
-            .wide_handle(true)
-            .start_child(&modes_pane)
-            .end_child(&actions_content)
-            .position(sizes.actions)
-            .resize_start_child(false)
-            .shrink_start_child(false)
-            .shrink_end_child(false)
-            .build();
+        let actions_page = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        actions_page.append(&mode_bar);
+        actions_page.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+        actions_content.set_vexpand(true);
+        actions_page.append(&actions_content);
         let actions_results = NoteList::new(state.clone());
         actions_results.set_empty("system-search-symbolic", "No Actions Found", "Try other words");
         let actions_stack = gtk::Stack::new();
-        actions_stack.add_named(&actions_paned, Some("list"));
+        actions_stack.add_named(&actions_page, Some("list"));
         actions_stack.add_named(&actions_results.widget, Some("results"));
 
         let tabs = adw::ViewStack::new();
@@ -236,12 +216,6 @@ impl Window {
             tabs.add_titled_with_icon(page, Some(name), title, icon);
         }
 
-        let sidebar_button = gtk::ToggleButton::builder()
-            .icon_name("sidebar-show-symbolic")
-            .tooltip_text("Show Sidebar")
-            .active(true)
-            .build();
-        sidebar_button.bind_property("active", &modes_pane, "visible").sync_create().build();
         // Hiding the button would shift the space buttons beside it, so it only fades.
         let back_button = gtk::Button::builder()
             .icon_name("go-previous-symbolic")
@@ -263,7 +237,6 @@ impl Window {
             .build();
         header.pack_start(&back_button);
         header.pack_start(&spaces_bar);
-        header.pack_start(&sidebar_button);
         let menu = gio::Menu::new();
         menu.append(Some("_Libraries"), Some("win.libraries"));
         header.pack_end(
@@ -305,7 +278,6 @@ impl Window {
             actions,
             actions_content,
             actions_results,
-            actions_narrow: Cell::new(false),
             actions_stack,
             all_notes,
             back: RefCell::default(),
@@ -317,13 +289,10 @@ impl Window {
             main,
             memos,
             modes,
-            modes_pane,
-            modes_width: Cell::new(sizes.actions),
             note,
             restoring: Cell::new(false),
             search,
             searching: Cell::new(false),
-            sidebar_button,
             spaces_bar,
             spaces_shown: RefCell::default(),
             state,
@@ -333,24 +302,10 @@ impl Window {
             trash,
             window,
         });
-        this.note.set_sidebar_widths(sizes.outline, sizes.details);
-        let set_narrow = glib::clone!(
-            #[weak]
-            this,
-            move |narrow: bool| {
-                this.remember_modes_width();
-                this.actions_narrow.set(narrow);
-                this.sidebar_button.set_active(!narrow);
-                this.update_sidebar_button();
-            }
-        );
-        let set_wide = set_narrow.clone();
-        breakpoint.connect_apply(move |_| set_narrow(true));
-        breakpoint.connect_unapply(move |_| set_wide(false));
+        this.note.set_details_width(sizes.details);
         this.connect_signals();
         this.add_actions();
         this.refresh();
-        this.update_sidebar_button();
         this.restore_screen();
         this
     }
@@ -421,11 +376,29 @@ impl Window {
         self.go(Location::List(self.location.get().listing()));
     }
 
+    fn go_back(&self) {
+        if !self.step(&self.back, &self.forward)
+            && let Location::Note(_, listing) = self.location.get()
+        {
+            self.forward.borrow_mut().push(self.location.get());
+            self.show(Location::List(listing));
+        }
+    }
+
+    fn update_back_button(&self) {
+        let available =
+            !self.back.borrow().is_empty() || matches!(self.location.get(), Location::Note(_, _));
+        self.back_button.set_opacity(if available { 1.0 } else { 0.0 });
+        self.back_button.set_sensitive(available);
+    }
+
     /// Moves to the most recent location in `from` whose note still exists, and remembers the
     /// current location in `to`. Returns whether there was one.
     fn step(&self, from: &RefCell<Vec<Location>>, to: &RefCell<Vec<Location>>) -> bool {
         loop {
-            let Some(location) = from.borrow_mut().pop() else {
+            let location = from.borrow_mut().pop();
+            let Some(location) = location else {
+                self.update_back_button();
                 return false;
             };
             if let Location::Note(id, _) = location
@@ -450,6 +423,8 @@ impl Window {
         });
         if let Some(next) = next {
             self.show(next);
+        } else {
+            self.update_back_button();
         }
     }
 
@@ -468,8 +443,8 @@ impl Window {
             Listing::Actions(mode) => {
                 self.tabs.set_visible_child_name("actions");
                 let index = MODES.iter().position(|(_, _, listed)| *listed == mode);
-                if let Some(row) = index.and_then(|index| self.modes.row_at_index(index as i32)) {
-                    self.modes.select_row(Some(&row));
+                if let Some(index) = index {
+                    self.modes.set_selected(index as u32);
                 }
             }
             Listing::AllNotes => self.tabs.set_visible_child_name("all"),
@@ -493,10 +468,8 @@ impl Window {
                 self.note.show(id);
             }
         }
-        let back = !self.showing("tabs");
-        self.back_button.set_opacity(if back { 1.0 } else { 0.0 });
-        self.back_button.set_sensitive(back);
         self.location.set(location);
+        self.update_back_button();
         self.restoring.set(false);
         self.state.device().set_text_setting(SCREEN, &location.encode());
     }
@@ -568,7 +541,7 @@ impl Window {
         self.back_button.connect_clicked(glib::clone!(
             #[weak(rename_to = this)]
             self,
-            move |_| this.return_to_listing()
+            move |_| this.go_back()
         ));
         self.note.connect_open(glib::clone!(
             #[weak(rename_to = this)]
@@ -582,7 +555,6 @@ impl Window {
                 if !this.restoring.get() {
                     this.go(Location::List(this.tab()));
                 }
-                this.update_sidebar_button();
             }
         ));
         // Clicking the tab that's already selected changes nothing in the stack, but still means
@@ -602,15 +574,11 @@ impl Window {
             }
         ));
         self.switcher.add_controller(switcher_click);
-        self.modes.connect_row_selected(glib::clone!(
+        self.modes.connect_selected_notify(glib::clone!(
             #[weak(rename_to = this)]
             self,
-            move |_, _| {
+            move |_| {
                 this.refresh_actions();
-                if this.actions_narrow.get() {
-                    this.remember_modes_width();
-                    this.sidebar_button.set_active(false);
-                }
                 if !this.restoring.get() {
                     this.go(Location::List(Listing::Actions(this.mode())));
                 }
@@ -704,12 +672,8 @@ impl Window {
             move |_| {
                 this.note.save_now();
                 this.inbox.save_now();
-                this.remember_modes_width();
-                let (outline, details) = this.note.sidebar_widths();
-                layout::save(
-                    &this.state,
-                    layout::Sizes { actions: this.modes_width.get(), details, outline },
-                );
+                let details = this.note.details_width();
+                layout::save(&this.state, layout::Sizes { details });
                 glib::Propagation::Proceed
             }
         ));
@@ -837,20 +801,8 @@ impl Window {
         libraries::name_unnamed(&self.state, &self.window);
     }
 
-    fn update_sidebar_button(&self) {
-        let actions = self.tabs.visible_child_name().as_deref() == Some("actions");
-        self.sidebar_button.set_visible(actions && self.actions_narrow.get());
-    }
-
-    /// Notes the modes' width while they show, so hiding them doesn't lose it.
-    fn remember_modes_width(&self) {
-        if self.modes_pane.get_visible() && self.modes_pane.width() > 0 {
-            self.modes_width.set(self.modes_pane.width());
-        }
-    }
-
     fn mode(&self) -> Mode {
-        let index = self.modes.selected_row().map_or(0, |row| row.index());
+        let index = self.modes.selected();
         MODES.get(index as usize).map_or(Mode::Execute, |(_, _, mode)| *mode)
     }
 
@@ -1013,6 +965,86 @@ fn section(title: &'static str, entries: Vec<ActionEntry>, plan: bool) -> Sectio
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "needs an isolated GTK Broadway display and temporary sample library"]
+    fn header_back_traverses_notes_and_listings() {
+        assert_eq!(std::env::var("GDK_BACKEND").as_deref(), Ok("broadway"));
+        let dir = std::path::PathBuf::from(
+            std::env::var_os("COMMONPLACE_LIBRARY").expect("a temporary sample library"),
+        );
+        assert!(dir.starts_with(std::env::temp_dir()));
+        adw::init().unwrap();
+        let app = adw::Application::builder()
+            .application_id(format!(
+                "systems.thoughtfull.CommonplaceAgent.History{}",
+                std::process::id()
+            ))
+            .flags(gio::ApplicationFlags::NON_UNIQUE)
+            .build();
+        app.register(gio::Cancellable::NONE).unwrap();
+        let mut spaces = commonplace_core::Spaces::open(&dir).unwrap();
+        let key = spaces.keys().first().unwrap().clone();
+        let first = spaces.create_memo(&key, "History first").unwrap();
+        let second = spaces.create_memo(&key, "History second").unwrap();
+        let state = Rc::new(State::new(spaces, crate::device::Device::open(&dir)));
+        let window = Window::new(&app, state.clone());
+        window.present();
+        crate::journals_view::check_chart_hover();
+        window.note.check_details_and_trash(second);
+        assert_eq!(window.modes.selected(), 0);
+        let list = Location::List(Listing::Memos);
+        assert_eq!(window.location.get(), list);
+        assert!(!window.back_button.is_sensitive());
+
+        window.open(first);
+        window.open(second);
+        window.back_button.emit_clicked();
+        assert_eq!(window.location.get(), Location::Note(first, Listing::Memos));
+        assert!(window.showing("note"));
+        assert!(window.step(&window.forward, &window.back));
+        assert_eq!(window.location.get(), Location::Note(second, Listing::Memos));
+        window.back_button.emit_clicked();
+        window.back_button.emit_clicked();
+        assert_eq!(window.location.get(), list);
+        assert!(window.showing("tabs"));
+        assert!(!window.back_button.is_sensitive());
+        assert_eq!(window.back_button.opacity(), 0.0);
+
+        window.tabs.set_visible_child_name("journals");
+        assert_eq!(window.location.get(), Location::List(Listing::Journals));
+        assert!(window.back_button.is_sensitive());
+        window.back_button.emit_clicked();
+        assert_eq!(window.location.get(), list);
+        assert!(!window.back_button.is_sensitive());
+
+        window.open(first);
+        window.open(second);
+        state
+            .write(|spaces| {
+                spaces.trash(first)?;
+                spaces.delete(first)
+            })
+            .unwrap();
+        window.back_button.emit_clicked();
+        assert_eq!(window.location.get(), list);
+        assert!(!window.back_button.is_sensitive());
+
+        let saved = Location::Note(second, Listing::Journals);
+        window.show(saved);
+        window.close();
+        drop(window);
+        let restored = Window::new(&app, state);
+        assert_eq!(restored.location.get(), saved);
+        assert!(restored.back.borrow().is_empty());
+        assert!(restored.back_button.is_sensitive());
+        restored.back_button.emit_clicked();
+        assert_eq!(restored.location.get(), Location::List(Listing::Journals));
+        assert!(!restored.back_button.is_sensitive());
+        assert!(restored.step(&restored.forward, &restored.back));
+        assert_eq!(restored.location.get(), saved);
+        restored.close();
+    }
 
     #[test]
     fn deleting_notes_prunes_both_directions_and_returns_to_previous_note() {

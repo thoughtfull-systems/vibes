@@ -144,10 +144,14 @@ pub fn present(
             }
             form_holder.append(&new_form.widget);
             form_holder.set_visible(new_form.widget.is_visible());
-            let new_template = fields.template();
+            let day = glib::DateTime::from_unix_local(opened.div_euclid(1000))
+                .and_then(|time| time.format("%Y-%m-%d"))
+                .map(String::from)
+                .unwrap_or_default();
+            let new_template = format!("{day}\n\n{}", fields.template());
             if !edited.get() {
                 loading.set(true);
-                view.buffer().set_text(&new_template);
+                crate::link_icons::load(&view, &new_template);
                 loading.set(false);
             }
             template.replace(new_template);
