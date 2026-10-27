@@ -296,7 +296,7 @@ internal fun JournalDetails(model: NotebookModel, note: MobileNote) {
   var addingQuestion by remember { mutableStateOf(false) }
   var schedule by remember { mutableStateOf<Schedule?>(null) }
   var addingSchedule by remember { mutableStateOf(false) }
-  ToggleRow("Prompt on this device", prompts) { enabled ->
+  ToggleRow("Prompt here?", prompts) { enabled ->
     prompts = enabled
     model.repository.setPrompts(note.id, enabled)
     if (enabled &&
@@ -324,36 +324,51 @@ internal fun JournalDetails(model: NotebookModel, note: MobileNote) {
     }
   }
   val questions = journal.questions.filter { it.retired == null }
+  JournalHeading("Questions")
+  if (questions.isEmpty()) JournalPlaceholder("No questions")
   questions.forEachIndexed { index, item ->
     Row(verticalAlignment = Alignment.CenterVertically) {
-      Text(item.prompt, Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
-      IconButton(onClick = { question = item }) { AppIcon(R.drawable.edit, "Edit question") }
+      Column(Modifier.weight(1f)) {
+        Text(item.prompt.trim(), style = MaterialTheme.typography.titleSmall)
+        Text(
+          describeQuestion(item),
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+          style = MaterialTheme.typography.bodySmall
+        )
+      }
       IconButton(enabled = index > 0, onClick = {
         model.perform { it.moveQuestion(note.id, item.id, true) }
-      }) { AppIcon(R.drawable.up, "Move question up") }
+      }) { AppIcon(R.drawable.up, "Move up") }
       IconButton(enabled = index < questions.lastIndex, onClick = {
         model.perform { it.moveQuestion(note.id, item.id, false) }
-      }) { AppIcon(R.drawable.down, "Move question down") }
+      }) { AppIcon(R.drawable.down, "Move down") }
+      IconButton(onClick = { question = item }) { AppIcon(R.drawable.edit, "Edit") }
       IconButton(onClick = {
         model.perform {
           it.setQuestion(note.id, item.copy(retired = System.currentTimeMillis()), false)
         }
-      }) { AppIcon(R.drawable.trash, "Retire question") }
+      }) { AppIcon(R.drawable.trash, "Remove") }
     }
   }
   TextButton(onClick = { addingQuestion = true }) {
     AppIcon(R.drawable.add)
     Text("Add question")
   }
+  JournalHeading("Schedules")
+  if (journal.schedules.isEmpty()) JournalPlaceholder("Takes entries only when you write one")
   journal.schedules.forEach { item ->
     Row(verticalAlignment = Alignment.CenterVertically) {
       Column(Modifier.weight(1f)) {
         Text(describeDays(item.days), style = MaterialTheme.typography.titleSmall)
-        Text(describeTimes(item.times), style = MaterialTheme.typography.bodySmall)
+        Text(
+          describeTimes(item.times),
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+          style = MaterialTheme.typography.bodySmall
+        )
       }
-      IconButton(onClick = { schedule = item }) { AppIcon(R.drawable.edit, "Edit schedule") }
+      IconButton(onClick = { schedule = item }) { AppIcon(R.drawable.edit, "Edit") }
       IconButton(onClick = { model.perform { it.removeSchedule(note.id, item.id) } }) {
-        AppIcon(R.drawable.trash, "Remove schedule")
+        AppIcon(R.drawable.trash, "Remove")
       }
     }
   }
@@ -432,96 +447,128 @@ private fun QuestionDialog(initial: Question?, dismiss: () -> Unit, save: (Quest
 
     else -> true
   }
-  AlertDialog(onDismissRequest = dismiss, title = { Text("Journal question") }, text = {
-    Column(Modifier.verticalScroll(rememberScrollState())) {
-      OutlinedTextField(prompt, { prompt = it }, label = { Text("Question") })
-      if (initial == null) {
-        listOf(
-          "Choice" to QuestionKind.Choice(false, emptyList()),
-          "Duration" to QuestionKind.Duration,
-          "Number" to QuestionKind.Number(null, null, null),
-          "Scale" to QuestionKind.Scale(1, 5, null, null),
-          "Short text" to QuestionKind.ShortText,
-          "Text" to QuestionKind.Text,
-          "Time of day" to QuestionKind.TimeOfDay,
-          "Yes or no" to QuestionKind.YesNo
-        ).forEach { (label, kind) ->
-          FilterChip(type::class == kind::class, onClick = {
-            type = kind
-            if (kind is QuestionKind.Scale && min.isBlank()) {
-              min = "1"
-              max = "5"
-            }
-          }, label = { Text(label) })
-        }
-      }
-      if (type is QuestionKind.Number || type is QuestionKind.Scale) {
-        OutlinedTextField(min, { min = it }, label = { Text("Minimum") })
-        OutlinedTextField(max, { max = it }, label = { Text("Maximum") })
-      }
-      if (type is QuestionKind.Number) {
-        OutlinedTextField(
-          unit,
-          { unit = it },
-          label = { Text("Unit") }
-        )
-      }
-      if (type is QuestionKind.Scale) {
-        OutlinedTextField(low, { low = it }, label = { Text("Low label") })
-        OutlinedTextField(high, { high = it }, label = { Text("High label") })
-      }
-      if (type is QuestionKind.Choice) {
-        ToggleRow("Allow multiple answers", multiple) { multiple = it }
-        options.filter { it.retired == null }.forEach { option ->
-          OutlinedTextField(option.label, { label ->
-            options =
-              options.map { if (it.id == option.id) it.copy(label = label) else it }
-          }, label = { Text("Option") })
-          TextButton(onClick = {
-            options = options.map {
-              if (it.id == option.id) {
-                it.copy(retired = System.currentTimeMillis())
-              } else {
-                it
+  AlertDialog(
+    onDismissRequest = dismiss,
+    title = { Text(if (initial == null) "Add question" else "Edit question") },
+    text = {
+      Column(Modifier.verticalScroll(rememberScrollState())) {
+        OutlinedTextField(prompt, { prompt = it }, label = { Text("Question") })
+        Row(
+          horizontalArrangement = Arrangement.spacedBy(12.dp),
+          verticalAlignment = Alignment.CenterVertically
+        ) {
+          Text("Type")
+          if (initial == null) {
+            MenuControl(
+              questionKinds.first { it.second::class == type::class },
+              questionKinds,
+              { it.first }
+            ) { (_, kind) ->
+              type = kind
+              if (kind is QuestionKind.Scale && min.isBlank()) {
+                min = "1"
+                max = "5"
               }
             }
-          }) { Text("Retire option") }
+          } else {
+            Text(questionKindName(type))
+          }
         }
-        TextButton(onClick = { options = options + ChoiceOption(newId(), "", null) }) {
-          Text("Add option")
+        if (initial != null) {
+          Text(
+            "A question keeps its type. Add a new question for another type.",
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.bodySmall
+          )
+        }
+        if (type is QuestionKind.Number) {
+          OutlinedTextField(
+            unit,
+            { unit = it },
+            label = { Text("Unit") },
+            placeholder = { Text("Unit, such as kg") }
+          )
+        }
+        if (type is QuestionKind.Number || type is QuestionKind.Scale) {
+          OutlinedTextField(min, { min = it }, label = { Text("Least") })
+          OutlinedTextField(max, { max = it }, label = { Text("Greatest") })
+        }
+        if (type is QuestionKind.Scale) {
+          OutlinedTextField(
+            low,
+            { low = it },
+            label = { Text("Low label") },
+            placeholder = { Text("Label for the least") }
+          )
+          OutlinedTextField(
+            high,
+            { high = it },
+            label = { Text("High label") },
+            placeholder = { Text("Label for the greatest") }
+          )
+        }
+        if (type is QuestionKind.Choice) {
+          ToggleRow("Pick several?", multiple) { multiple = it }
+          options.filter { it.retired == null }.forEach { option ->
+            Row(verticalAlignment = Alignment.CenterVertically) {
+              OutlinedTextField(
+                option.label,
+                { label ->
+                  options =
+                    options.map { if (it.id == option.id) it.copy(label = label) else it }
+                },
+                Modifier.weight(1f),
+                placeholder = { Text("Option") }
+              )
+              IconButton(onClick = {
+                options = options.map {
+                  if (it.id == option.id) {
+                    it.copy(retired = System.currentTimeMillis())
+                  } else {
+                    it
+                  }
+                }
+              }) { AppIcon(R.drawable.trash, "Remove option") }
+            }
+          }
+          TextButton(onClick = { options = options + ChoiceOption(newId(), "", null) }) {
+            Text("Add option")
+          }
         }
       }
-    }
-  }, confirmButton = {
-    TextButton(
-      enabled = prompt.isNotBlank() && validBounds &&
-        (
-          type !is QuestionKind.Choice ||
-            options.any { it.retired == null && it.label.isNotBlank() }
-          ),
-      onClick = {
-        val kind = when (type) {
-          is QuestionKind.Choice -> QuestionKind.Choice(multiple, options)
+    },
+    confirmButton = {
+      TextButton(
+        enabled = prompt.isNotBlank() && validBounds &&
+          (
+            type !is QuestionKind.Choice ||
+              options.any { it.retired == null && it.label.isNotBlank() }
+            ),
+        onClick = {
+          val kind = when (type) {
+            is QuestionKind.Choice -> QuestionKind.Choice(multiple, options)
 
-          is QuestionKind.Number -> QuestionKind.Number(
-            unit.ifBlank { null },
-            min.toDoubleOrNull(),
-            max.toDoubleOrNull()
-          )
+            is QuestionKind.Number -> QuestionKind.Number(
+              unit.ifBlank { null },
+              min.toDoubleOrNull(),
+              max.toDoubleOrNull()
+            )
 
-          is QuestionKind.Scale -> QuestionKind.Scale(
-            min.toLong(),
-            max.toLong(),
-            low.ifBlank { null },
-            high.ifBlank { null }
-          )
+            is QuestionKind.Scale -> QuestionKind.Scale(
+              min.toLong(),
+              max.toLong(),
+              low.ifBlank { null },
+              high.ifBlank { null }
+            )
 
-          else -> type
+            else -> type
+          }
+          save(Question(initial?.id ?: newId(), prompt, kind, initial?.retired))
         }
-        save(Question(initial?.id ?: newId(), prompt, kind, initial?.retired))
-      }
-    ) { Text("Save") }
-  }, dismissButton = { TextButton(onClick = dismiss) { Text("Cancel") } })
+      ) { Text(if (initial == null) "Add" else "Save") }
+    },
+    dismissButton = { TextButton(onClick = dismiss) { Text("Cancel") } }
+  )
 }
 
 @Composable
@@ -531,14 +578,14 @@ private fun ScheduleDialog(initial: Schedule?, dismiss: () -> Unit, save: (Sched
   var times by rememberSaveable {
     mutableStateOf(
       (initial?.times as? Times.Fixed)?.v1
-        ?.joinToString(", ") { minuteLabel(it.toInt()) } ?: "09:00"
+        ?.joinToString(", ") { minuteLabel(it.toInt()) } ?: "10:00, 14:00, 17:00"
     )
   }
   var start by rememberSaveable { mutableStateOf(minuteLabel(original?.start?.toInt() ?: 540)) }
   var end by rememberSaveable { mutableStateOf(minuteLabel(original?.end?.toInt() ?: 1020)) }
   var mean by rememberSaveable { mutableStateOf((original?.mean?.toInt() ?: 60).toString()) }
-  var gap by rememberSaveable { mutableStateOf((original?.minGap?.toInt() ?: 15).toString()) }
-  var days by remember { mutableStateOf(initial?.days ?: "FREQ=DAILY") }
+  var gap by rememberSaveable { mutableStateOf((original?.minGap?.toInt() ?: 20).toString()) }
+  var days by remember { mutableStateOf(initial?.days ?: WORKDAYS) }
   val id = remember { initial?.id ?: newId() }
   val schedule = if (random) {
     val from = parseTimeOfDay(start.trim())
@@ -551,7 +598,7 @@ private fun ScheduleDialog(initial: Schedule?, dismiss: () -> Unit, save: (Sched
       null
     }
   } else {
-    val fixed = times.split(',').map { parseTimeOfDay(it.trim()) }
+    val fixed = times.split(',', ' ').filter { it.isNotBlank() }.map { parseTimeOfDay(it.trim()) }
     if (fixed.all { it != null }) {
       Schedule(id, days, Times.Fixed(fixed.filterNotNull().distinct().sorted()))
     } else {
@@ -559,50 +606,46 @@ private fun ScheduleDialog(initial: Schedule?, dismiss: () -> Unit, save: (Sched
     }
   }
   val valid = schedule != null && scheduleIsValid(schedule)
-  AlertDialog(onDismissRequest = dismiss, title = { Text("Journal schedule") }, text = {
-    Column(Modifier.verticalScroll(rememberScrollState())) {
-      ToggleRow("Random times", random) { random = it }
-      ChipRow {
-        listOf(
-          "Every day" to "FREQ=DAILY",
-          "Weekdays" to "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR",
-          "Weekends" to "FREQ=WEEKLY;BYDAY=SA,SU"
-        ).forEach { (label, rule) ->
-          FilterChip(days == rule, onClick = { days = rule }, label = { Text(label) })
+  AlertDialog(
+    onDismissRequest = dismiss,
+    title = { Text(if (initial == null) "Add schedule" else "Edit schedule") },
+    text = {
+      Column(
+        Modifier.verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+      ) {
+        ChipRow {
+          scheduleWeekdays.forEach { (code, name) ->
+            FilterChip(
+              code in ruleWeekdays(days),
+              onClick = { days = toggleWeekday(days, code) },
+              label = { Text(name) }
+            )
+          }
+        }
+        ToggleRow("Random times?", random) { random = it }
+        if (random) {
+          OutlinedTextField(start, { start = it }, label = { Text("From") })
+          OutlinedTextField(end, { end = it }, label = { Text("Until") })
+          OutlinedTextField(mean, { mean = it }, label = { Text("Minutes apart, on average") })
+          OutlinedTextField(gap, { gap = it }, label = { Text("Minutes apart, at least") })
+        } else {
+          OutlinedTextField(
+            times,
+            { times = it },
+            label = { Text("Times") },
+            placeholder = { Text("10:00, 14:00, 17:00") }
+          )
         }
       }
-      Text("Days (Monday first)")
-      ChipRow {
-        // The recurrence format uses calendar order for weekday membership.
-        val weekdays = listOf("MO", "TU", "WE", "TH", "FR", "SA", "SU")
-        weekdays.forEach { day ->
-          val selected = days == "FREQ=DAILY" || day in days.substringAfter("BYDAY=")
-          FilterChip(selected, onClick = {
-            val current = if (days == "FREQ=DAILY") {
-              weekdays
-            } else {
-              days.substringAfter("BYDAY=").split(',')
-            }
-            val next = if (day in current) current - day else current + day
-            if (next.isNotEmpty()) {
-              days = "FREQ=WEEKLY;BYDAY=" +
-                weekdays.filter { it in next }.joinToString(",")
-            }
-          }, label = { Text(day) })
-        }
+    },
+    confirmButton = {
+      TextButton(enabled = valid, onClick = { schedule?.let(save) }) {
+        Text(if (initial == null) "Add" else "Save")
       }
-      if (random) {
-        OutlinedTextField(start, { start = it }, label = { Text("Start HH:MM") })
-        OutlinedTextField(end, { end = it }, label = { Text("End HH:MM") })
-        OutlinedTextField(mean, { mean = it }, label = { Text("Mean gap in minutes") })
-        OutlinedTextField(gap, { gap = it }, label = { Text("Minimum gap in minutes") })
-      } else {
-        OutlinedTextField(times, { times = it }, label = { Text("Times: 09:00, 17:00") })
-      }
-    }
-  }, confirmButton = {
-    TextButton(enabled = valid, onClick = { schedule?.let(save) }) { Text("Save") }
-  }, dismissButton = { TextButton(onClick = dismiss) { Text("Cancel") } })
+    },
+    dismissButton = { TextButton(onClick = dismiss) { Text("Cancel") } }
+  )
 }
 
 @Composable
@@ -627,8 +670,8 @@ internal fun JournalsScreen(
   val visible = state.journals.filter { it.id !in hidden }
   val since = range.since()
   val entries = state.notes.filter {
-    !it.inTrash && it.archived == null && it.entry != null &&
-      it.entry.at >= since && visible.any { journal -> journal.id == it.entry.journal }
+    !it.inTrash && it.entry != null && it.entry.at >= since && it.matches(query) &&
+      visible.any { journal -> journal.id == it.entry.journal }
   }
     .sortedByDescending { it.entry!!.at }
   LaunchedEffect(hidden, range) {
@@ -691,7 +734,10 @@ internal fun JournalsScreen(
     }
   }
   LazyColumn {
-    if (visible.size > 1) {
+    val chartable = visible.any { journal ->
+      journal.journal!!.questions.any { it.retired == null && charts(it.kind) }
+    }
+    if (visible.size > 1 && chartable && entries.isNotEmpty()) {
       item {
         Text(
           "Show one journal alone to chart its answers",
@@ -703,18 +749,19 @@ internal fun JournalsScreen(
     }
     if (visible.size == 1) {
       val journal = visible.single()
-      items(journal.journal!!.questions, key = { "chart.${it.id}" }) { question ->
+      val questions = journal.journal!!.questions.filter { it.retired == null }
+      items(questions, key = { "chart.${it.id}" }) { question ->
         JournalChart(question, entries, journal.journal.color, since)
       }
     }
-    if (entries.isEmpty()) item { EmptyNotes(query) }
-    val groups = entries.filter { it.matches(query) }.groupBy {
+    if (entries.isEmpty()) item { JournalsEmpty(state.journals.isEmpty(), query) }
+    val groups = entries.groupBy {
       Instant.ofEpochMilli(it.entry!!.at).atZone(ZoneId.systemDefault()).toLocalDate()
     }
     groups.forEach { (day, notes) ->
       item(key = day.toString()) {
         Text(
-          day.toString(),
+          formatDate(day),
           Modifier.padding(16.dp),
           style = MaterialTheme.typography.titleMedium
         )
@@ -831,4 +878,30 @@ private fun NewJournalDialog(
       TextButton(enabled = !creating, onClick = dismiss) { Text("Cancel") }
     }
   )
+}
+
+@Composable
+private fun JournalHeading(text: String) {
+  Text(text, Modifier.padding(top = 6.dp), style = MaterialTheme.typography.titleSmall)
+}
+
+@Composable
+private fun JournalPlaceholder(text: String) {
+  Text(
+    text,
+    Modifier.padding(12.dp),
+    color = MaterialTheme.colorScheme.onSurfaceVariant
+  )
+}
+
+@Composable
+private fun JournalsEmpty(noJournals: Boolean, query: String) {
+  when {
+    noJournals -> EmptyNotes(R.drawable.journal, "No Journals", "Start one with New journal")
+
+    query.isNotBlank() ->
+      EmptyNotes(R.drawable.search, "No Entries Found", "Try other words or a longer range")
+
+    else -> EmptyNotes(R.drawable.journal, "No Entries", "Write one with quick capture")
+  }
 }

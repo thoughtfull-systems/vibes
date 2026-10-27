@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import systems.thoughtfull.commonplace.core.ActionDates
 import systems.thoughtfull.commonplace.core.ActionView
 import systems.thoughtfull.commonplace.core.MobileAction
 import systems.thoughtfull.commonplace.core.MobileException
@@ -48,7 +49,9 @@ class NotebookRepository(context: Context) {
     block(core)
   }
 
-  fun name(key: String) = preferences.getString("name.$key", null) ?: "Library"
+  fun name(key: String) = preferences.getString("name.$key", null) ?: "Unnamed"
+
+  fun named(key: String) = preferences.contains("name.$key")
 
   fun prompts(id: String) = preferences.getBoolean("prompts.$id", false)
 
@@ -58,6 +61,8 @@ class NotebookRepository(context: Context) {
 }
 
 data class NotebookState(
+  val actionDates: Map<String, ActionDates> = emptyMap(),
+  val actionPaths: Map<String, List<String>> = emptyMap(),
   val actions: Map<ActionView, List<MobileAction>> = emptyMap(),
   val busy: Boolean = false,
   val error: String? = null,
@@ -125,6 +130,8 @@ class NotebookModel(application: Application) : AndroidViewModel(application) {
           }
           val today = LocalDate.now().toString()
           NotebookState(
+            actionDates = core.allActionDates(today),
+            actionPaths = core.actionPaths(),
             actions = ActionView.entries.associateWith { core.actions(it, today) },
             journals = core.journals(),
             loaded = true,

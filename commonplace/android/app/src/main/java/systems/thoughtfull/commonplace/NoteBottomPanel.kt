@@ -12,10 +12,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -63,9 +63,7 @@ internal fun NoteBottomPanel(
 ) {
   if (note.action == null && backlinks.isEmpty()) return
   val state by model.state.collectAsState()
-  val colors = remember(state.notes) {
-    state.notes.mapNotNull { item -> item.journal?.let { item.id to it.color } }.toMap()
-  }
+  val context = rememberRowContext(state)
   val settings = model.repository.preferences
   var showDone by rememberSaveable(note.id) {
     mutableStateOf(settings.getBoolean("steps.showDone.${note.id}", false))
@@ -124,7 +122,7 @@ internal fun NoteBottomPanel(
           if (parents.isEmpty()) Text("Top level")
           parents.forEachIndexed { index, parent ->
             if (index > 0) Text(" › ")
-            TextButton(onClick = { open(parent.id) }) { Text(formattedTitle(parent.title)) }
+            TextButton(onClick = { open(parent.id) }) { Text(formattedTitle(displayLabel(parent))) }
           }
         }
         if (editable) {
@@ -137,21 +135,25 @@ internal fun NoteBottomPanel(
       Modifier.weight(1f, fill = false).fillMaxWidth().verticalScroll(scroll)
         .testTag("step-scroll").onGloballyPositioned { viewport = it.boundsInRoot() }
     ) {
-      if (note.action != null) {
+      if (note.action != null && (editable || steps.isNotEmpty())) {
         Row(
           Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+          horizontalArrangement = Arrangement.spacedBy(6.dp),
           verticalAlignment = Alignment.CenterVertically
         ) {
           Text("Steps", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
-          Text("Show done", style = MaterialTheme.typography.labelSmall)
-          Checkbox(showDone, {
-            showDone = it
-            settings.edit().putBoolean("steps.showDone.${note.id}", it).apply()
-          }, modifier = Modifier.testTag("steps-show-done"))
+          if (steps.isNotEmpty()) {
+            Text("Show done?", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Switch(showDone, {
+              showDone = it
+              settings.edit().putBoolean("steps.showDone.${note.id}", it).apply()
+            }, modifier = Modifier.testTag("steps-show-done"))
+          }
         }
         StepRows(
           model,
           visibleSteps(steps, showDone),
+          context,
           editable,
           scroll,
           viewport,
@@ -167,11 +169,7 @@ internal fun NoteBottomPanel(
           style = MaterialTheme.typography.titleSmall
         )
         backlinks.forEach { linked ->
-          NoteRow(
-            linked,
-            open,
-            entryColor = colors[linked.entry?.journal] ?: "blue"
-          )
+          NoteRow(linked, context, open)
         }
       }
     }

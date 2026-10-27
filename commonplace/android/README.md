@@ -115,9 +115,9 @@ Libraries use the core's Loro snapshots and append-only log in the app's private
 Library names, view filters, and prompt preferences stay in Android's device preferences. The app
 doesn't request network or shared-storage permissions, and automatic Android backup is off.
 
-Allow notifications and turn on **Prompt on this device** in a journal's settings to receive its
-prompts. Android can delay inexact alarms while saving battery. Prompts respect notification
-permissions and do-not-disturb settings, and don't show entry contents.
+Allow notifications and turn on **Prompt here?** in a journal's settings to receive its prompts.
+Android can delay inexact alarms while saving battery. Prompts respect notification permissions and
+do-not-disturb settings, and don't show entry contents.
 
 [Decision 0011](../../decisions/0011-commonplace-android.md) explains the platform boundary and
 storage choices. Sync transport, curios, zettels, and spaced repetition remain future work on both

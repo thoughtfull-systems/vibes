@@ -214,6 +214,8 @@ fn archived_actions_keep_their_inherited_dates() {
     assert_eq!(before.start, after.start);
     assert_eq!(after.due.unwrap().from, parent);
     assert_eq!(after.due.unwrap().date, due);
+    assert_eq!(mobile.all_action_dates(today).unwrap()[&step].due, after.due);
+    assert_eq!(mobile.action_paths().unwrap()[&step], [parent]);
 }
 
 #[test]

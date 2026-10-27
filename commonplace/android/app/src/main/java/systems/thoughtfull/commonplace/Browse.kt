@@ -34,16 +34,15 @@ import androidx.compose.ui.unit.dp
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
-import java.time.format.DateTimeFormatter
 import systems.thoughtfull.commonplace.core.MobileNote
 
-internal enum class BrowseOrder(val label: String) {
-  ARCHIVED("Archived"),
-  CREATED("Created"),
-  DUE("Due"),
-  MODIFIED("Modified"),
-  SCHEDULED("Scheduled"),
-  TRASHED("Trashed");
+internal enum class BrowseOrder(val label: String, val stamp: Stamp?) {
+  ARCHIVED("Archived", Stamp.ARCHIVED),
+  CREATED("Created", Stamp.CREATED),
+  DUE("Due", null),
+  MODIFIED("Modified", Stamp.MODIFIED),
+  SCHEDULED("Scheduled", null),
+  TRASHED("Trashed", Stamp.TRASHED);
 
   fun timestamp(note: MobileNote, zone: ZoneId): Long? = when (this) {
     ARCHIVED -> note.archived
@@ -105,9 +104,7 @@ internal fun BrowseScreen(
   open: (String) -> Unit
 ) {
   val preferences = model.repository.preferences
-  val colors = remember(state.notes) {
-    state.notes.mapNotNull { note -> note.journal?.let { note.id to it.color } }.toMap()
-  }
+  val context = rememberRowContext(state)
   val defaultOrder = if (tab == "Trash") BrowseOrder.TRASHED else BrowseOrder.CREATED
   var order by rememberSaveable(tab) {
     val saved = preferences.getString("order.$tab", defaultOrder.label)!!
@@ -180,7 +177,7 @@ internal fun BrowseScreen(
           contentPadding = PaddingValues(horizontal = 8.dp),
           modifier = Modifier.testTag("browse-date")
         ) {
-          Text(parsed?.format(DateTimeFormatter.ofPattern("MMM d, yyyy")) ?: "Any day")
+          Text(parsed?.let { formatDate(it) } ?: "Any day")
           AppIcon(R.drawable.dropdown)
         }
         TextButton(
@@ -199,22 +196,20 @@ internal fun BrowseScreen(
   LazyColumn(Modifier.fillMaxSize()) {
     if (notes.isEmpty()) {
       item {
-        EmptyNotes(query)
+        BrowseEmpty(tab, query.isNotBlank() || parsed != null)
       }
     }
     items(notes, key = { it.id }) { note ->
       NoteRow(
         note,
+        context,
         open,
         complete = if (note.action != null && !note.inTrash && !note.readOnly) {
           { toggleAction(model, note) }
         } else {
           null
         },
-        stamp = order.label.takeUnless {
-          order == BrowseOrder.DUE || order == BrowseOrder.SCHEDULED
-        },
-        entryColor = colors[note.entry?.journal] ?: "blue"
+        stamp = order.stamp
       )
     }
   }
@@ -223,5 +218,18 @@ internal fun BrowseScreen(
       from = it?.toString().orEmpty()
       calendar = false
     }
+  }
+}
+
+@Composable
+private fun BrowseEmpty(tab: String, filtered: Boolean) {
+  val retry = "Try other words or another day"
+  when {
+    filtered && tab == "Memos" -> EmptyNotes(R.drawable.search, "No Memos Found", retry)
+    filtered && tab == "Trash" -> EmptyNotes(R.drawable.search, "Nothing Found in the Trash", retry)
+    filtered -> EmptyNotes(R.drawable.search, "No Notes Found", retry)
+    tab == "Memos" -> EmptyNotes(R.drawable.memo, "No Memos", "Capture one with quick capture")
+    tab == "Trash" -> EmptyNotes(R.drawable.trash, "Trash Is Empty", "Notes you trash wait here")
+    else -> EmptyNotes(R.drawable.plan, "No Notes", "Capture a memo or an action to start")
   }
 }

@@ -2,12 +2,14 @@
 
 package systems.thoughtfull.commonplace
 
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -16,8 +18,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import systems.thoughtfull.commonplace.core.ActionChange
@@ -108,20 +110,19 @@ internal fun ActionsScreen(
   LaunchedEffect(mode) {
     model.repository.preferences.edit().putString("action.mode", mode).apply()
   }
-  MenuControl(
-    mode,
-    // The mode order follows the Linux sidebar.
-    listOf("Execute", "Plan", "Review", "Inbox"),
-    { it },
-    Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
-  ) { mode = it }
+  Box(Modifier.fillMaxWidth().padding(vertical = 4.dp), contentAlignment = Alignment.Center) {
+    // The mode order follows the Linux mode menu.
+    MenuControl(mode, listOf("Execute", "Plan", "Review", "Inbox"), { it }) { mode = it }
+  }
+  HorizontalDivider()
   if (mode == "Inbox" && query.isBlank()) {
     InboxScreen(model, state, editingChanged, open)
     return
   }
   val sections = actionSections(mode, state.actions, query)
+  val context = rememberRowContext(state)
   LazyColumn(Modifier.fillMaxSize().testTag("actions")) {
-    if (sections.all { it.entries.isEmpty() }) item { EmptyNotes(query) }
+    if (sections.all { it.entries.isEmpty() }) item { ActionsEmpty(mode, query) }
     sections.filter { it.entries.isNotEmpty() }.forEach { section ->
       if (section.title.isNotEmpty()) {
         item {
@@ -134,26 +135,15 @@ internal fun ActionsScreen(
         }
       }
       items(section.entries, key = { "${section.title}.${it.note.id}" }) { entry ->
-        Column(
-          Modifier.padding(start = (entry.depth.toInt().coerceAtMost(6) * 12).dp)
-            .alpha(if (entry.dates.status == ActionStatus.UPCOMING) 0.65f else 1f)
-        ) {
-          val context = entry.parents.mapNotNull { parent ->
-            state.notes.find { it.id == parent }?.title
-          }.joinToString(" › ")
-          val dates = listOfNotNull(
-            entry.dates.due?.let { "Due ${it.date}" },
-            entry.dates.start?.let { "Starts ${it.date}" },
-            "No next step".takeIf { entry.stalled }
-          ).joinToString(" · ")
+        Column(Modifier.padding(start = (entry.depth.toInt().coerceAtMost(6) * 12).dp)) {
           NoteRow(
             entry.note,
+            context,
             open,
             complete = { toggleAction(model, entry.note) },
-            stamp = null,
-            metadata = dates,
-            parentPath = context,
-            urgency = entry.dates.status,
+            dates = entry.dates,
+            parents = entry.parents,
+            stalled = entry.stalled,
             plan = if (section.plan) {
               {
                 model.perform {
@@ -170,5 +160,30 @@ internal fun ActionsScreen(
         }
       }
     }
+  }
+}
+
+@Composable
+private fun ActionsEmpty(mode: String, query: String) {
+  when {
+    query.isNotBlank() -> EmptyNotes(R.drawable.search, "No Actions Found", "Try other words")
+
+    mode == "Plan" -> EmptyNotes(
+      R.drawable.plan,
+      "Nothing to Plan",
+      "Actions queued for planning and stalled projects show up here"
+    )
+
+    mode == "Review" -> EmptyNotes(
+      R.drawable.review,
+      "Nothing to Review",
+      "Projects, and waiting, scheduled, someday, and maybe actions show up here"
+    )
+
+    else -> EmptyNotes(
+      R.drawable.execute,
+      "Nothing to Do Next",
+      "Tasks on the active list show up here"
+    )
   }
 }

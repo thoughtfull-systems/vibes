@@ -137,7 +137,12 @@ class EditingTest {
       CommonplaceTheme {
         Column {
           notes.forEach { note ->
-            NoteRow(note, {}, complete = if (note.trashed == null) ({}) else null)
+            NoteRow(
+              note,
+              RowContext(notes),
+              {},
+              complete = if (note.trashed == null) ({}) else null
+            )
           }
         }
       }

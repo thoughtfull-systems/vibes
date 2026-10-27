@@ -15,8 +15,9 @@ for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
   drawables=$output/drawable-$density
   mipmaps=$output/mipmap-$density
   mkdir -p "$drawables" "$mipmaps"
-  for icon in actions add all_notes back bold bullets clear_search code down drag dropdown edit \
-    indent italic link more numbers outdent sort_ascending sort_descending strike trash up; do
+  for icon in actions add all_notes back bold bullets clear_search code down drag dropdown \
+    edit execute inbox indent italic link more numbers outdent plan review search sort_ascending \
+    sort_descending strike trash up; do
     rsvg-convert --width "$size" --height "$size" \
       --output "$drawables/$icon.png" "$android_dir/vendor/adwaita/$icon.svg"
   done

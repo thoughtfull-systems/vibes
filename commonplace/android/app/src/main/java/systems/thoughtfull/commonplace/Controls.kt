@@ -7,6 +7,8 @@ package systems.thoughtfull.commonplace
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
@@ -18,6 +20,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TimePicker
@@ -31,6 +34,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -129,6 +133,17 @@ internal fun DateTimeDialog(
         }) { Text("Save") }
       },
       dismissButton = { TextButton(onClick = dismiss) { Text("Cancel") } }
+    )
+  }
+}
+
+@Composable
+internal fun ReadOnlyBanner() {
+  Surface(color = MaterialTheme.colorScheme.secondaryContainer) {
+    Text(
+      "A newer version of Commonplace wrote this library, so it’s read-only",
+      Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+      textAlign = TextAlign.Center
     )
   }
 }
