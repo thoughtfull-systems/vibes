@@ -1,4 +1,9 @@
 .devenv*
 .pre-commit-config.yaml
+commonplace/android/.gradle
+commonplace/android/.kotlin
+commonplace/android/app/build
+commonplace/android/build
+commonplace/android/local.properties
 devenv.local.nix
 target

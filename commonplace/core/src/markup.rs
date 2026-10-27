@@ -6,9 +6,10 @@ use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, T
 
 use crate::links::wikilink_escapes;
 use crate::lists::Item as ListItem;
-use crate::{LinkSyntax, label_separator, parse_links, plain_links};
+use crate::{Link, LinkSyntax, label_separator, parse_links, plain_links};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "mobile", derive(uniffi::Enum))]
 pub enum Style {
     BlockQuote,
     /// A checklist item's box, `[ ]` or `[x]`, and whether it's checked.
@@ -56,6 +57,11 @@ impl Span {
 /// next line starts a list. A heading without text, such as `##` while it's being typed, stays
 /// plain text until text follows its space. And `==` marks a highlight, which CommonMark lacks.
 pub fn spans(body: &str) -> Vec<Span> {
+    spans_and_links(body).0
+}
+
+/// The styled elements of `body`, as `spans` finds them, and its links, from one scan for links.
+pub fn spans_and_links(body: &str) -> (Vec<Span>, Vec<Link>) {
     struct Frame {
         /// Bytes covered by the element's children: its content, without its syntax.
         inner: Option<Range<usize>>,
@@ -148,10 +154,11 @@ pub fn spans(body: &str) -> Vec<Span> {
     }
     pair_highlights(body, &mut marks, &mut spans);
     spans.extend(list_prefixes(body));
-    for link in parse_links(body).into_iter().filter(|link| link.syntax == LinkSyntax::Wiki) {
-        let Range { start, end } = link.range;
-        let label_start = label_separator(body, &link).map_or(start + 2, |i| i + 1);
-        let escapes = wikilink_escapes(body, &link).into_iter().filter(|&i| i >= label_start);
+    let links = parse_links(body);
+    for link in links.iter().filter(|link| link.syntax == LinkSyntax::Wiki) {
+        let Range { start, end } = link.range.clone();
+        let label_start = label_separator(body, link).map_or(start + 2, |i| i + 1);
+        let escapes = wikilink_escapes(body, link).into_iter().filter(|&i| i >= label_start);
         let syntax: Vec<Range<usize>> = std::iter::once(start..label_start)
             .chain(escapes.map(|i| i..i + 1))
             .chain(std::iter::once(end - 2..end))
@@ -159,11 +166,12 @@ pub fn spans(body: &str) -> Vec<Span> {
         spans.push(span(body, start..end, Style::Link, syntax));
     }
     spans.sort_by_key(|span| span.range.start);
-    spans
+    (spans, links)
 }
 
 /// A run of text that shows in a line of Markdown, with the inline styles that apply to it.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "mobile", derive(uniffi::Record))]
 pub struct Piece {
     pub styles: Vec<Style>,
     pub text: String,

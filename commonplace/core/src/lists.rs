@@ -7,6 +7,7 @@ use std::ops::Range;
 use pulldown_cmark::{Event, Options, Parser, Tag};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "mobile", derive(uniffi::Enum))]
 pub enum ListKey {
     /// Starts a new item, or moves a blank item out a level, or ends the list. Before the marker of
     /// a list's first item, it inserts a blank line above the list.

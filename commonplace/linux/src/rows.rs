@@ -452,7 +452,16 @@ fn title_markup(spaces: &Spaces, note: &Note) -> String {
     let Some(label) = shown_label(spaces, note) else {
         return glib::markup_escape_text(&display_label(spaces, note)).to_string();
     };
-    let markup: String = inline_pieces(&label)
+    let markup = markdown_markup(&label);
+    if markup.trim().is_empty() {
+        glib::markup_escape_text(&display_label(spaces, note)).to_string()
+    } else {
+        markup
+    }
+}
+
+pub fn markdown_markup(body: &str) -> String {
+    inline_pieces(body)
         .into_iter()
         .map(|piece| {
             let mut markup = glib::markup_escape_text(&piece.text).to_string();
@@ -470,12 +479,7 @@ fn title_markup(spaces: &Spaces, note: &Note) -> String {
             }
             markup
         })
-        .collect();
-    if markup.trim().is_empty() {
-        glib::markup_escape_text(&display_label(spaces, note)).to_string()
-    } else {
-        markup
-    }
+        .collect()
 }
 
 /// The note's label as plain text, without its Markdown, or a stand-in naming its kind if its body

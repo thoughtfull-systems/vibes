@@ -2,6 +2,12 @@
 
 //! The platform-independent logic of Commonplace, shared by every implementation.
 
+#[cfg(feature = "mobile")]
+mod mobile;
+
+#[cfg(feature = "mobile")]
+uniffi::setup_scaffolding!();
+
 mod actions;
 mod id;
 mod journals;
@@ -10,6 +16,7 @@ mod library;
 mod links;
 mod lists;
 mod markup;
+pub mod samples;
 mod spaces;
 mod store;
 mod words;
@@ -34,7 +41,7 @@ pub use links::{
 pub use lists::{Edit, ListKey, list_edit};
 pub use markup::{
     CodeBlock, Heading, Piece, Span, Style, code_blocks, inline_pieces, outline, spans,
-    toggle_checkbox,
+    spans_and_links, toggle_checkbox,
 };
 pub use spaces::Spaces;
 pub use words::word_count;
@@ -47,6 +54,8 @@ pub enum Error {
     DifferentLibraries,
     #[error("an entry moves with its journal")]
     EntryMovesWithJournal(NoteId),
+    #[error("a schedule needs times within the day, and a random one needs a window")]
+    InvalidSchedule,
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error("a device keeps at least one library")]

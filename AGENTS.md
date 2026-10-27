@@ -184,9 +184,9 @@ breaks.
 
 ## Commonplace test library
 
-`commonplace/core/examples/test_library.rs` builds the sample library that `commonplace-test` runs
-the app on. When a Commonplace feature is ready to ship, add samples that exercise it. Don't add
-samples for a feature that's still changing.
+`commonplace/core/src/samples.rs` builds the sample libraries that `commonplace-test` and the
+Android app load. When a Commonplace feature is ready to ship, add samples that exercise it. Don't
+add samples for a feature that's still changing.
 
 ## Commonplace test runs
 

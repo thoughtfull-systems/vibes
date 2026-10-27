@@ -8,7 +8,7 @@ use std::str::FromStr;
 
 use loro::{LoroMap, LoroTree, LoroValue, TreeID, TreeParentId, ValueOrContainer};
 
-use crate::library::{ACTION_KIND, MODIFIED, integer, loro_error, now, string, value};
+use crate::library::{ACTION_KIND, MODIFIED, integer, loro_error, string, value};
 use crate::markup::open_fence;
 use crate::{Error, Library, Note, NoteId};
 
@@ -72,7 +72,7 @@ impl Date {
     }
 
     /// Days since 1970-01-01, by Howard Hinnant's algorithm for the proleptic Gregorian calendar.
-    fn days(self) -> i64 {
+    pub(crate) fn days(self) -> i64 {
         let year = i64::from(self.year) - i64::from(self.month <= 2);
         let era = year.div_euclid(400);
         let year_of_era = year - era * 400;
@@ -135,6 +135,7 @@ impl FromStr for Date {
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+#[cfg_attr(feature = "mobile", derive(uniffi::Enum))]
 pub enum ActionState {
     Done,
     #[default]
@@ -159,6 +160,7 @@ impl ActionState {
 
 /// The Getting Things Done list an action sits on.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+#[cfg_attr(feature = "mobile", derive(uniffi::Enum))]
 pub enum ActionList {
     /// Being worked on: a task to do now, or a project in progress.
     #[default]
@@ -213,6 +215,7 @@ impl ActionList {
 
 /// An action's fields.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[cfg_attr(feature = "mobile", derive(uniffi::Record))]
 pub struct Action {
     pub closed: Option<i64>,
     pub defer: Option<Date>,
@@ -250,6 +253,7 @@ impl Action {
 
 /// A change to one of an action's fields.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "mobile", derive(uniffi::Enum))]
 pub enum ActionChange {
     Defer(Option<Date>),
     Due(Option<Date>),
@@ -272,6 +276,7 @@ pub enum ActionChange {
 /// go to the action that comes first in the outline. The views that show a hierarchy order each set
 /// of siblings this way, ranking an action by the most pressing of itself and the actions under it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "mobile", derive(uniffi::Enum))]
 pub enum ActionView {
     /// Every action on any list, as a hierarchy, except those that are done, archived, or in the
     /// trash, themselves or through an action above them.
@@ -306,6 +311,7 @@ const SOON: i32 = 7;
 /// How pressing an open action is, from the start and due dates that apply to it, its own or a
 /// project's.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[cfg_attr(feature = "mobile", derive(uniffi::Enum))]
 pub enum ActionStatus {
     /// Due within a week, or today.
     DueSoon,
@@ -320,6 +326,7 @@ pub enum ActionStatus {
 /// A date that applies to an action, and the action it belongs to: the action itself, or a project
 /// that contains it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "mobile", derive(uniffi::Record))]
 pub struct Dated {
     pub date: Date,
     pub from: NoteId,
@@ -328,6 +335,7 @@ pub struct Dated {
 /// The start and due dates that apply to an action, its own or a project's, and how pressing they
 /// make it.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[cfg_attr(feature = "mobile", derive(uniffi::Record))]
 pub struct ActionDates {
     /// The earliest due date of the action and the projects that contain it.
     pub due: Option<Dated>,
@@ -437,14 +445,14 @@ impl Library {
             ActionChange::Due(date) => optional(DUE, date.map(|d| d.to_string())),
             ActionChange::List(list) => action.insert(LIST, list.as_str()),
             ActionChange::Planning(true) if action.get(PLANNING).is_some() => Ok(()),
-            ActionChange::Planning(true) => action.insert(PLANNING, now()),
+            ActionChange::Planning(true) => action.insert(PLANNING, self.now()),
             ActionChange::Planning(false) => action.delete(PLANNING),
             ActionChange::Project(project) => action.insert(PROJECT, project),
             ActionChange::State(state) => {
                 action.insert(STATE, state.as_str()).map_err(loro_error)?;
                 match state {
                     ActionState::Open => action.delete(CLOSED),
-                    ActionState::Done => action.insert(CLOSED, now()),
+                    ActionState::Done => action.insert(CLOSED, self.now()),
                 }
             }
             ActionChange::WaitingFor(text) => {
@@ -452,7 +460,7 @@ impl Library {
             }
         }
         .map_err(loro_error)?;
-        map.insert(MODIFIED, now()).map_err(loro_error)?;
+        map.insert(MODIFIED, self.now()).map_err(loro_error)?;
         self.commit()
     }
 
@@ -494,7 +502,7 @@ impl Library {
         if let Some(parent) = parent {
             self.promote(parent)?;
         }
-        self.note_map(id)?.insert(MODIFIED, now()).map_err(loro_error)?;
+        self.note_map(id)?.insert(MODIFIED, self.now()).map_err(loro_error)?;
         self.commit()
     }
 

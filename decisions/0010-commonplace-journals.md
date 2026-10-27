@@ -90,10 +90,12 @@ Its `entry` map holds:
 - **`answers`:** a map from question identifier to answer, for every type but text: a number, a
   string, a Boolean, or a list of option identifiers.
 
-A new entry's body holds a heading for each text question in the journal, in order, with room to
-write under each. The headings are a template, not a schema: nothing reads them back, and renaming
-the question later leaves existing entries alone. To address a text answer on its own, such as for a
-blockers list, the owner splits it into a journal of its own.
+A new entry's body starts with the local date when the owner opens capture, in `YYYY-MM-DD` form.
+That line gives the entry a default title, and the owner can edit or replace it. It then holds a
+heading for each text question in the journal, in order, with room to write under each. The headings
+are a template, not a schema: nothing reads them back, and renaming the question later leaves
+existing entries alone. To address a text answer on its own, such as for a blockers list, the owner
+splits it into a journal of its own.
 
 A journal in the trash takes its entries with it, and restoring it restores them, as a project does
 its steps. Deleting a journal for good deletes its entries. Moving a journal to another library

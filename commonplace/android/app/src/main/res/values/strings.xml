@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: MPL-2.0-no-copyleft-exception -->
+<resources>
+  <string name="app_name">Commonplace</string>
+  <string name="quick_capture">Quick capture</string>
+</resources>

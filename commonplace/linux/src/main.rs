@@ -16,6 +16,7 @@ mod journal_panel;
 mod journals_view;
 mod layout;
 mod libraries;
+mod link_icons;
 mod link_picker;
 mod note_page;
 mod prompts;
@@ -61,6 +62,9 @@ textview.note-editor, .word-count { font-size: 1.25em; }
 .project-title { font-style: italic; }
 checkbutton.row-check { padding: 0; }
 .step-list:drop(active) { box-shadow: none; outline: none; }
+button.inline-link {
+  min-width: 0; min-height: 0; padding: 0 8px 0 1px; border: none;
+}
 button.unpin {
   min-width: 0; min-height: 0; padding: 2px; -gtk-icon-size: 12px;
   background: none; box-shadow: none;
@@ -169,7 +173,28 @@ fn main() -> glib::ExitCode {
                     }
                 ))
                 .build();
-            app.add_action_entries([quit]);
+            let open_note = gio::ActionEntry::builder("open-note")
+                .parameter_type(Some(glib::VariantTy::STRING))
+                .activate(glib::clone!(
+                    #[strong]
+                    shared,
+                    move |app: &adw::Application, _, value| {
+                        let id = value.and_then(|value| value.str()).and_then(parse_note_uri);
+                        let state = shared
+                            .borrow()
+                            .state
+                            .as_ref()
+                            .and_then(|state| state.as_ref().ok())
+                            .cloned();
+                        if let (Some(id), Some(state)) = (id, state) {
+                            let window = main_window(app, &state, &shared);
+                            window.open(id);
+                            window.present();
+                        }
+                    }
+                ))
+                .build();
+            app.add_action_entries([open_note, quit]);
             // Emacs users remap Emacs keys system-wide into standard keys, such as C-s into
             // Control+F and C-x C-c into Control+Q. Where an Emacs command has an equivalent here,
             // its shortcut is the standard key that the remapping produces.

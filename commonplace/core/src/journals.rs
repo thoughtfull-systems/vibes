@@ -8,7 +8,7 @@ use std::fmt;
 use loro::{LoroMap, LoroMovableList, LoroValue, UpdateOptions, ValueOrContainer};
 
 use crate::actions::Date;
-use crate::library::{MODIFIED, integer, loro_error, now, string};
+use crate::library::{MODIFIED, integer, loro_error, string};
 use crate::{Error, Library, NoteId, wikilink};
 
 pub const JOURNAL_KIND: &str = "journal";
@@ -31,6 +31,7 @@ pub const COLORS: [&str; 8] =
 
 /// A journal's fields.
 #[derive(Clone, Debug, Default, PartialEq)]
+#[cfg_attr(feature = "mobile", derive(uniffi::Record))]
 pub struct Journal {
     pub color: String,
     /// Every question, retired ones included, in order.
@@ -126,6 +127,7 @@ impl Journal {
 
 /// One question a journal asks.
 #[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "mobile", derive(uniffi::Record))]
 pub struct Question {
     pub id: String,
     pub prompt: String,
@@ -229,6 +231,7 @@ impl Question {
 
 /// What kind of answer a question takes.
 #[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "mobile", derive(uniffi::Enum))]
 pub enum QuestionKind {
     /// Prose, written in the entry's body under a heading.
     Text,
@@ -280,6 +283,7 @@ impl QuestionKind {
 
 /// One of a choice question's options.
 #[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "mobile", derive(uniffi::Record))]
 pub struct ChoiceOption {
     pub id: String,
     pub label: String,
@@ -316,6 +320,7 @@ impl ChoiceOption {
 
 /// When a journal prompts.
 #[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "mobile", derive(uniffi::Record))]
 pub struct Schedule {
     pub id: String,
     pub days: Days,
@@ -327,6 +332,7 @@ impl Schedule {
         Self { id: NoteId::generate().to_string(), days, times }
     }
 
+    /// Reads a stored schedule, or nothing if it's malformed or one `set_schedule` would refuse.
     fn from_value(id: &str, value: &LoroValue) -> Option<Self> {
         let LoroValue::Map(map) = value else {
             return None;
@@ -356,7 +362,8 @@ impl Schedule {
             _ => return None,
         };
         let days = map.get("rule").and_then(|v| string(v.clone())).and_then(|r| Days::parse(&r))?;
-        Some(Self { id: id.to_owned(), days, times })
+        let schedule = Self { id: id.to_owned(), days, times };
+        schedule.is_valid().then_some(schedule)
     }
 
     fn to_value(&self) -> LoroValue {
@@ -377,6 +384,16 @@ impl Schedule {
             }
         }
         LoroValue::Map(fields.into())
+    }
+
+    /// Whether every time falls within a day, and a random schedule has a window and a mean gap.
+    pub fn is_valid(&self) -> bool {
+        match &self.times {
+            Times::Fixed(times) => !times.is_empty() && times.iter().all(|at| *at < 1440),
+            &Times::Random { start, end, mean, min_gap } => {
+                start < end && end < 1440 && mean > 0 && mean <= 1440 && min_gap <= 1440
+            }
+        }
     }
 
     /// The local times, in minutes since midnight, at which the schedule prompts on `date`.
@@ -464,6 +481,7 @@ impl Days {
 
 /// The times of day a schedule prompts at.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "mobile", derive(uniffi::Enum))]
 pub enum Times {
     /// These local times, in minutes since midnight.
     Fixed(Vec<u16>),
@@ -475,6 +493,7 @@ pub enum Times {
 
 /// What happened to a prompt.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "mobile", derive(uniffi::Enum))]
 pub enum Handled {
     Answered { entry: NoteId },
     Skipped,
@@ -498,7 +517,7 @@ impl Handled {
         }
     }
 
-    fn to_value(self) -> LoroValue {
+    fn to_value(self, at: i64) -> LoroValue {
         let fields: Vec<(String, LoroValue)> = match self {
             Self::Answered { entry } => vec![
                 ("state".into(), "answered".into()),
@@ -510,13 +529,14 @@ impl Handled {
             }
         };
         let mut fields = fields;
-        fields.push(("at".into(), now().into()));
+        fields.push(("at".into(), at.into()));
         LoroValue::Map(fields.into())
     }
 }
 
 /// One time a journal asks its questions.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "mobile", derive(uniffi::Record))]
 pub struct Prompt {
     pub journal: NoteId,
     pub key: String,
@@ -573,6 +593,7 @@ impl Entry {
 
 /// An answer to a question that isn't a text question.
 #[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "mobile", derive(uniffi::Enum))]
 pub enum Answer {
     /// A number, scale, or duration answer.
     Number(f64),
@@ -767,14 +788,19 @@ impl Library {
     /// Adds a schedule, or replaces the one with the same identifier.
     pub fn set_schedule(&mut self, id: NoteId, schedule: &Schedule) -> Result<(), Error> {
         self.check_writable()?;
-        self.schedules_map(id)?.insert(&schedule.id, schedule.to_value()).map_err(loro_error)?;
+        if !schedule.is_valid() {
+            return Err(Error::InvalidSchedule);
+        }
+        self.editable_schedules(id)?
+            .insert(&schedule.id, schedule.to_value())
+            .map_err(loro_error)?;
         self.touch(id)?;
         self.commit()
     }
 
     pub fn remove_schedule(&mut self, id: NoteId, schedule: &str) -> Result<(), Error> {
         self.check_writable()?;
-        self.schedules_map(id)?.delete(schedule).map_err(loro_error)?;
+        self.editable_schedules(id)?.delete(schedule).map_err(loro_error)?;
         self.touch(id)?;
         self.commit()
     }
@@ -801,7 +827,7 @@ impl Library {
         today: Date,
     ) -> Result<(), Error> {
         let map = self.handled_map(journal)?;
-        map.insert(key, handled.to_value()).map_err(loro_error)?;
+        map.insert(key, handled.to_value(self.now())).map_err(loro_error)?;
         let mut stale = Vec::new();
         map.for_each(|key, _| {
             if key_date(key).is_none_or(|date| date < today.add_days(-1)) {
@@ -907,7 +933,7 @@ impl Library {
             .update(&format!("{}\n", wikilink(entry, None)), UpdateOptions::default())
             .map_err(loro_error)?;
         let map = self.note_map(memo)?;
-        let now = now();
+        let now = self.now();
         map.insert(MODIFIED, now).map_err(loro_error)?;
         map.insert(crate::library::ARCHIVED, now).map_err(loro_error)?;
         self.commit()?;
@@ -930,7 +956,7 @@ impl Library {
     }
 
     fn touch(&self, id: NoteId) -> Result<(), Error> {
-        self.note_map(id)?.insert(MODIFIED, now()).map_err(loro_error)?;
+        self.note_map(id)?.insert(MODIFIED, self.now()).map_err(loro_error)?;
         Ok(())
     }
 
@@ -962,6 +988,20 @@ impl Library {
 
     fn schedules_map(&self, id: NoteId) -> Result<LoroMap, Error> {
         child_map(&self.journal_map(id)?, SCHEDULES, id)
+    }
+
+    /// The journal's schedules, after deleting those that `Schedule::from_value` skips. The apps
+    /// never show those, so changing the schedules is the only chance to remove them.
+    fn editable_schedules(&self, id: NoteId) -> Result<LoroMap, Error> {
+        let map = self.schedules_map(id)?;
+        if let LoroValue::Map(entries) = map.get_value() {
+            for (key, value) in entries.iter() {
+                if Schedule::from_value(key, value).is_none() {
+                    map.delete(key).map_err(loro_error)?;
+                }
+            }
+        }
+        Ok(map)
     }
 
     fn handled_map(&self, id: NoteId) -> Result<LoroMap, Error> {
@@ -1009,6 +1049,39 @@ mod tests {
         // 2026-10-24 is a Saturday.
         assert!(!workdays.includes(date("2026-10-24")));
         assert!(workdays.includes(date("2026-10-26")));
+    }
+
+    #[test]
+    fn refuses_schedules_outside_the_day() {
+        let mut library = Library::in_memory();
+        let journal = library.create_journal("Log").unwrap();
+        for times in [
+            Times::Fixed(Vec::new()),
+            Times::Fixed(vec![1440]),
+            Times::Random { start: 600, end: 600, mean: 30, min_gap: 0 },
+            Times::Random { start: 600, end: 1440, mean: 30, min_gap: 0 },
+            Times::Random { start: 600, end: 700, mean: 0, min_gap: 0 },
+        ] {
+            let schedule = Schedule::new(Days::EVERY_DAY, times);
+            assert!(matches!(
+                library.set_schedule(journal, &schedule),
+                Err(Error::InvalidSchedule)
+            ));
+        }
+        let fixed = Schedule::new(Days::EVERY_DAY, Times::Fixed(vec![0, 1439]));
+        library.set_schedule(journal, &fixed).unwrap();
+        // Another device or an earlier version can still store a schedule that set_schedule
+        // refuses.
+        let backwards = Schedule::new(
+            Days::EVERY_DAY,
+            Times::Random { start: 700, end: 600, mean: 30, min_gap: 0 },
+        );
+        let schedules = library.schedules_map(journal).unwrap();
+        schedules.insert(&backwards.id, backwards.to_value()).unwrap();
+        let read = library.note(journal).unwrap().journal.unwrap().schedules;
+        assert_eq!(read, [fixed.clone()]);
+        library.set_schedule(journal, &fixed).unwrap();
+        assert!(schedules.get(&backwards.id).is_none());
     }
 
     #[test]
