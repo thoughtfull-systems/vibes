@@ -182,6 +182,15 @@ and a language on each fenced code block.
 The `mdformat` hook fills each paragraph's lines up to 100 characters and overrides manual line
 breaks.
 
+## Commonplace platform parity
+
+The golden rule for Commonplace: the Linux and Android apps have the same features, and their user
+interfaces look and behave as identically as each platform allows. When you add or change a feature,
+a screen, or a behavior in one app, make the same change in the other in the same pull request.
+Match layout, wording, icons, ordering, and interactions. Diverge only where a platform convention
+or limit forces it, such as the back button on Android, and keep the difference as small as
+possible.
+
 ## Commonplace test library
 
 `commonplace/core/src/samples.rs` builds the sample libraries that `commonplace-test` and the
