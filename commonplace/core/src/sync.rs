@@ -17,6 +17,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use tokio::runtime::{Handle, Runtime};
 use tokio::sync::Notify;
+use tokio::task::AbortHandle;
 use tokio::time::{sleep, timeout};
 
 use crate::{Error, NoteId};
@@ -34,7 +35,10 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 const DEBOUNCE: Duration = Duration::from_secs(3);
 const EXCHANGE_TIMEOUT: Duration = Duration::from_secs(300);
 const MAX_MESSAGE: usize = 1 << 30;
-const PERIOD: Duration = Duration::from_secs(300);
+const MAX_RETRY: Duration = Duration::from_secs(10 * 60);
+const MIN_RETRY: Duration =
+    if cfg!(test) { Duration::from_millis(200) } else { Duration::from_secs(30) };
+const PERIOD: Duration = Duration::from_secs(15 * 60);
 /// The code with which a device closes a connection from a device it doesn't trust.
 const REFUSED: u32 = 1;
 
@@ -175,6 +179,7 @@ impl Syncer {
             host,
             pairing: Mutex::default(),
             pending: Mutex::default(),
+            reconnect: Notify::new(),
             statuses: Mutex::default(),
             wake: Notify::new(),
         });
@@ -346,6 +351,12 @@ impl Syncer {
         self.inner.wake.notify_one();
     }
 
+    /// Reports that the network changed or the system woke, so devices that were out of reach may
+    /// answer now. Automatic sync then syncs with every device.
+    pub fn reconnect(&self) {
+        self.inner.reconnect.notify_one();
+    }
+
     #[cfg(test)]
     fn sockets(&self) -> Vec<SocketAddr> {
         self.inner.endpoint.bound_sockets()
@@ -376,6 +387,7 @@ struct Inner {
     pairing: Mutex<pairing::Pairing>,
     /// The libraries that changed since automatic sync last ran.
     pending: Mutex<HashSet<String>>,
+    reconnect: Notify,
     statuses: Mutex<HashMap<String, Entry>>,
     wake: Notify,
 }
@@ -384,7 +396,18 @@ struct Inner {
 struct Entry {
     /// Whether another sync should follow the one running, because something changed during it.
     again: bool,
+    /// How many syncs this device started with the device failed in a row.
+    failures: u32,
+    retry: Option<AbortHandle>,
     status: Status,
+}
+
+impl Entry {
+    fn cancel_retry(&mut self) {
+        if let Some(retry) = self.retry.take() {
+            retry.abort();
+        }
+    }
 }
 
 impl Inner {
@@ -463,6 +486,7 @@ impl Inner {
                 return;
             }
             entry.status.syncing = true;
+            entry.cancel_retry();
         }
         self.host.changed();
         let inner = self.clone();
@@ -473,12 +497,20 @@ impl Inner {
                     Ok(result) => result,
                     Err(_) => Err(Error::Sync("the device took too long to answer".to_owned())),
                 };
+                let retry = result.is_err() && {
+                    let config = inner.config();
+                    config.automatic && config.device(&device).is_some()
+                };
                 let again = {
                     let mut statuses = inner.statuses();
                     let entry = statuses.entry(device.clone()).or_default();
+                    entry.failures = if result.is_ok() { 0 } else { entry.failures + 1 };
                     record(&mut entry.status, result);
                     let again = std::mem::take(&mut entry.again);
                     entry.status.syncing = again;
+                    if retry && !again {
+                        entry.retry = Some(inner.retry(&device, entry.failures));
+                    }
                     again
                 };
                 inner.host.changed();
@@ -487,6 +519,27 @@ impl Inner {
                 }
             }
         });
+    }
+
+    /// Syncs with `device` again after a delay that doubles with each failure in a row, so a change
+    /// that it missed while out of reach arrives soon after it's back.
+    fn retry(self: &Arc<Self>, device: &str, failures: u32) -> AbortHandle {
+        let doublings = failures.saturating_sub(1).min(16);
+        let delay = MIN_RETRY.saturating_mul(1 << doublings).min(MAX_RETRY);
+        let inner = self.clone();
+        let device = device.to_owned();
+        self.handle
+            .spawn(async move {
+                sleep(delay).await;
+                let trusted = {
+                    let config = inner.config();
+                    config.automatic && config.device(&device).is_some()
+                };
+                if trusted {
+                    inner.sync_device(&device);
+                }
+            })
+            .abort_handle()
     }
 
     /// Notes offers from `device` for shares that this device doesn't sync with it.
@@ -660,7 +713,16 @@ async fn accept(inner: Arc<Inner>) {
                     Ok(result) => result,
                     Err(_) => Err(Error::Sync("the device took too long to answer".to_owned())),
                 };
-            record(&mut inner.statuses().entry(device).or_default().status, result);
+            {
+                let mut statuses = inner.statuses();
+                let entry = statuses.entry(device).or_default();
+                // The exchange carried this device's changes too, so a retry has nothing to add.
+                if result.is_ok() {
+                    entry.failures = 0;
+                    entry.cancel_retry();
+                }
+                record(&mut entry.status, result);
+            }
             inner.host.changed();
         });
     }
@@ -721,8 +783,8 @@ async fn respond(inner: &Arc<Inner>, connection: &Connection, device: &str) -> R
     Ok(())
 }
 
-/// Runs automatic sync: with every device at the start and every `PERIOD`, and with the devices
-/// that share a library shortly after it changes.
+/// Runs automatic sync: with every device at the start, shortly after a reconnect, and every
+/// `PERIOD`, and with the devices that share a library shortly after it changes.
 async fn schedule(inner: Arc<Inner>) {
     let mut everyone = true;
     loop {
@@ -752,6 +814,12 @@ async fn schedule(inner: Arc<Inner>) {
             () = inner.wake.notified() => {
                 sleep(DEBOUNCE).await;
                 false
+            }
+            () = inner.reconnect.notified() => {
+                // A network change arrives as a burst of events while the interfaces settle.
+                sleep(DEBOUNCE).await;
+                inner.endpoint.network_change().await;
+                true
             }
             () = sleep(PERIOD) => true,
         };
@@ -972,6 +1040,19 @@ mod tests {
         b.host.spaces().create_memo("b", "later on b").unwrap();
         b.syncer.changed("b");
         wait_for("automatic sync", || bodies(&a, "a").len() == 3);
+    }
+
+    #[test]
+    fn retries_a_device_that_failed() {
+        let a = side("a");
+        let b = side("b");
+        let b_key = a.syncer.add_device(&address(&b), "B").unwrap();
+        a.syncer.share("a", &b_key).unwrap();
+        wait_for("the refusal", || a.syncer.status(&b_key).error.is_some());
+        let a_key = a.syncer.address();
+        b.syncer.inner.trust(&a_key, "A", vec![]).unwrap();
+        wait_for("the retry", || a.syncer.status(&b_key).error.is_none());
+        assert_eq!(b.syncer.config().open_offers().count(), 1);
     }
 
     #[test]

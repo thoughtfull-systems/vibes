@@ -3,6 +3,8 @@
 package systems.thoughtfull.commonplace
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
 import android.os.Build
 import android.provider.Settings
 import android.util.Log
@@ -60,6 +62,36 @@ class DeviceSync(context: Context, private val repository: NotebookRepository) {
     override fun syncChanged() = mutableRevision.update { it + 1 }
 
     override fun librariesChanged() = mutableMerges.update { it + 1 }
+  }
+
+  init {
+    val connectivity = this.context.getSystemService(ConnectivityManager::class.java)
+    connectivity.registerDefaultNetworkCallback(
+      object : ConnectivityManager.NetworkCallback() {
+        // Android reports the network that's up at once, which isn't a change.
+        private var initial = connectivity.activeNetwork
+
+        override fun onAvailable(network: Network) {
+          if (network == initial) {
+            initial = null
+          } else {
+            reconnect()
+          }
+        }
+      }
+    )
+  }
+
+  /** Tells a running sync to reach other devices again, now that the network changed. */
+  private fun reconnect() {
+    scope.launch {
+      gate.withLock {
+        runCatching {
+          val core = repository.use { it }
+          if (core.syncRunning()) core.syncReconnect()
+        }
+      }
+    }
   }
 
   /** Keeps sync running until a matching [release]. */

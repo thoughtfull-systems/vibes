@@ -81,8 +81,13 @@ runs the transport in the core, behind a `sync` feature, and the
   address of their own relay, which runs iroh's relay server, to keep even that private.
 - **Automatic sync.** While a device runs Commonplace, it accepts connections from the devices it
   trusts. With automatic sync on, it also syncs with every device that shares a library with it
-  shortly after each local change, when it starts, and every few minutes. With automatic sync off,
-  it syncs only when the owner asks, but still answers devices that connect to it.
+  shortly after each local change, when it starts, and every 15 minutes. With automatic sync off, it
+  syncs only when the owner asks, but still answers devices that connect to it.
+- **Missed changes.** A change reaches another device only if the sync after it succeeds, so a
+  device that was asleep or offline misses it. Automatic sync retries a device after a failed sync,
+  first after 30 seconds and then after twice the last wait, up to 10 minutes, until a sync in
+  either direction succeeds. It also syncs with every device shortly after the network changes, and
+  on Linux, after the system wakes from sleep. The 15-minute sync catches anything else.
 - **Android.** The Android app syncs while it runs, and with automatic sync on, a periodic
   background job syncs at the interval Android allows, at least every 15 minutes.
 
