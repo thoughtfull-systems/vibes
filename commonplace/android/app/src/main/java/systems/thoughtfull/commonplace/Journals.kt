@@ -67,7 +67,9 @@ import systems.thoughtfull.commonplace.core.Question
 import systems.thoughtfull.commonplace.core.QuestionKind
 import systems.thoughtfull.commonplace.core.Schedule
 import systems.thoughtfull.commonplace.core.Times
+import systems.thoughtfull.commonplace.core.answerPlaceholder
 import systems.thoughtfull.commonplace.core.newId
+import systems.thoughtfull.commonplace.core.parseAnswer
 import systems.thoughtfull.commonplace.core.parseTimeOfDay
 import systems.thoughtfull.commonplace.core.scheduleIsValid
 
@@ -140,12 +142,7 @@ internal fun AnswerField(
       var text by rememberSaveable(question.id) { mutableStateOf(initial) }
       val valid = text.isBlank() || typedAnswer(kind, text) != null
       LaunchedEffect(valid) { validity(valid) }
-      val hint = when (kind) {
-        is QuestionKind.Number -> kind.unit ?: "Number"
-        QuestionKind.Duration -> "Minutes"
-        QuestionKind.TimeOfDay -> "HH:MM"
-        else -> "Answer"
-      }
+      val placeholder = remember(kind) { answerPlaceholder(kind) }
       OutlinedTextField(
         text,
         { value ->
@@ -156,7 +153,8 @@ internal fun AnswerField(
             typedAnswer(kind, value)?.let(changed)
           }
         },
-        label = { Text(hint) },
+        placeholder = placeholder.takeIf { it.isNotEmpty() }?.let { { Text(it) } },
+        suffix = (kind as? QuestionKind.Number)?.unit?.let { { Text(it) } },
         singleLine = true,
         isError = !valid,
         supportingText = { if (!valid) Text("Enter a valid answer, or clear the field.") },
@@ -167,19 +165,9 @@ internal fun AnswerField(
 }
 
 /** The answer `text` gives to a question of `kind`, or null if it isn't a valid one. */
-private fun typedAnswer(kind: QuestionKind, text: String): Answer? {
-  val number = text.toDoubleOrNull()?.takeIf { it.isFinite() }
-  return when (kind) {
-    is QuestionKind.Number -> number?.takeIf { value ->
-      kind.min.let { it == null || value >= it } && kind.max.let { it == null || value <= it }
-    }?.let { Answer.Number(it) }
-
-    QuestionKind.Duration -> number?.takeIf { it >= 0 }?.let { Answer.Number(it) }
-
-    QuestionKind.TimeOfDay -> text.takeIf { parseTimeOfDay(it) != null }?.let { Answer.Text(it) }
-
-    else -> Answer.Text(text)
-  }
+private fun typedAnswer(kind: QuestionKind, text: String): Answer? = when (kind) {
+  QuestionKind.ShortText -> Answer.Text(text.trim())
+  else -> parseAnswer(kind, text)
 }
 
 @Composable
@@ -897,11 +885,11 @@ private fun JournalPlaceholder(text: String) {
 @Composable
 private fun JournalsEmpty(noJournals: Boolean, query: String) {
   when {
-    noJournals -> EmptyNotes(R.drawable.journal, "No Journals", "Start one with New journal")
+    noJournals -> EmptyNotes(R.drawable.journal, "No journals", "Start one with New journal")
 
     query.isNotBlank() ->
-      EmptyNotes(R.drawable.search, "No Entries Found", "Try other words or a longer range")
+      EmptyNotes(R.drawable.search, "No entries found", "Try other words or a longer range")
 
-    else -> EmptyNotes(R.drawable.journal, "No Entries", "Write one with quick capture")
+    else -> EmptyNotes(R.drawable.journal, "No entries", "Write one with quick capture")
   }
 }

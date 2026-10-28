@@ -20,6 +20,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -62,6 +63,11 @@ internal fun LibrariesDialog(model: NotebookModel, state: NotebookState, dismiss
       Modifier.verticalScroll(rememberScrollState()),
       verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
+      Text(
+        "Each library is a space that syncs on its own. Names belong to this device alone.",
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        style = MaterialTheme.typography.bodySmall
+      )
       state.spaces.sortedBy { model.repository.name(it.key) }.forEach { space ->
         val currentName = model.repository.name(space.key)
         var name by remember(space.key, currentName) { mutableStateOf(currentName) }
@@ -71,7 +77,9 @@ internal fun LibrariesDialog(model: NotebookModel, state: NotebookState, dismiss
             name,
             { name = it },
             singleLine = true,
-            label = { Text(if (space.readOnly) "Name · Read only" else "Name on this device") },
+            label = {
+              Text(if (space.readOnly) "Name on this device · read-only" else "Name on this device")
+            },
             trailingIcon = {
               IconButton(
                 modifier = Modifier.testTag("library-apply-${space.key}"),

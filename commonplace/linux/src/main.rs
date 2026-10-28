@@ -35,7 +35,7 @@ use std::time::{Duration, Instant};
 
 use adw::prelude::*;
 use commonplace_core::sync::Syncer;
-use commonplace_core::{Spaces, note_uri, parse_note_uri};
+use commonplace_core::{NoteId, Spaces, note_uri, parse_note_uri};
 use gtk::{gio, glib};
 
 use crate::device::Device;
@@ -253,7 +253,10 @@ fn run(
     match arguments.iter().map(String::as_str).collect::<Vec<_>>()[..] {
         [] => main_window(app, &state, shared).present(),
         ["capture", kind @ ("memo" | "action")] => {
-            let window = capture_with_window(app, state, shared, kind == "action");
+            let kind = if kind == "action" { capture::Kind::Action } else { capture::Kind::Memo };
+            let Some(window) = capture_with_window(app, state, shared, kind, None) else {
+                return glib::ExitCode::FAILURE;
+            };
             // The command that asked for the capture exits once it's saved or discarded.
             let command_line = command_line.clone();
             window.connect_destroy(move |_| command_line.done());
@@ -270,10 +273,9 @@ fn run(
                     }
                 }
             };
-            if shared.borrow().window.is_none() {
-                main_window(app, &state, shared).present();
-            }
-            let Some(window) = journal_capture::present(app, state, journal, None) else {
+            let Some(window) =
+                capture_with_window(app, state, shared, capture::Kind::Entry, journal)
+            else {
                 command_line.printerr_literal("commonplace: there are no journals yet\n");
                 return glib::ExitCode::FAILURE;
             };
@@ -338,12 +340,13 @@ fn capture_with_window(
     app: &adw::Application,
     state: Rc<State>,
     shared: &Rc<RefCell<App>>,
-    task: bool,
-) -> adw::ApplicationWindow {
+    kind: capture::Kind,
+    journal: Option<NoteId>,
+) -> Option<adw::ApplicationWindow> {
     if shared.borrow().window.is_none() {
         main_window(app, &state, shared).present();
     }
-    capture::present(app, state, task)
+    capture::present(app, state, kind, journal, None)
 }
 
 /// Starts Commonplace in a process of its own if it isn't running, and waits for it to take its
@@ -466,13 +469,13 @@ fn start_tray(app: &adw::Application, state: &Rc<State>, shared: &Rc<RefCell<App
         move |event| match event {
             tray::Event::Activate => main_window(&app, &state, &shared).toggle(),
             tray::Event::CaptureAction => {
-                capture::present(&app, state.clone(), true);
+                capture::present(&app, state.clone(), capture::Kind::Action, None, None);
             }
             tray::Event::CaptureEntry => {
-                journal_capture::present(&app, state.clone(), None, None);
+                capture::present(&app, state.clone(), capture::Kind::Entry, None, None);
             }
             tray::Event::CaptureMemo => {
-                capture::present(&app, state.clone(), false);
+                capture::present(&app, state.clone(), capture::Kind::Memo, None, None);
             }
             tray::Event::Quit => quit(&app, &shared),
         }

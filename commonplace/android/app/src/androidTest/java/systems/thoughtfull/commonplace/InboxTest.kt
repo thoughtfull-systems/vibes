@@ -217,13 +217,13 @@ class InboxTest {
     val archived = current()
     click("Archive")
     awaitProcessed(archived)
-    compose.onNodeWithText("Nothing Left to Sort").assertExists()
+    compose.onNodeWithText("Nothing left to sort").assertExists()
     compose.onNodeWithText("Start over").performClick()
     skipped.clear()
     assertEquals(skippedId, current())
     click("Trash")
     awaitProcessed(skippedId)
-    compose.onNodeWithText("Inbox Is Empty").assertExists()
+    compose.onNodeWithText("Inbox is empty").assertExists()
     runBlocking {
       model.repository.use {
         assertEquals("The test supplier", it.note(waiting)!!.action!!.waitingFor)

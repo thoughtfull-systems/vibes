@@ -83,7 +83,7 @@ class QuickCaptureTest {
       compose.waitUntil(10_000) {
         runCatching { compose.onNodeWithText("Write in Markdown").assertExists() }.isSuccess
       }
-      compose.onNodeWithText("Cancel").performClick()
+      compose.onNodeWithText("Discard").performClick()
       compose.waitUntil(10_000) {
         activityStack().lineSequence().any { "topResumedActivity" in it && "settings" in it }
       }
@@ -136,7 +136,7 @@ class QuickCaptureTest {
       compose.waitUntil(15_000) {
         runCatching { compose.onNodeWithText("Write in Markdown").assertExists() }.isSuccess
       }
-      compose.onNodeWithText("Cancel").performClick()
+      compose.onNodeWithText("Discard").performClick()
       compose.waitUntil(10_000) {
         shell("dumpsys activity activities").lineSequence().any {
           "topResumedActivity" in it && "settings" in it

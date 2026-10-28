@@ -81,7 +81,7 @@ pub fn name_unnamed(state: &Rc<State>, parent: &impl IsA<gtk::Widget>) {
     let notes = if count == 1 { "1 note".to_owned() } else { format!("{count} notes") };
     ask_name(
         parent,
-        "Name This Library",
+        "Name this library",
         &format!("This device has a library with {notes} and no name yet"),
         "",
         glib::clone!(
@@ -103,7 +103,7 @@ pub fn present_dialog(state: &Rc<State>, parent: &impl IsA<gtk::Widget>) {
         .build();
     let add = gtk::Button::builder()
         .icon_name("list-add-symbolic")
-        .tooltip_text("Add Library")
+        .tooltip_text("Add library")
         .css_classes(["flat"])
         .build();
     group.set_header_suffix(Some(&add));
@@ -131,8 +131,15 @@ pub fn present_dialog(state: &Rc<State>, parent: &impl IsA<gtk::Widget>) {
             }
             let spaces = state.spaces();
             for space in &spaces {
+                let read_only = state.read(|spaces| {
+                    spaces.library(&space.key).is_some_and(|library| library.is_read_only())
+                });
                 let row = adw::EntryRow::builder()
-                    .title("Name")
+                    .title(if read_only {
+                        "Name on this device · read-only"
+                    } else {
+                        "Name on this device"
+                    })
                     .text(state.device().name(&space.key).unwrap_or_default())
                     .show_apply_button(true)
                     .build();
@@ -158,8 +165,8 @@ pub fn present_dialog(state: &Rc<State>, parent: &impl IsA<gtk::Widget>) {
                     others.append_item(&item);
                 }
                 if spaces.len() > 1 {
-                    menu.append_submenu(Some("_Merge Into"), &others);
-                    let item = gio::MenuItem::new(Some("_Delete Library"), None);
+                    menu.append_submenu(Some("_Merge into"), &others);
+                    let item = gio::MenuItem::new(Some("_Delete library"), None);
                     item.set_action_and_target_value(
                         Some("libraries.delete"),
                         Some(&space.key.to_variant()),
@@ -168,7 +175,7 @@ pub fn present_dialog(state: &Rc<State>, parent: &impl IsA<gtk::Widget>) {
                 }
                 let button = gtk::MenuButton::builder()
                     .icon_name("view-more-symbolic")
-                    .tooltip_text("Library Menu")
+                    .tooltip_text("Library menu")
                     .menu_model(&menu)
                     .valign(gtk::Align::Center)
                     .sensitive(spaces.len() > 1)
@@ -193,7 +200,7 @@ pub fn present_dialog(state: &Rc<State>, parent: &impl IsA<gtk::Widget>) {
             let fill = fill.clone();
             ask_name(
                 &dialog,
-                "New Library",
+                "New library",
                 "Name it for this device",
                 "",
                 move |name| match state.create_space(&name) {

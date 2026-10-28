@@ -279,6 +279,38 @@ impl QuestionKind {
     pub fn is_numeric(&self) -> bool {
         matches!(self, Self::Number { .. } | Self::Scale { .. } | Self::Duration | Self::TimeOfDay)
     }
+
+    /// The answer that typed `text` gives to a number, duration, or time of day question, or
+    /// `None` if it isn't a valid one or the kind takes no typed answer.
+    pub fn parse_answer(&self, text: &str) -> Option<Answer> {
+        let text = text.trim();
+        match self {
+            Self::Number { min, max, .. } => {
+                let value = text.parse::<f64>().ok().filter(|value| value.is_finite())?;
+                let fits = min.is_none_or(|min| value >= min) && max.is_none_or(|max| value <= max);
+                fits.then_some(Answer::Number(value))
+            }
+            Self::Duration => {
+                parse_duration(text).map(|minutes| Answer::Number(f64::from(minutes)))
+            }
+            Self::TimeOfDay => {
+                parse_loose_time(text).map(|minutes| Answer::Text(format_time(minutes)))
+            }
+            _ => None,
+        }
+    }
+
+    /// The hint that an empty field shows for a typed answer.
+    pub fn placeholder(&self) -> String {
+        match self {
+            Self::Number { min: Some(min), max: Some(max), .. } => format!("{min} to {max}"),
+            Self::Number { min: Some(min), max: None, .. } => format!("At least {min}"),
+            Self::Number { min: None, max: Some(max), .. } => format!("At most {max}"),
+            Self::Duration => "Minutes, or hours:minutes".to_owned(),
+            Self::TimeOfDay => "HH:MM".to_owned(),
+            _ => String::new(),
+        }
+    }
 }
 
 /// One of a choice question's options.
@@ -673,6 +705,28 @@ pub fn parse_loose_time(text: impl AsRef<str>) -> Option<u16> {
     }
 }
 
+/// Reads a duration in minutes from `90`, `1:30`, `1h30m`, `1h`, or `30m`.
+fn parse_duration(text: &str) -> Option<u16> {
+    let text = text.trim().to_lowercase();
+    if let Some((hours, minutes)) = text.split_once(':') {
+        let (hours, minutes): (u16, u16) = (hours.parse().ok()?, minutes.parse().ok()?);
+        return (minutes < 60).then(|| hours.checked_mul(60)?.checked_add(minutes)).flatten();
+    }
+    if let Ok(minutes) = text.parse() {
+        return Some(minutes);
+    }
+    let (hours, rest) = match text.split_once('h') {
+        Some((hours, rest)) => (hours.trim().parse::<u16>().ok()?, rest.trim()),
+        None => (0, text.as_str()),
+    };
+    let minutes = match rest.strip_suffix('m') {
+        Some(minutes) => minutes.trim().parse::<u16>().ok()?,
+        None if rest.is_empty() => 0,
+        None => return None,
+    };
+    hours.checked_mul(60)?.checked_add(minutes)
+}
+
 /// Writes minutes since midnight as `HH:MM`.
 pub fn format_time(minutes: u16) -> String {
     format!("{:02}:{:02}", minutes / 60, minutes % 60)
@@ -1035,6 +1089,37 @@ mod tests {
 
     fn date(text: &str) -> Date {
         text.parse().unwrap()
+    }
+
+    #[test]
+    fn reads_durations() {
+        assert_eq!(parse_duration("90"), Some(90));
+        assert_eq!(parse_duration("1:30"), Some(90));
+        assert_eq!(parse_duration("1h30m"), Some(90));
+        assert_eq!(parse_duration("2h"), Some(120));
+        assert_eq!(parse_duration("45m"), Some(45));
+        assert_eq!(parse_duration("1:75"), None);
+        assert_eq!(parse_duration("1.5"), None);
+        assert_eq!(parse_duration("soon"), None);
+    }
+
+    #[test]
+    fn parses_typed_answers() {
+        let number = QuestionKind::Number { unit: None, min: Some(0.0), max: Some(10.0) };
+        assert_eq!(number.parse_answer(" 2.5 "), Some(Answer::Number(2.5)));
+        assert_eq!(number.parse_answer("11"), None);
+        assert_eq!(
+            QuestionKind::Number { unit: None, min: None, max: None }.parse_answer("NaN"),
+            None
+        );
+        assert_eq!(QuestionKind::Duration.parse_answer("1:30"), Some(Answer::Number(90.0)));
+        assert_eq!(
+            QuestionKind::TimeOfDay.parse_answer("9:05"),
+            Some(Answer::Text("09:05".into()))
+        );
+        assert_eq!(QuestionKind::TimeOfDay.parse_answer("25:00"), None);
+        assert_eq!(QuestionKind::YesNo.parse_answer("yes"), None);
+        assert_eq!(number.placeholder(), "0 to 10");
     }
 
     #[test]

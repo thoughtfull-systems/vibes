@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use adw::prelude::*;
-use commonplace_core::{Answer, Journal, QuestionKind, format_time, parse_loose_time};
+use commonplace_core::{Answer, Journal, QuestionKind};
 use gtk::glib;
 
 type Changed = Rc<RefCell<Option<Box<dyn Fn(&str, Option<Answer>)>>>>;
@@ -122,26 +122,8 @@ fn input(kind: &QuestionKind, report: Rc<dyn Fn()>) -> Input {
                 }),
             )
         }
-        QuestionKind::Number { unit, min, max } => {
-            let placeholder = match (min, max) {
-                (Some(min), Some(max)) => format!("{min} to {max}"),
-                (Some(min), None) => format!("At least {min}"),
-                (None, Some(max)) => format!("At most {max}"),
-                (None, None) => String::new(),
-            };
-            let (min, max) = (*min, *max);
-            parsed_entry(unit.as_deref(), &placeholder, report, move |text| {
-                let value: f64 = text.parse().ok()?;
-                let fits = min.is_none_or(|min| value >= min) && max.is_none_or(|max| value <= max);
-                fits.then_some(Answer::Number(value))
-            })
-        }
-        QuestionKind::Duration => parsed_entry(None, "Minutes, or hours:minutes", report, |text| {
-            parse_duration(text).map(|minutes| Answer::Number(f64::from(minutes)))
-        }),
-        QuestionKind::TimeOfDay => parsed_entry(None, "HH:MM", report, |text| {
-            parse_loose_time(text).map(|minutes| Answer::Text(format_time(minutes)))
-        }),
+        QuestionKind::Number { unit, .. } => typed_entry(kind, unit.as_deref(), report),
+        QuestionKind::Duration | QuestionKind::TimeOfDay => typed_entry(kind, None, report),
         QuestionKind::Scale { min, max, low, high } => {
             let row = gtk::Box::builder().spacing(6).build();
             if let Some(low) = low {
@@ -239,27 +221,32 @@ fn input(kind: &QuestionKind, report: Rc<dyn Fn()>) -> Input {
     }
 }
 
-/// An entry whose text `parse` turns into an answer, marked as an error while it can't.
-fn parsed_entry(
-    unit: Option<&str>,
-    placeholder: &str,
-    report: Rc<dyn Fn()>,
-    parse: impl Fn(&str) -> Option<Answer> + 'static,
-) -> Input {
-    let entry = gtk::Entry::builder().placeholder_text(placeholder).hexpand(true).build();
-    let parse = Rc::new(parse);
-    let check = parse.clone();
-    entry.connect_changed(move |entry| {
-        let text = entry.text();
-        let text = text.trim();
-        if text.is_empty() || check(text).is_some() {
-            entry.remove_css_class("error");
-        } else {
-            entry.add_css_class("error");
+/// An entry whose text the core reads as an answer to `kind`, marked as an error while it can't.
+fn typed_entry(kind: &QuestionKind, unit: Option<&str>, report: Rc<dyn Fn()>) -> Input {
+    let entry = gtk::Entry::builder().placeholder_text(kind.placeholder()).hexpand(true).build();
+    let invalid = gtk::Label::builder()
+        .label("Enter a valid answer, or clear the field.")
+        .xalign(0.0)
+        .visible(false)
+        .css_classes(["caption", "error"])
+        .build();
+    let check = kind.clone();
+    entry.connect_changed(glib::clone!(
+        #[weak]
+        invalid,
+        move |entry| {
+            let text = entry.text();
+            let valid = text.trim().is_empty() || check.parse_answer(&text).is_some();
+            if valid {
+                entry.remove_css_class("error");
+            } else {
+                entry.add_css_class("error");
+            }
+            invalid.set_visible(!valid);
+            report();
         }
-        report();
-    });
-    let widget: gtk::Widget = match unit {
+    ));
+    let field: gtk::Widget = match unit {
         Some(unit) => {
             let row = gtk::Box::builder().spacing(6).build();
             row.append(&entry);
@@ -268,10 +255,14 @@ fn parsed_entry(
         }
         None => entry.clone().upcast(),
     };
+    let widget = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    widget.append(&field);
+    widget.append(&invalid);
     let get = entry.clone();
+    let kind = kind.clone();
     (
-        widget,
-        Box::new(move || parse(get.text().trim())),
+        widget.upcast(),
+        Box::new(move || kind.parse_answer(&get.text())),
         Box::new(move |answer| {
             let text = match answer {
                 Some(Answer::Number(value)) => value.to_string(),
@@ -336,42 +327,4 @@ fn exclusive(choices: &[(String, String)], report: Rc<dyn Fn()>) -> Exclusive {
             updating.set(false);
         }),
     )
-}
-
-/// Reads a duration in minutes from `90`, `1:30`, `1h30m`, `1h`, or `30m`.
-fn parse_duration(text: &str) -> Option<u16> {
-    let text = text.trim().to_lowercase();
-    if let Some((hours, minutes)) = text.split_once(':') {
-        let (hours, minutes): (u16, u16) = (hours.parse().ok()?, minutes.parse().ok()?);
-        return (minutes < 60).then(|| hours.checked_mul(60)?.checked_add(minutes)).flatten();
-    }
-    if let Ok(minutes) = text.parse() {
-        return Some(minutes);
-    }
-    let (hours, rest) = match text.split_once('h') {
-        Some((hours, rest)) => (hours.trim().parse::<u16>().ok()?, rest.trim()),
-        None => (0, text.as_str()),
-    };
-    let minutes = match rest.strip_suffix('m') {
-        Some(minutes) => minutes.trim().parse::<u16>().ok()?,
-        None if rest.is_empty() => 0,
-        None => return None,
-    };
-    hours.checked_mul(60)?.checked_add(minutes)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn reads_durations() {
-        assert_eq!(parse_duration("90"), Some(90));
-        assert_eq!(parse_duration("1:30"), Some(90));
-        assert_eq!(parse_duration("1h30m"), Some(90));
-        assert_eq!(parse_duration("2h"), Some(120));
-        assert_eq!(parse_duration("45m"), Some(45));
-        assert_eq!(parse_duration("1:75"), None);
-        assert_eq!(parse_duration("soon"), None);
-    }
 }

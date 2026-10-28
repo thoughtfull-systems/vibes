@@ -22,8 +22,6 @@ const LISTS: [(&str, ActionList); 5] = [
     ("Maybe", ActionList::Maybe),
 ];
 
-const SHOW_DONE: &str = "linux.steps.show_done";
-
 type OpenHandler = Rc<dyn Fn(NoteId)>;
 
 /// The fields of the open action, shown above its text, and its steps, shown below.
@@ -565,9 +563,8 @@ impl ActionPanel {
         self.waiting_for.set_visible(waiting);
         self.show_path(note.id);
         let unsaved = self.show_done_unsaved.borrow().get(&note.id).copied();
-        let show_done = unsaved.unwrap_or_else(|| {
-            self.state.read(|library| library.note_setting(note.id, SHOW_DONE)) == Some(1)
-        });
+        let show_done =
+            unsaved.unwrap_or_else(|| self.state.read(|library| library.shows_done_steps(note.id)));
         self.show_done.set_active(show_done);
         let mut steps = self.state.read(|library| library.action_subtree(note.id, today()));
         self.steps_box.set_visible(editable || !steps.is_empty());
@@ -824,9 +821,8 @@ impl ActionPanel {
                     panel.show_current();
                     return;
                 }
-                let value = i64::from(show_done.is_active());
-                let result =
-                    panel.state.write(|library| library.set_note_setting(id, SHOW_DONE, value));
+                let shown = show_done.is_active();
+                let result = panel.state.write(|library| library.set_shows_done_steps(id, shown));
                 if let Err(error) = result {
                     eprintln!("commonplace: {error}");
                 }

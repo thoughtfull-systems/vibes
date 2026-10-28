@@ -106,7 +106,7 @@ class CapturePreferencesTest {
     compose.onNodeWithText("B capture library").assertIsSelected()
     compose.onNodeWithText("Memo").performClick()
     compose.onNodeWithText("A capture library").performScrollTo().performClick()
-    compose.onNodeWithText("Cancel").performClick()
+    compose.onNodeWithText("Discard").performClick()
     compose.waitForIdle()
     open()
     compose.onNodeWithText("Action").assertIsSelected()

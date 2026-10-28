@@ -8,7 +8,8 @@ use adw::prelude::*;
 use commonplace_core::{Date, Handled, Journal, Note, NoteId, Prompt};
 use gtk::{gio, glib};
 
-use crate::journal_capture::{self, PromptContext};
+use crate::capture::{self, Kind};
+use crate::journal_capture::PromptContext;
 use crate::rows::today;
 use crate::state::State;
 
@@ -41,7 +42,8 @@ pub fn start(app: &adw::Application, state: Rc<State>) {
             };
             app.withdraw_notification(&notification_id(journal));
             let context = PromptContext { journal, key, prompted };
-            if let Some(window) = journal_capture::present(&app, state.clone(), None, Some(context))
+            if let Some(window) =
+                capture::present(&app, state.clone(), Kind::Entry, None, Some(context))
             {
                 // Closing the window without saving leaves the prompt unhandled, so it comes back.
                 window.connect_destroy(glib::clone!(

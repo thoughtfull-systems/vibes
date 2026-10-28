@@ -59,9 +59,9 @@ internal fun actionSections(
       val queue = view(ActionView.PLANNING)
       val queued = queue.map { it.note.id }.toSet()
       listOf(
-        ActionSection("Planning Queue", queue, true),
+        ActionSection("Planning queue", queue, true),
         ActionSection(
-          "Stalled Projects",
+          "Stalled projects",
           view(ActionView.STALLED).filter {
             it.note.id !in queued
           },
@@ -72,12 +72,12 @@ internal fun actionSections(
 
     "Review" -> listOf(
       ActionSection("Projects", unqueued(ActionView.PROJECTS), true),
-      ActionSection("Waiting For", unqueued(ActionView.WAITING), true),
+      ActionSection("Waiting for", unqueued(ActionView.WAITING), true),
       ActionSection("Scheduled", unqueued(ActionView.SCHEDULED), true),
       ActionSection("Someday", unqueued(ActionView.SOMEDAY), true),
       ActionSection("Maybe", unqueued(ActionView.MAYBE), true),
       ActionSection(
-        "Recently Done",
+        "Recently done",
         view(ActionView.CLOSED).filter {
           (it.note.action?.closed ?: 0) >= now - 7 * 86_400_000L
         }
@@ -88,9 +88,9 @@ internal fun actionSections(
       val next = view(ActionView.NEXT)
       listOf(
         ActionSection("Overdue", next.filter { it.dates.status == ActionStatus.OVERDUE }),
-        ActionSection("Due Soon", next.filter { it.dates.status == ActionStatus.DUE_SOON }),
+        ActionSection("Due soon", next.filter { it.dates.status == ActionStatus.DUE_SOON }),
         ActionSection("Active", next.filter { it.dates.status == ActionStatus.NORMAL }),
-        ActionSection("Starting Soon", next.filter { it.dates.status == ActionStatus.UPCOMING })
+        ActionSection("Starting soon", next.filter { it.dates.status == ActionStatus.UPCOMING })
       )
     }
   }
@@ -166,23 +166,23 @@ internal fun ActionsScreen(
 @Composable
 private fun ActionsEmpty(mode: String, query: String) {
   when {
-    query.isNotBlank() -> EmptyNotes(R.drawable.search, "No Actions Found", "Try other words")
+    query.isNotBlank() -> EmptyNotes(R.drawable.search, "No actions found", "Try other words")
 
     mode == "Plan" -> EmptyNotes(
       R.drawable.plan,
-      "Nothing to Plan",
+      "Nothing to plan",
       "Actions queued for planning and stalled projects show up here"
     )
 
     mode == "Review" -> EmptyNotes(
       R.drawable.review,
-      "Nothing to Review",
+      "Nothing to review",
       "Projects, and waiting, scheduled, someday, and maybe actions show up here"
     )
 
     else -> EmptyNotes(
       R.drawable.execute,
-      "Nothing to Do Next",
+      "Nothing to do next",
       "Tasks on the active list show up here"
     )
   }

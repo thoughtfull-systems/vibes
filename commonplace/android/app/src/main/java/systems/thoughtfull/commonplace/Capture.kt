@@ -176,7 +176,7 @@ internal fun CaptureDialog(
   }
   AlertDialog(
     onDismissRequest = { if (!saving) dismiss() },
-    title = { Text("Capture") },
+    title = { Text("Quick capture") },
     text = {
       Column(Modifier.verticalScroll(rememberScrollState())) {
         if (request.prompt == null) {
@@ -187,6 +187,8 @@ internal fun CaptureDialog(
                 kind == option,
                 onClick = {
                   if (option == "Entry" && body.isBlank()) body = template(journal)
+                  val untouched = body.trim() == template(journal).trim()
+                  if (kind == "Entry" && option != "Entry" && untouched) body = ""
                   kind = option
                 },
                 label = { Text(option) }
@@ -280,6 +282,6 @@ internal fun CaptureDialog(
         }
       }) { Text(if (saving) "Saving…" else "Save") }
     },
-    dismissButton = { TextButton(enabled = !saving, onClick = dismiss) { Text("Cancel") } }
+    dismissButton = { TextButton(enabled = !saving, onClick = dismiss) { Text("Discard") } }
   )
 }

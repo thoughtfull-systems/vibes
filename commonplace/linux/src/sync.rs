@@ -18,6 +18,8 @@ use gtk::{gio, glib};
 use crate::libraries::ask_name;
 use crate::state::{Space, State};
 
+const START_FAILED: &str = "Commonplace couldn't start sync. Its error went to standard error.";
+
 thread_local! {
     /// The state that sync reads and writes, which only the main thread may touch.
     static STATE: RefCell<Weak<State>> = RefCell::default();
@@ -37,6 +39,22 @@ pub fn start(state: &Rc<State>, dir: &Path) {
         }
         Err(error) => eprintln!("commonplace: couldn't start sync: {error}"),
     }
+}
+
+/// Starts sync again, so a change that takes effect only at start, such as the relay, applies now,
+/// then calls `done`.
+pub fn restart(state: &Rc<State>, done: impl FnOnce() + 'static) {
+    let old = state.take_syncer();
+    let state = Rc::downgrade(state);
+    glib::spawn_future_local(async move {
+        // Dropping a syncer waits up to seconds for its connections to close, which would freeze
+        // the window, and the new one can't listen until the old one stops.
+        let _ = gio::spawn_blocking(move || drop(old)).await;
+        if let Some(state) = state.upgrade() {
+            start(&state, &crate::library_dir());
+            done();
+        }
+    });
 }
 
 /// Hands each of sync's calls to the main thread, and waits for the answer.
@@ -128,10 +146,7 @@ struct Dialog {
 /// Shows the Sync dialog, and opens `invite`, a link from another device, if there is one.
 pub fn present_dialog(state: &Rc<State>, parent: &impl IsA<gtk::Widget>, invite: Option<&str>) {
     let Some(syncer) = state.syncer() else {
-        let alert = adw::AlertDialog::new(
-            Some("Sync Isn't Running"),
-            Some("Commonplace couldn't start sync. Its error went to standard error."),
-        );
+        let alert = adw::AlertDialog::new(Some("Sync isn't running"), Some(START_FAILED));
         alert.add_response("close", "_Close");
         alert.present(Some(parent));
         return;
@@ -143,7 +158,7 @@ pub fn present_dialog(state: &Rc<State>, parent: &impl IsA<gtk::Widget>, invite:
 
     let address = syncer.address();
     let this_device = adw::PreferencesGroup::builder()
-        .title("This Device")
+        .title("This device")
         .description("Devices that pair with this one know it by this name")
         .build();
     let name =
@@ -170,7 +185,7 @@ pub fn present_dialog(state: &Rc<State>, parent: &impl IsA<gtk::Widget>, invite:
         .build();
     let copy = gtk::Button::builder()
         .icon_name("edit-copy-symbolic")
-        .tooltip_text("Copy Address")
+        .tooltip_text("Copy address")
         .valign(gtk::Align::Center)
         .css_classes(["flat"])
         .build();
@@ -188,7 +203,7 @@ pub fn present_dialog(state: &Rc<State>, parent: &impl IsA<gtk::Widget>, invite:
 
     let options = adw::PreferencesGroup::new();
     let automatic = adw::SwitchRow::builder()
-        .title("Sync Automatically")
+        .title("Sync automatically")
         .subtitle("After each change, and every few minutes")
         .active(config.automatic)
         .build();
@@ -207,7 +222,7 @@ pub fn present_dialog(state: &Rc<State>, parent: &impl IsA<gtk::Widget>, invite:
     ));
     options.add(&automatic);
     let relay = adw::EntryRow::builder()
-        .title("Relay Server (Empty for Public Relays)")
+        .title("Relay server (empty for public relays)")
         .text(config.relay.clone().unwrap_or_default())
         .show_apply_button(true)
         .build();
@@ -220,15 +235,41 @@ pub fn present_dialog(state: &Rc<State>, parent: &impl IsA<gtk::Widget>, invite:
             let Some(syncer) = state.syncer() else {
                 return;
             };
-            let message = match syncer.set_relay(Some(&row.text())) {
-                Ok(()) => "The relay takes effect when Commonplace next starts".to_owned(),
-                Err(error) => error.to_string(),
-            };
-            dialog.add_toast(adw::Toast::new(&message));
+            if let Err(error) = syncer.set_relay(Some(&row.text())) {
+                dialog.add_toast(adw::Toast::new(&error.to_string()));
+                return;
+            }
+            // Restarting can't stop a syncer that something still holds.
+            drop(syncer);
+            let public = row.text().trim().is_empty();
+            restart(
+                &state,
+                glib::clone!(
+                    #[weak]
+                    state,
+                    #[weak]
+                    dialog,
+                    move || {
+                        let message = match state.syncer() {
+                            Some(syncer) => {
+                                // The dialog looks for nearby devices while it's open.
+                                let _ = syncer.start_nearby();
+                                if public {
+                                    "Sync uses the public relays"
+                                } else {
+                                    "Sync uses this relay"
+                                }
+                            }
+                            None => START_FAILED,
+                        };
+                        dialog.add_toast(adw::Toast::new(message));
+                    }
+                ),
+            );
         }
     ));
     options.add(&relay);
-    let sync_now = adw::ButtonRow::builder().title("Sync Now").build();
+    let sync_now = adw::ButtonRow::builder().title("Sync now").build();
     sync_now.connect_activated(glib::clone!(
         #[weak]
         state,
@@ -241,14 +282,14 @@ pub fn present_dialog(state: &Rc<State>, parent: &impl IsA<gtk::Widget>, invite:
     options.add(&sync_now);
 
     let nearby = adw::PreferencesGroup::builder()
-        .title("Pair a Device")
+        .title("Pair a device")
         .description("Devices on this network show here while their Sync screen is open")
         .build();
     page.add(&nearby);
     let other_ways = adw::PreferencesGroup::new();
-    let show_invite = adw::ButtonRow::builder().title("Show Invite").build();
-    let open_invite = adw::ButtonRow::builder().title("Open Invite").build();
-    let enter_address = adw::ButtonRow::builder().title("Enter Address").build();
+    let show_invite = adw::ButtonRow::builder().title("Show invite").build();
+    let open_invite = adw::ButtonRow::builder().title("Open invite").build();
+    let enter_address = adw::ButtonRow::builder().title("Enter address").build();
     other_ways.add(&show_invite);
     other_ways.add(&open_invite);
     other_ways.add(&enter_address);
@@ -335,7 +376,7 @@ pub fn present_dialog(state: &Rc<State>, parent: &impl IsA<gtk::Widget>, invite:
 }
 
 impl Dialog {
-    fn syncer(&self) -> Option<&Syncer> {
+    fn syncer(&self) -> Option<Rc<Syncer>> {
         self.state.syncer()
     }
 
@@ -363,7 +404,7 @@ impl Dialog {
                 }
                 ask_name(
                     &this.dialog,
-                    "New Library",
+                    "New library",
                     "Name it for this device",
                     "",
                     glib::clone!(
@@ -522,7 +563,7 @@ impl Dialog {
         let alert = match &outgoing.state {
             OutgoingState::Waiting => outgoing.code.as_ref().map(|code| {
                 let alert = adw::AlertDialog::new(
-                    Some("Accept on the Other Device"),
+                    Some("Accept on the other device"),
                     Some(&format!("Check that it shows the code {}.", spaced(code))),
                 );
                 alert.add_response("close", "_Hide");
@@ -568,7 +609,7 @@ impl Dialog {
         attributes.insert(gtk::pango::AttrInt::new_insert_hyphens(false));
         link.set_attributes(Some(&attributes));
         let copy = gtk::Button::builder()
-            .label("_Copy Link")
+            .label("_Copy link")
             .use_underline(true)
             .halign(gtk::Align::Center)
             .css_classes(["pill"])
@@ -640,7 +681,7 @@ impl Dialog {
         content.append(
             &gtk::Label::builder()
                 .label(concat!(
-                    "Scan this code with the phone, or open the link on the other device. ",
+                    "Scan this code with a phone, or open the link on the other device. ",
                     "It works once, for 15 minutes.",
                 ))
                 .wrap(true)
@@ -661,7 +702,7 @@ impl Dialog {
                 .build(),
         ));
         let invite =
-            adw::Dialog::builder().title("Invite a Device").content_width(420).child(&view).build();
+            adw::Dialog::builder().title("Invite a device").content_width(420).child(&view).build();
         invite.present(Some(&self.dialog));
     }
 
@@ -672,8 +713,8 @@ impl Dialog {
             .activates_default(true)
             .build();
         let alert = adw::AlertDialog::new(
-            Some("Open Invite"),
-            Some("Paste the link that the other device's Show Invite gives"),
+            Some("Open invite"),
+            Some("Paste the link that the other device's Show invite gives"),
         );
         alert.set_extra_child(Some(&entry));
         alert.add_responses(&[("cancel", "_Cancel"), ("open", "_Open")]);
@@ -738,7 +779,7 @@ impl Dialog {
                     item(&format!("Sync With {name}"), &share.library);
                 }
                 None => {
-                    item("New Library…", "");
+                    item("New library…", "");
                     for space in &shown.spaces {
                         item(&format!("Merge Into {}", space.name), &space.key);
                     }
@@ -815,7 +856,7 @@ impl Dialog {
                 row.add_row(&share);
             }
             let remove = adw::ButtonRow::builder()
-                .title("Remove Device")
+                .title("Remove device")
                 .css_classes(["destructive-action"])
                 .build();
             let address = device.address.clone();
@@ -850,8 +891,8 @@ impl Dialog {
         fields.append(&address);
         fields.append(&name);
         let dialog = adw::AlertDialog::new(
-            Some("Add Device"),
-            Some("Enter the address that the other device's Sync dialog shows, and a name for it"),
+            Some("Add device"),
+            Some("Enter the address that the other device's Sync screen shows, and a name for it"),
         );
         dialog.set_extra_child(Some(&fields));
         dialog.add_responses(&[("cancel", "_Cancel"), ("add", "_Add")]);

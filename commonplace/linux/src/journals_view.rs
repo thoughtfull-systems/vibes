@@ -20,11 +20,11 @@ const RANGE: &str = "linux.journals.range";
 /// The ranges of days the timeline offers, with how many days back each reaches.
 const RANGES: [(&str, Option<i32>); 6] = [
     ("Today", Some(1)),
-    ("Last 7 Days", Some(7)),
-    ("Last 30 Days", Some(30)),
-    ("Last 90 Days", Some(90)),
-    ("Last Year", Some(365)),
-    ("All Time", None),
+    ("Last 7 days", Some(7)),
+    ("Last 30 days", Some(30)),
+    ("Last 90 days", Some(90)),
+    ("Last year", Some(365)),
+    ("All time", None),
 ];
 
 /// Each journal color's light and dark shades, from the dataviz skill's validated categorical
@@ -310,11 +310,11 @@ impl JournalsView {
         self.hint.set_visible(shown.len() > 1 && chartable && !entries.is_empty());
         self.fill_list(&entries);
         let (icon, title, description) = if journals.is_empty() {
-            (crate::rows::JOURNAL_ICON, "No Journals", "Start one with New Journal")
+            (crate::rows::JOURNAL_ICON, "No journals", "Start one with New journal")
         } else if !query.trim().is_empty() {
-            ("system-search-symbolic", "No Entries Found", "Try other words or a longer range")
+            ("system-search-symbolic", "No entries found", "Try other words or a longer range")
         } else {
-            (crate::rows::JOURNAL_ICON, "No Entries", "Write one with commonplace capture journal")
+            (crate::rows::JOURNAL_ICON, "No entries", "Write one with commonplace capture journal")
         };
         let blank = entries.is_empty() && !self.charts.is_visible();
         self.empty.set_icon_name(Some(icon));
@@ -326,7 +326,7 @@ impl JournalsView {
 
     fn fill_chips(self: &Rc<Self>, journals: &[Note]) {
         self.menu.remove_all();
-        self.menu.append(Some("_New Journal…"), Some("journals.new"));
+        self.menu.append(Some("_New journal…"), Some("journals.new"));
         let edits = gio::Menu::new();
         for journal in journals {
             let name = journal.label().unwrap_or_else(|| "Untitled journal".to_owned());
@@ -963,7 +963,7 @@ fn grid_value(
                 (false, Mark::Empty) => "Not picked",
                 _ => "No answer",
             };
-            format!("{label}: {value}")
+            if yes_no { value.to_owned() } else { format!("{label}: {value}") }
         })
         .collect();
     format!("{day} · {}", values.join(" · "))

@@ -67,7 +67,7 @@ class EditingTest {
         id
       }
     }
-    repository.preferences.edit().putString("selected", source).putString("tab", "All Notes")
+    repository.preferences.edit().putString("selected", source).putString("tab", "All notes")
       .putString("query", "").commit()
     val model = NotebookModel(context.applicationContext as CommonplaceApplication)
     val keyboardVisible = AtomicBoolean(false)

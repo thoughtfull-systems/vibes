@@ -59,13 +59,13 @@ impl BottomPane {
             .expect("GtkPaned has a handle");
         let unpin_button = gtk::Button::builder()
             .icon_name("view-pin-symbolic")
-            .tooltip_text("Unpin Panel Height")
+            .tooltip_text("Unpin panel height")
             .halign(gtk::Align::Start)
             .valign(gtk::Align::Start)
             .css_classes(["unpin"])
             .visible(false)
             .build();
-        unpin_button.update_property(&[gtk::accessible::Property::Label("Unpin Panel Height")]);
+        unpin_button.update_property(&[gtk::accessible::Property::Label("Unpin panel height")]);
         let widget = gtk::Overlay::builder().child(&paned).build();
         widget.add_overlay(&unpin_button);
         let this = Rc::new(Self {

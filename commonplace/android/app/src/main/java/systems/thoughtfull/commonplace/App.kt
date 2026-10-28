@@ -50,7 +50,7 @@ import systems.thoughtfull.commonplace.core.isSyncInvite
 import systems.thoughtfull.commonplace.core.parseNoteUri
 
 // The navigation order follows the Linux app's tabs.
-internal val destinations = listOf("Memos", "Actions", "Journals", "All Notes", "Trash")
+internal val destinations = listOf("Memos", "Actions", "Journals", "All notes", "Trash")
 
 @Composable
 fun CommonplaceApp(model: NotebookModel, incoming: Intent?, consumed: () -> Unit) {
@@ -60,7 +60,7 @@ fun CommonplaceApp(model: NotebookModel, incoming: Intent?, consumed: () -> Unit
     mutableStateOf(
       Navigation(
         Location(
-          preferences.getString("tab", "Memos")!!.replace("All notes", "All Notes"),
+          preferences.getString("tab", "Memos")!!.replace("All Notes", "All notes"),
           preferences.getString("selected", null)
         )
       )
@@ -165,7 +165,7 @@ fun CommonplaceApp(model: NotebookModel, incoming: Intent?, consumed: () -> Unit
                   AppIcon(
                     when (destination) {
                       "Actions" -> R.drawable.actions
-                      "All Notes" -> R.drawable.all_notes
+                      "All notes" -> R.drawable.all_notes
                       "Journals" -> R.drawable.journal
                       "Trash" -> R.drawable.trash
                       else -> R.drawable.memo
