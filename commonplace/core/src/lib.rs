@@ -58,6 +58,8 @@ pub enum Error {
     EntryMovesWithJournal(NoteId),
     #[error("{0:?} isn't a device address")]
     InvalidAddress(String),
+    #[error("{0:?} isn't an invite, or it's from this device")]
+    InvalidInvite(String),
     #[error("{0:?} isn't a relay address")]
     InvalidRelay(String),
     #[error("a schedule needs times within the day, and a random one needs a window")]

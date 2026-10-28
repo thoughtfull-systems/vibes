@@ -114,8 +114,14 @@ You can also capture your own notes, or sync libraries from your Linux devices.
 Choose **Sync** to pair the phone with other devices, as the Linux app's Sync dialog does.
 [Decision 0013](../../decisions/0013-commonplace-sync.md) explains the design.
 
-- Copy or share the address under **This device**, and add it on the other device.
-- Choose **Add device**, then enter the other device's address and a name for it.
+- With both devices on the same Wi-Fi network and their Sync screens open, choose **Pair** next to
+  the other device. Accept on the other device once both show the same code.
+- Or choose **Scan invite** and scan the QR code that the Linux app's **Show Invite** shows. The
+  phone pairs at once, and receives offers for any libraries that the invite shares.
+- Or choose **Share invite** to send a link that pairs the device that opens it, once, within 15
+  minutes. Opening an invite link on the phone, or pasting it under **Open invite**, pairs with the
+  device that made it.
+- To pair by hand, add each device's address on the other.
 - Open the device and turn on **Share** for each library to sync with it. The other device then
   lists an offer, which it accepts into a new library or merges into an existing one. Offers from
   other devices appear here the same way.
@@ -126,7 +132,9 @@ network is available. Android can delay that job to save battery. **Sync now** s
 device at once, and each device shows when it last synced or why it couldn't.
 
 Sync uses n0's public relays unless you enter your own under **Relay server**. The phone keeps its
-sync key and devices in a directory that Android never backs up.
+sync key and devices in a directory that Android never backs up. While the Sync screen is open, the
+phone announces its name on the local network and holds a multicast lock, so it can hear nearby
+devices. The scanner asks for camera access the first time you scan.
 
 ## Storage and notifications
 

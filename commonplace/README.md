@@ -83,6 +83,10 @@ The Linux app covers memos, actions, and journals:
   workspace when it's hidden or on another one. Closing the window or pressing Ctrl+Q hides it, and
   the icon's menu captures an action, a journal entry, or a memo, or quits. Without a tray, Ctrl+Q
   quits.
+- Sync libraries with your other devices, Linux or Android, over encrypted connections. In the Sync
+  dialog, pair a device on the same network with a click and a matching code, show an invite as a QR
+  code for a phone to scan, or open an invite link from another device. Then choose which libraries
+  each device shares. Sync runs by hand, or on its own after each change.
 - Open notes from `commonplace:` links.
 - Print an action with the bodies of the projects it belongs to, outermost first, with
   `commonplace print URI`, to hand it to a coding agent as a prompt.
@@ -91,13 +95,14 @@ The [Android app](android) uses Jetpack Compose and the same Rust core. It cover
 journals, spaces, links, and the trash, with capture from Android's share menu and journal prompts
 through Android notifications. Its README describes the build and device setup.
 
-Curios, zettels, spaced repetition, sync, and the web come next.
+Curios, zettels, spaced repetition, and the web come next.
 
 ## Design
 
 The [specs](spec) define the data, independently of any implementation:
 
 - [Library format](spec/library-format.md): how a library stores its notes.
+- [Sync](spec/sync.md): how devices pair and sync libraries.
 - [Links](spec/links.md): note identifiers, wikilinks, and URIs.
 
 These decisions explain the choices behind them:

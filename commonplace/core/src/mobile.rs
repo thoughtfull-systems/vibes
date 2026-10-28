@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 
-use crate::sync::{Config, Host, Status, Syncer};
+use crate::sync::{Config, Host, OutgoingState, Status, Syncer};
 use crate::{
     Action, ActionChange, ActionDates, ActionView, Answer, Date, Days, Handled, Journal, ListKey,
     Note, NoteId, Question, Schedule, ShownTitles, Spaces, Style,
@@ -206,6 +206,28 @@ impl From<Config> for MobileSyncConfig {
                 .collect(),
         }
     }
+}
+
+#[derive(uniffi::Record)]
+pub struct MobilePairingRequest {
+    pub address: String,
+    pub code: String,
+    pub name: String,
+}
+
+#[derive(uniffi::Record)]
+pub struct MobileOutgoingPairing {
+    pub address: String,
+    /// The code that the other device shows too. Pairing by invite needs none.
+    pub code: Option<String>,
+    pub state: MobilePairingState,
+}
+
+#[derive(uniffi::Enum)]
+pub enum MobilePairingState {
+    Waiting,
+    Paired { name: String },
+    Failed { reason: String },
 }
 
 #[derive(uniffi::Record)]
@@ -450,6 +472,97 @@ impl MobileNotebook {
     pub fn sync_now(&self) -> Result<()> {
         self.with_syncer(|syncer| {
             syncer.sync_now();
+            Ok(())
+        })
+    }
+
+    /// This device's name, which devices that pair with it learn.
+    pub fn sync_name(&self) -> Result<String> {
+        self.with_syncer(|syncer| Ok(syncer.name()))
+    }
+
+    pub fn set_sync_name(&self, name: String) -> Result<()> {
+        self.with_syncer(|syncer| syncer.set_name(&name))
+    }
+
+    /// Makes an invite link that pairs the device that opens it within 15 minutes, once, and
+    /// shares `libraries` with it.
+    pub fn sync_invite(&self, libraries: Vec<String>) -> Result<String> {
+        self.with_syncer(|syncer| syncer.invite(&libraries))
+    }
+
+    /// Pairs with the device whose invite `link` is, in the background.
+    pub fn open_sync_invite(&self, link: String) -> Result<()> {
+        self.with_syncer(|syncer| syncer.open_invite(&link))
+    }
+
+    /// Announces this device on the local network, and listens for others, while the Sync screen
+    /// is open.
+    pub fn start_nearby(&self) -> Result<()> {
+        self.with_syncer(|syncer| syncer.start_nearby())
+    }
+
+    pub fn stop_nearby(&self) -> Result<()> {
+        self.with_syncer(|syncer| {
+            syncer.stop_nearby();
+            Ok(())
+        })
+    }
+
+    pub fn nearby_devices(&self) -> Result<Vec<MobileDevice>> {
+        self.with_syncer(|syncer| {
+            Ok(syncer
+                .nearby()
+                .into_iter()
+                .map(|device| MobileDevice { address: device.address, name: device.name })
+                .collect())
+        })
+    }
+
+    pub fn pair_nearby(&self, address: String) -> Result<()> {
+        self.with_syncer(|syncer| syncer.pair_nearby(&address))
+    }
+
+    pub fn pairing_requests(&self) -> Result<Vec<MobilePairingRequest>> {
+        self.with_syncer(|syncer| {
+            Ok(syncer
+                .requests()
+                .into_iter()
+                .map(|request| MobilePairingRequest {
+                    address: request.address,
+                    code: request.code,
+                    name: request.name,
+                })
+                .collect())
+        })
+    }
+
+    pub fn answer_pairing(&self, address: String, accept: bool) -> Result<()> {
+        self.with_syncer(|syncer| {
+            syncer.answer(&address, accept);
+            Ok(())
+        })
+    }
+
+    /// The pairing that this device asked for most recently.
+    pub fn outgoing_pairing(&self) -> Result<Option<MobileOutgoingPairing>> {
+        self.with_syncer(|syncer| {
+            Ok(syncer.outgoing().map(|outgoing| MobileOutgoingPairing {
+                address: outgoing.address,
+                code: outgoing.code,
+                state: match outgoing.state {
+                    OutgoingState::Waiting => MobilePairingState::Waiting,
+                    OutgoingState::Paired(name) => MobilePairingState::Paired { name },
+                    OutgoingState::Failed(reason) => MobilePairingState::Failed { reason },
+                },
+            }))
+        })
+    }
+
+    /// Forgets the outgoing pairing once the owner has seen how it went.
+    pub fn clear_outgoing_pairing(&self) -> Result<()> {
+        self.with_syncer(|syncer| {
+            syncer.clear_outgoing();
             Ok(())
         })
     }
@@ -966,6 +1079,12 @@ pub fn outline(body: String) -> Vec<MobileHeading> {
 #[uniffi::export]
 pub fn word_count(body: String) -> u64 {
     crate::word_count(&body) as u64
+}
+
+/// Whether `text` is a link that invites this device to pair with another.
+#[uniffi::export]
+pub fn is_sync_invite(text: String) -> bool {
+    Syncer::is_invite(&text)
 }
 
 #[cfg(test)]

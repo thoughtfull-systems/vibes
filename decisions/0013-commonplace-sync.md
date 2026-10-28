@@ -29,7 +29,8 @@ in the background.
 - **Per-library pairing.** Each library syncs with the devices its owner chose for it, and with no
   others, as decision 0007 requires.
 - **Both platforms.** One implementation in the Rust core serves Linux and Android.
-- **Simple pairing.** Pairing takes one address per device, which the owner can paste or type.
+- **Simple pairing.** Pairing two devices takes no typing. The owner taps a nearby device, scans a
+  code, or opens a link on one device, then confirms on the other if it asks.
 
 ## Decision
 
@@ -38,15 +39,26 @@ runs the transport in the core, behind a `sync` feature, and the
 [sync spec](../commonplace/spec/sync.md) defines the protocol.
 
 - **Device identity.** Each device makes an Ed25519 key pair the first time it syncs and keeps the
-  secret key in its own store, outside every library. The public key is the device's address, which
-  the owner copies to the other device. Each device names the devices it knows, as it names its
-  libraries.
+  secret key in its own store, outside every library. The public key is the device's address. Each
+  device has a name of its own, which devices that pair with it learn, and the owner can rename the
+  devices it knows, as they rename libraries.
 - **Encryption.** iroh runs Transport Layer Security (TLS) 1.3 inside each connection, keyed by the
   two devices' key pairs. Each side proves it holds the secret key for its address, so a connection
   reaches the device the owner entered, and nothing else.
-- **Trust.** A device syncs only with devices whose addresses the owner entered on it. The owner
-  enters each device's address on the other, so both sides agree. A device closes any connection
-  from an address it doesn't know.
+- **Trust.** A device syncs only with devices it trusts, and closes any connection from another.
+  Pairing makes two devices trust each other. It works in three ways.
+  - **Nearby.** While the owner has the Sync screen open, the device announces its address and name
+    on the local network with multicast Domain Name System (DNS), and lists the other devices that
+    do the same. Picking one sends it a pairing request. Both devices show a six-digit code, derived
+    from both addresses, and the owner accepts the request on the other device once the codes match.
+    A device ignores requests from devices it doesn't trust, unless its Sync screen is open.
+  - **Invite.** A device makes an invite: a link that holds its address and a random secret, which
+    works once, for 15 minutes. The device shows the link as a QR code for a phone to scan, and as
+    text to copy to another device and open there. The device that opens it sends the secret, and
+    the device that made it trusts it without asking. An invite can name libraries to share with the
+    device that uses it.
+  - **Address.** The owner enters another device's address by hand on each device, for when neither
+    of the others works.
 - **Shares.** Sharing a library with a device gives the library a share identifier, a random value
   that only the devices' own stores hold. The next connection offers the share to the other device,
   and its owner accepts it into a new library or an existing one, or declines it. A device can share
@@ -87,8 +99,9 @@ Against the criteria:
   accepted for that device.
 - **Both platforms:** iroh is a Rust library that builds for Linux and Android, and the core exposes
   it to Kotlin through the existing bindings.
-- **Simple pairing:** an address is a public key, 64 hexadecimal characters long, and accepting a
-  share takes a click.
+- **Simple pairing:** devices on one network pair with a tap and a glance at two codes, a phone
+  pairs by scanning a code, and other devices pair by opening a link. Accepting a share takes a
+  click.
 
 ## Rejected alternatives
 
@@ -118,8 +131,11 @@ Against the criteria:
 - Two devices sync only while both run at the same time. A device that stays on, such as a desktop
   or a small server, can hold every shared library and pass changes between devices that rarely run
   together. A command-line daemon for that role is follow-on work.
-- Each implementation needs screens to show the device's address, add and name devices, share
-  libraries, accept offers, switch automatic sync, sync by hand, and set a relay.
+- Each implementation needs screens to pair and name devices, share libraries, accept offers, switch
+  automatic sync, sync by hand, and set a relay. Android needs a camera to scan invites, and holds a
+  multicast lock while its Sync screen is open, so it can hear nearby devices.
+- Nearby devices on the local network learn the device's name and address while its Sync screen is
+  open, and never otherwise. The name never goes to n0's address lookup.
 - Device stores now hold a secret key. Implementations keep it out of backups that leave the device,
   as Android already does for libraries.
 - Moving a note between libraries still leaves the move to race with edits on other devices, as

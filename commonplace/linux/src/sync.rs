@@ -10,7 +10,9 @@ use std::sync::{Arc, mpsc};
 
 use adw::prelude::*;
 use commonplace_core::Error;
-use commonplace_core::sync::{Config, Host, Status, Syncer};
+use commonplace_core::sync::{
+    Config, Host, Nearby, Outgoing, OutgoingState, Request, Status, Syncer,
+};
 use gtk::{gio, glib};
 
 use crate::libraries::ask_name;
@@ -25,7 +27,14 @@ thread_local! {
 pub fn start(state: &Rc<State>, dir: &Path) {
     STATE.with(|cell| *cell.borrow_mut() = Rc::downgrade(state));
     match Syncer::start(dir, Arc::new(MainThread(glib::MainContext::default()))) {
-        Ok(syncer) => state.set_syncer(syncer),
+        Ok(syncer) => {
+            if syncer.name().is_empty()
+                && let Err(error) = syncer.set_name(&glib::host_name())
+            {
+                eprintln!("commonplace: couldn't name this device: {error}");
+            }
+            state.set_syncer(syncer);
+        }
         Err(error) => eprintln!("commonplace: couldn't start sync: {error}"),
     }
 }
@@ -102,14 +111,22 @@ struct Shown {
 struct Dialog {
     devices: adw::PreferencesGroup,
     dialog: adw::PreferencesDialog,
+    nearby: adw::PreferencesGroup,
+    nearby_rows: RefCell<Vec<gtk::Widget>>,
+    nearby_shown: RefCell<Option<Vec<Nearby>>>,
     offers: adw::PreferencesGroup,
+    /// The pairing this device asked for, and the alert that shows its code while it waits.
+    outgoing: RefCell<Option<(Outgoing, Option<adw::AlertDialog>)>>,
+    /// The alert for each request to pair that waits for an answer, by the requester's address.
+    requests: RefCell<Vec<(String, adw::AlertDialog)>>,
     rows: RefCell<Vec<(adw::PreferencesGroup, gtk::Widget)>>,
     shown: RefCell<Option<Shown>>,
     state: Rc<State>,
     statuses: RefCell<Vec<(String, adw::ExpanderRow)>>,
 }
 
-pub fn present_dialog(state: &Rc<State>, parent: &impl IsA<gtk::Widget>) {
+/// Shows the Sync dialog, and opens `invite`, a link from another device, if there is one.
+pub fn present_dialog(state: &Rc<State>, parent: &impl IsA<gtk::Widget>, invite: Option<&str>) {
     let Some(syncer) = state.syncer() else {
         let alert = adw::AlertDialog::new(
             Some("Sync Isn't Running"),
@@ -127,10 +144,26 @@ pub fn present_dialog(state: &Rc<State>, parent: &impl IsA<gtk::Widget>) {
     let address = syncer.address();
     let this_device = adw::PreferencesGroup::builder()
         .title("This Device")
-        .description("Enter this address on another device to pair the two")
+        .description("Devices that pair with this one know it by this name")
         .build();
+    let name =
+        adw::EntryRow::builder().title("Name").text(syncer.name()).show_apply_button(true).build();
+    name.connect_apply(glib::clone!(
+        #[weak]
+        state,
+        #[weak]
+        dialog,
+        move |row| {
+            if let Some(syncer) = state.syncer()
+                && let Err(error) = syncer.set_name(&row.text())
+            {
+                dialog.add_toast(adw::Toast::new(&error.to_string()));
+            }
+        }
+    ));
+    this_device.add(&name);
     let address_row = adw::ActionRow::builder()
-        .title("Address")
+        .title("Address, for Pairing by Hand")
         .subtitle(&address)
         .subtitle_selectable(true)
         .css_classes(["property"])
@@ -206,7 +239,20 @@ pub fn present_dialog(state: &Rc<State>, parent: &impl IsA<gtk::Widget>) {
         }
     ));
     options.add(&sync_now);
-    page.add(&options);
+
+    let nearby = adw::PreferencesGroup::builder()
+        .title("Pair a Device")
+        .description("Devices on this network show here while their Sync screen is open")
+        .build();
+    page.add(&nearby);
+    let other_ways = adw::PreferencesGroup::new();
+    let show_invite = adw::ButtonRow::builder().title("Show Invite").build();
+    let open_invite = adw::ButtonRow::builder().title("Open Invite").build();
+    let enter_address = adw::ButtonRow::builder().title("Enter Address").build();
+    other_ways.add(&show_invite);
+    other_ways.add(&open_invite);
+    other_ways.add(&enter_address);
+    page.add(&other_ways);
 
     let offers = adw::PreferencesGroup::builder()
         .title("Offers")
@@ -215,31 +261,47 @@ pub fn present_dialog(state: &Rc<State>, parent: &impl IsA<gtk::Widget>) {
     page.add(&offers);
     let devices = adw::PreferencesGroup::builder()
         .title("Devices")
-        .description("Devices that this one syncs with, once each has the other's address")
+        .description("Devices that this one syncs with")
         .build();
-    let add = gtk::Button::builder()
-        .icon_name("list-add-symbolic")
-        .tooltip_text("Add Device")
-        .css_classes(["flat"])
-        .build();
-    devices.set_header_suffix(Some(&add));
     page.add(&devices);
+    page.add(&options);
 
     let this = Rc::new(Dialog {
         devices,
         dialog: dialog.clone(),
+        nearby,
+        nearby_rows: RefCell::default(),
+        nearby_shown: RefCell::default(),
         offers,
+        outgoing: RefCell::default(),
+        requests: RefCell::default(),
         rows: RefCell::default(),
         shown: RefCell::default(),
         state: state.clone(),
         statuses: RefCell::default(),
     });
     this.add_actions();
-    add.connect_clicked(glib::clone!(
+    show_invite.connect_activated(glib::clone!(
+        #[weak]
+        this,
+        move |_| this.show_invite()
+    ));
+    open_invite.connect_activated(glib::clone!(
+        #[weak]
+        this,
+        move |_| this.ask_invite()
+    ));
+    enter_address.connect_activated(glib::clone!(
         #[weak]
         this,
         move |_| this.ask_device()
     ));
+    if let Err(error) = syncer.start_nearby() {
+        dialog.add_toast(adw::Toast::new(&format!("Can't look for nearby devices: {error}")));
+    }
+    if let Some(invite) = invite {
+        this.report(syncer.open_invite(invite));
+    }
     this.fill();
     let weak = Rc::downgrade(&this);
     state.connect_sync_changed(move || match weak.upgrade() {
@@ -256,7 +318,19 @@ pub fn present_dialog(state: &Rc<State>, parent: &impl IsA<gtk::Widget>) {
         move || this.fill()
     ));
     let open = RefCell::new(Some(this));
-    dialog.connect_closed(move |_| drop(open.take()));
+    dialog.connect_closed(glib::clone!(
+        #[weak]
+        state,
+        move |_| {
+            if let Some(syncer) = state.syncer() {
+                syncer.stop_nearby();
+                syncer.clear_outgoing();
+            }
+            if let Some(this) = open.take() {
+                this.close_alerts();
+            }
+        }
+    ));
     dialog.present(Some(parent));
 }
 
@@ -336,6 +410,293 @@ impl Dialog {
         for (device, row) in self.statuses.borrow().iter() {
             row.set_subtitle(&describe(&syncer.status(device)));
         }
+        let nearby = syncer.nearby();
+        if self.nearby_shown.borrow().as_ref() != Some(&nearby) {
+            self.show_nearby(&nearby);
+            *self.nearby_shown.borrow_mut() = Some(nearby);
+        }
+        self.show_requests(&syncer.requests());
+        self.show_outgoing(syncer.outgoing());
+    }
+
+    fn show_nearby(self: &Rc<Self>, nearby: &[Nearby]) {
+        for row in self.nearby_rows.borrow_mut().drain(..) {
+            self.nearby.remove(&row);
+        }
+        for device in nearby {
+            let row = adw::ActionRow::builder()
+                .title(&device.name)
+                .subtitle("On this network")
+                .activatable(true)
+                .build();
+            let pair = gtk::Button::builder()
+                .label("Pair")
+                .valign(gtk::Align::Center)
+                .css_classes(["suggested-action"])
+                .build();
+            let address = device.address.clone();
+            let start = glib::clone!(
+                #[weak(rename_to = this)]
+                self,
+                move || {
+                    let result = this.syncer().map_or(Ok(()), |s| s.pair_nearby(&address));
+                    this.report(result);
+                }
+            );
+            pair.connect_clicked(glib::clone!(
+                #[strong]
+                start,
+                move |_| start()
+            ));
+            row.connect_activated(move |_| start());
+            row.add_suffix(&pair);
+            self.nearby.add(&row);
+            self.nearby_rows.borrow_mut().push(row.upcast());
+        }
+        if nearby.is_empty() {
+            let row = adw::ActionRow::builder()
+                .title("Looking for devices on this network…")
+                .subtitle("Open Sync on the other device too")
+                .build();
+            row.add_prefix(&adw::Spinner::new());
+            self.nearby.add(&row);
+            self.nearby_rows.borrow_mut().push(row.upcast());
+        }
+    }
+
+    /// Asks the owner about each new request to pair, and closes the questions that expired.
+    fn show_requests(self: &Rc<Self>, requests: &[Request]) {
+        let mut shown = self.requests.borrow_mut();
+        shown.retain(|(address, alert)| {
+            let waiting = requests.iter().any(|request| &request.address == address);
+            if !waiting {
+                alert.force_close();
+            }
+            waiting
+        });
+        for request in requests {
+            if shown.iter().any(|(address, _)| *address == request.address) {
+                continue;
+            }
+            let alert = adw::AlertDialog::new(
+                Some(&format!("Pair With {}?", request.name)),
+                Some(&format!(
+                    "Pair only if {} shows the code {}.",
+                    request.name,
+                    spaced(&request.code)
+                )),
+            );
+            alert.add_responses(&[("decline", "_Decline"), ("pair", "_Pair")]);
+            alert.set_response_appearance("pair", adw::ResponseAppearance::Suggested);
+            alert.set_close_response("decline");
+            let address = request.address.clone();
+            alert.connect_response(
+                None,
+                glib::clone!(
+                    #[weak(rename_to = this)]
+                    self,
+                    move |_, response| {
+                        if let Some(syncer) = this.syncer() {
+                            syncer.answer(&address, response == "pair");
+                        }
+                    }
+                ),
+            );
+            alert.present(Some(&self.dialog));
+            shown.push((request.address.clone(), alert));
+        }
+    }
+
+    /// Shows the code while the other device's owner decides, and how the pairing ended.
+    fn show_outgoing(&self, outgoing: Option<Outgoing>) {
+        let mut shown = self.outgoing.borrow_mut();
+        if shown.as_ref().map(|(outgoing, _)| outgoing) == outgoing.as_ref() {
+            return;
+        }
+        if let Some((_, Some(alert))) = shown.take() {
+            alert.force_close();
+        }
+        let Some(outgoing) = outgoing else {
+            return;
+        };
+        let alert = match &outgoing.state {
+            OutgoingState::Waiting => outgoing.code.as_ref().map(|code| {
+                let alert = adw::AlertDialog::new(
+                    Some("Accept on the Other Device"),
+                    Some(&format!("Check that it shows the code {}.", spaced(code))),
+                );
+                alert.add_response("close", "_Hide");
+                alert.present(Some(&self.dialog));
+                alert
+            }),
+            OutgoingState::Paired(name) => {
+                self.dialog.add_toast(adw::Toast::new(&format!("Paired with {name}")));
+                None
+            }
+            OutgoingState::Failed(reason) => {
+                self.dialog.add_toast(adw::Toast::new(&format!("Couldn't pair: {reason}")));
+                None
+            }
+        };
+        *shown = Some((outgoing, alert));
+    }
+
+    fn close_alerts(&self) {
+        for (_, alert) in self.requests.borrow_mut().drain(..) {
+            alert.force_close();
+        }
+        if let Some((_, Some(alert))) = self.outgoing.borrow_mut().take() {
+            alert.force_close();
+        }
+    }
+
+    /// Shows an invite as a QR code and a link, with a switch for each library to share.
+    fn show_invite(self: &Rc<Self>) {
+        let picture = gtk::Picture::builder()
+            .can_shrink(false)
+            .halign(gtk::Align::Center)
+            .css_classes(["card"])
+            .build();
+        let link = gtk::Label::builder()
+            .selectable(true)
+            .wrap(true)
+            .wrap_mode(gtk::pango::WrapMode::Char)
+            .css_classes(["monospace", "caption"])
+            .build();
+        let copy = gtk::Button::builder()
+            .label("_Copy Link")
+            .use_underline(true)
+            .halign(gtk::Align::Center)
+            .css_classes(["pill"])
+            .build();
+        let shares = adw::PreferencesGroup::builder()
+            .title("Share")
+            .description("Libraries to offer the device that uses this invite")
+            .build();
+        let switches: Rc<RefCell<Vec<(String, adw::SwitchRow)>>> = Rc::default();
+        for space in self.state.spaces() {
+            let row = adw::SwitchRow::builder().title(&space.name).build();
+            shares.add(&row);
+            switches.borrow_mut().push((space.key, row));
+        }
+        let refresh = Rc::new(glib::clone!(
+            #[weak(rename_to = this)]
+            self,
+            #[weak]
+            picture,
+            #[weak]
+            link,
+            #[strong]
+            switches,
+            move || {
+                let libraries: Vec<String> = switches
+                    .borrow()
+                    .iter()
+                    .filter(|(_, row)| row.is_active())
+                    .map(|(key, _)| key.clone())
+                    .collect();
+                let Some(syncer) = this.syncer() else {
+                    return;
+                };
+                match syncer.invite(&libraries) {
+                    Ok(invite) => {
+                        picture.set_paintable(qr_texture(&invite).as_ref());
+                        link.set_text(&invite);
+                    }
+                    Err(error) => this.report(Err(error)),
+                }
+            }
+        ));
+        for (_, row) in switches.borrow().iter() {
+            row.connect_active_notify(glib::clone!(
+                #[strong]
+                refresh,
+                move |_| refresh()
+            ));
+        }
+        refresh();
+        copy.connect_clicked(glib::clone!(
+            #[weak(rename_to = this)]
+            self,
+            #[weak]
+            link,
+            move |button| {
+                button.clipboard().set_text(&link.text());
+                this.dialog.add_toast(adw::Toast::new("Invite link copied"));
+            }
+        ));
+        let content = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .spacing(18)
+            .margin_top(12)
+            .margin_bottom(24)
+            .margin_start(24)
+            .margin_end(24)
+            .build();
+        content.append(
+            &gtk::Label::builder()
+                .label(concat!(
+                    "Scan this code with the phone, or open the link on the other device. ",
+                    "It works once, for 15 minutes.",
+                ))
+                .wrap(true)
+                .justify(gtk::Justification::Center)
+                .build(),
+        );
+        content.append(&picture);
+        content.append(&link);
+        content.append(&copy);
+        content.append(&shares);
+        let view = adw::ToolbarView::new();
+        view.add_top_bar(&adw::HeaderBar::new());
+        view.set_content(Some(
+            &gtk::ScrolledWindow::builder()
+                .hscrollbar_policy(gtk::PolicyType::Never)
+                .propagate_natural_height(true)
+                .child(&content)
+                .build(),
+        ));
+        let invite =
+            adw::Dialog::builder().title("Invite a Device").content_width(420).child(&view).build();
+        invite.present(Some(&self.dialog));
+    }
+
+    /// Asks for an invite link from another device, and opens it.
+    fn ask_invite(self: &Rc<Self>) {
+        let entry = gtk::Entry::builder()
+            .placeholder_text("commonplace:pair/…")
+            .activates_default(true)
+            .build();
+        let alert = adw::AlertDialog::new(
+            Some("Open Invite"),
+            Some("Paste the link that the other device's Show Invite gives"),
+        );
+        alert.set_extra_child(Some(&entry));
+        alert.add_responses(&[("cancel", "_Cancel"), ("open", "_Open")]);
+        alert.set_response_appearance("open", adw::ResponseAppearance::Suggested);
+        alert.set_default_response(Some("open"));
+        alert.set_close_response("cancel");
+        alert.set_response_enabled("open", false);
+        entry.connect_changed(glib::clone!(
+            #[weak]
+            alert,
+            move |entry| alert.set_response_enabled("open", Syncer::is_invite(&entry.text()))
+        ));
+        alert.connect_response(
+            Some("open"),
+            glib::clone!(
+                #[weak(rename_to = this)]
+                self,
+                #[weak]
+                entry,
+                move |_, _| {
+                    let result = this.syncer().map_or(Ok(()), |s| s.open_invite(&entry.text()));
+                    this.report(result);
+                }
+            ),
+        );
+        alert.present(Some(&self.dialog));
+        entry.grab_focus();
     }
 
     fn rebuild(self: &Rc<Self>, shown: &Shown) {
@@ -470,7 +831,7 @@ impl Dialog {
         if config.devices.is_empty() {
             let row = adw::ActionRow::builder()
                 .title("No devices yet")
-                .subtitle("Add another device by its address")
+                .subtitle("Pair one above")
                 .build();
             self.devices.add(&row);
             self.rows.borrow_mut().push((self.devices.clone(), row.upcast()));
@@ -531,6 +892,40 @@ impl Dialog {
         );
         dialog.present(Some(&self.dialog));
         address.grab_focus();
+    }
+}
+
+/// A QR code for `text`, black on white, with the quiet zone that scanners need around it.
+fn qr_texture(text: &str) -> Option<gtk::gdk::Texture> {
+    const SCALE: usize = 6;
+    const QUIET: usize = 4;
+    let (width, modules) = commonplace_core::sync::qr_code(text).ok()?;
+    let side = (width + 2 * QUIET) * SCALE;
+    let mut pixels = vec![0xff; side * side];
+    for (index, dark) in modules.into_iter().enumerate() {
+        if !dark {
+            continue;
+        }
+        let (x, y) = ((index % width + QUIET) * SCALE, (index / width + QUIET) * SCALE);
+        for row in y..y + SCALE {
+            pixels[row * side + x..row * side + x + SCALE].fill(0);
+        }
+    }
+    let texture = gtk::gdk::MemoryTexture::new(
+        side as i32,
+        side as i32,
+        gtk::gdk::MemoryFormat::G8,
+        &glib::Bytes::from_owned(pixels),
+        side,
+    );
+    Some(texture.upcast())
+}
+
+/// A six-digit code split in two halves, as people read it aloud.
+fn spaced(code: &str) -> String {
+    match code.split_at_checked(3) {
+        Some((first, second)) => format!("{first} {second}"),
+        None => code.to_owned(),
     }
 }
 

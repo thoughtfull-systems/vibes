@@ -311,6 +311,11 @@ impl Window {
         this
     }
 
+    /// Shows the Sync dialog, opening `invite` if there is one.
+    pub fn open_sync(&self, invite: Option<&str>) {
+        crate::sync::present_dialog(&self.state, &self.window, invite);
+    }
+
     pub fn present(&self) {
         self.window.present();
     }
@@ -750,7 +755,7 @@ impl Window {
         sync.connect_activate(glib::clone!(
             #[weak(rename_to = this)]
             self,
-            move |_, _| crate::sync::present_dialog(&this.state, &this.window)
+            move |_, _| this.open_sync(None)
         ));
         for action in
             [follow_link, insert_link, libraries, save, search, sync, toggle_checkbox, toggle_space]

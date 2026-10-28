@@ -13,6 +13,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use iroh::endpoint::{Connection, ConnectionError, RecvStream, SendStream, presets};
 use iroh::{Endpoint, EndpointAddr, EndpointId, RelayMode, RelayUrl, SecretKey};
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use tokio::runtime::{Handle, Runtime};
 use tokio::sync::Notify;
@@ -20,7 +21,12 @@ use tokio::time::{sleep, timeout};
 
 use crate::{Error, NoteId};
 
+mod pairing;
+
+pub use pairing::{Nearby, Outgoing, OutgoingState, Request, pairing_code, qr_code};
+
 pub const ALPN: &[u8] = b"commonplace/sync/1";
+pub const PAIR_ALPN: &[u8] = b"commonplace/pair/1";
 const CONFIG: &str = "sync.json";
 const KEY: &str = "sync.key";
 
@@ -38,6 +44,8 @@ const REFUSED: u32 = 1;
 pub struct Config {
     pub automatic: bool,
     pub devices: Vec<Device>,
+    /// This device's own name, which devices that pair with it learn.
+    pub name: String,
     pub offers: Vec<Offer>,
     pub relay: Option<String>,
     pub shares: Vec<Share>,
@@ -48,6 +56,7 @@ impl Default for Config {
         Self {
             automatic: true,
             devices: Vec::new(),
+            name: String::new(),
             offers: Vec::new(),
             relay: None,
             shares: Vec::new(),
@@ -164,6 +173,7 @@ impl Syncer {
             endpoint,
             handle: runtime.handle().clone(),
             host,
+            pairing: Mutex::default(),
             pending: Mutex::default(),
             statuses: Mutex::default(),
             wake: Notify::new(),
@@ -193,20 +203,7 @@ impl Syncer {
         if key == self.address() {
             return Err(Error::InvalidAddress(address.to_owned()));
         }
-        self.inner.update(|config| {
-            match config.devices.iter_mut().find(|device| device.address == key) {
-                Some(device) => {
-                    device.direct = direct;
-                    device.name = name.to_owned();
-                }
-                None => config.devices.push(Device {
-                    address: key.clone(),
-                    direct,
-                    name: name.to_owned(),
-                }),
-            }
-            Ok(())
-        })?;
+        self.inner.trust(&key, name, direct)?;
         self.inner.sync_device(&key);
         Ok(key)
     }
@@ -240,22 +237,7 @@ impl Syncer {
 
     /// Shares `library` with `device`, which then receives an offer.
     pub fn share(&self, library: &str, device: &str) -> Result<(), Error> {
-        self.inner.update(|config| {
-            if config.device(device).is_none() {
-                return Err(Error::NoSuchDevice(device.to_owned()));
-            }
-            match config.shares.iter_mut().find(|share| share.library == library) {
-                Some(share) if share.devices.iter().any(|d| d == device) => {}
-                Some(share) => share.devices.push(device.to_owned()),
-                None => config.shares.push(Share {
-                    devices: vec![device.to_owned()],
-                    id: NoteId::generate().to_string(),
-                    library: library.to_owned(),
-                    synced: false,
-                }),
-            }
-            Ok(())
-        })?;
+        self.inner.share(library, device)?;
         self.inner.sync_device(device);
         Ok(())
     }
@@ -391,6 +373,7 @@ struct Inner {
     endpoint: Endpoint,
     handle: Handle,
     host: Arc<dyn Host>,
+    pairing: Mutex<pairing::Pairing>,
     /// The libraries that changed since automatic sync last ran.
     pending: Mutex<HashSet<String>>,
     statuses: Mutex<HashMap<String, Entry>>,
@@ -431,6 +414,43 @@ impl Inner {
         }
         self.host.changed();
         Ok(())
+    }
+
+    /// Trusts the device at `address` under `name`, with `direct` addresses to try first.
+    fn trust(&self, address: &str, name: &str, direct: Vec<SocketAddr>) -> Result<(), Error> {
+        self.update(|config| {
+            match config.devices.iter_mut().find(|device| device.address == address) {
+                Some(device) => {
+                    device.direct = direct;
+                    device.name = name.to_owned();
+                }
+                None => config.devices.push(Device {
+                    address: address.to_owned(),
+                    direct,
+                    name: name.to_owned(),
+                }),
+            }
+            Ok(())
+        })
+    }
+
+    fn share(&self, library: &str, device: &str) -> Result<(), Error> {
+        self.update(|config| {
+            if config.device(device).is_none() {
+                return Err(Error::NoSuchDevice(device.to_owned()));
+            }
+            match config.shares.iter_mut().find(|share| share.library == library) {
+                Some(share) if share.devices.iter().any(|d| d == device) => {}
+                Some(share) => share.devices.push(device.to_owned()),
+                None => config.shares.push(Share {
+                    devices: vec![device.to_owned()],
+                    id: NoteId::generate().to_string(),
+                    library: library.to_owned(),
+                    synced: false,
+                }),
+            }
+            Ok(())
+        })
     }
 
     /// Starts a sync with `device`, or asks the one running to go again.
@@ -626,6 +646,10 @@ async fn accept(inner: Arc<Inner>) {
             let Ok(connection) = incoming.await else {
                 return;
             };
+            if connection.alpn() == PAIR_ALPN {
+                pairing::respond(&inner, &connection).await;
+                return;
+            }
             let device = connection.remote_id().to_string();
             if inner.config().device(&device).is_none() {
                 connection.close(REFUSED.into(), b"unknown device");
@@ -754,17 +778,22 @@ async fn bind(key: SecretKey, config: &Config, network: Network) -> Result<Endpo
             .bind_addr("127.0.0.1:0")
             .map_err(sync_error)?,
     };
-    builder.alpns(vec![ALPN.to_vec()]).secret_key(key).bind().await.map_err(sync_error)
+    builder
+        .alpns(vec![ALPN.to_vec(), PAIR_ALPN.to_vec()])
+        .secret_key(key)
+        .bind()
+        .await
+        .map_err(sync_error)
 }
 
-async fn write(send: &mut SendStream, message: &Message) -> Result<(), Error> {
+async fn write(send: &mut SendStream, message: &impl Serialize) -> Result<(), Error> {
     let bytes = postcard::to_stdvec(message).map_err(sync_error)?;
     let length = u32::try_from(bytes.len()).map_err(sync_error)?;
     send.write_all(&length.to_le_bytes()).await.map_err(sync_error)?;
     send.write_all(&bytes).await.map_err(sync_error)
 }
 
-async fn read(recv: &mut RecvStream) -> Result<Message, Error> {
+async fn read<T: DeserializeOwned>(recv: &mut RecvStream) -> Result<T, Error> {
     let mut header = [0; 4];
     recv.read_exact(&mut header).await.map_err(sync_error)?;
     let length = u32::from_le_bytes(header) as usize;
@@ -974,5 +1003,88 @@ mod tests {
         let config = Config { automatic: false, ..Config::default() };
         save_config(dir.path(), &config).unwrap();
         assert_eq!(load_config(dir.path()).unwrap(), config);
+    }
+
+    /// The address that reaches `side` over loopback, which tests use instead of a lookup.
+    fn endpoint_addr(side: &Side) -> EndpointAddr {
+        let mut addr = EndpointAddr::new(side.syncer.inner.endpoint.id());
+        for socket in side.syncer.sockets() {
+            addr = addr.with_ip_addr(socket);
+        }
+        addr
+    }
+
+    fn trusts(side: &Side, other: &Side) -> bool {
+        side.syncer.config().device(&other.syncer.address()).is_some()
+    }
+
+    #[test]
+    fn pairs_by_invite_and_offers_its_libraries() {
+        let a = side("a");
+        let b = side("b");
+        a.syncer.set_name("Laptop").unwrap();
+        b.syncer.set_name("Phone").unwrap();
+        a.host.spaces().create_memo("a", "from a").unwrap();
+        let link = a.syncer.invite(&["a".to_owned()]).unwrap();
+        assert!(Syncer::is_invite(&link));
+        let secret = link.rsplit('/').next().unwrap().to_owned();
+        b.syncer.inner.pair(endpoint_addr(&a), Some(secret.clone()));
+        wait_for("the pairing", || trusts(&a, &b) && trusts(&b, &a));
+        assert_eq!(a.syncer.config().device(&b.syncer.address()).unwrap().name, "Phone");
+        assert_eq!(b.syncer.config().device(&a.syncer.address()).unwrap().name, "Laptop");
+        wait_for("the offer", || b.syncer.config().open_offers().count() == 1);
+
+        let c = side("c");
+        c.syncer.inner.pair(endpoint_addr(&a), Some(secret));
+        wait_for("the refusal", || {
+            matches!(c.syncer.outgoing().map(|out| out.state), Some(OutgoingState::Failed(_)))
+        });
+        assert!(!trusts(&a, &c));
+    }
+
+    #[test]
+    fn pairs_with_a_nearby_device_once_its_owner_accepts() {
+        let a = side("a");
+        let b = side("b");
+        b.syncer.set_name("Work laptop").unwrap();
+        b.syncer.listen_quietly();
+        a.syncer.listen_quietly();
+        let direct = b.syncer.sockets();
+        let address = b.syncer.address();
+        a.syncer.hear(Nearby { address: address.clone(), direct, name: "Work laptop".to_owned() });
+        assert_eq!(a.syncer.nearby().len(), 1);
+        a.syncer.pair_nearby(&address).unwrap();
+        wait_for("the request", || b.syncer.requests().len() == 1);
+        let request = b.syncer.requests()[0].clone();
+        assert_eq!(Some(request.code.clone()), a.syncer.outgoing().unwrap().code);
+        b.syncer.answer(&request.address, true);
+        wait_for("the pairing", || {
+            a.syncer.outgoing().map(|out| out.state)
+                == Some(OutgoingState::Paired("Work laptop".to_owned()))
+        });
+        assert!(trusts(&b, &a));
+        assert!(a.syncer.nearby().is_empty());
+    }
+
+    #[test]
+    fn refuses_requests_while_the_sync_screen_is_closed() {
+        let a = side("a");
+        let b = side("b");
+        a.syncer.inner.pair(endpoint_addr(&b), None);
+        wait_for("the refusal", || {
+            matches!(a.syncer.outgoing().map(|out| out.state), Some(OutgoingState::Failed(_)))
+        });
+        assert!(b.syncer.requests().is_empty());
+        assert!(!trusts(&a, &b) && !trusts(&b, &a));
+    }
+
+    #[test]
+    fn computes_the_same_code_on_both_devices() {
+        let a = SecretKey::generate().public().to_string();
+        let b = SecretKey::generate().public().to_string();
+        let code = pairing_code(&a, &b);
+        assert_eq!(code, pairing_code(&b, &a));
+        assert_eq!(code.len(), 6);
+        assert!(code.bytes().all(|byte| byte.is_ascii_digit()));
     }
 }

@@ -3,6 +3,8 @@
 package systems.thoughtfull.commonplace
 
 import android.content.Context
+import android.os.Build
+import android.provider.Settings
 import android.util.Log
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
@@ -105,17 +107,38 @@ class DeviceSync(context: Context, private val repository: NotebookRepository) {
         mutableError.value = (error as? MobileException.Failed)?.reason ?: error.message
         throw error
       }
+      if (core.syncName().isBlank()) core.setSyncName(deviceName())
       SyncWork.schedule(context, core.syncConfig().automatic)
     }
     mutableRevision.update { it + 1 }
     return core
   }
 
+  /** The name that the owner gave the phone in Android's settings, or its model. */
+  private fun deviceName(): String =
+    Settings.Global.getString(context.contentResolver, Settings.Global.DEVICE_NAME)
+      ?.takeIf { it.isNotBlank() } ?: Build.MODEL
+
   /** Starts sync again, for a change that takes effect only then. */
   suspend fun restart() {
     gate.withLock {
       withContext(Dispatchers.IO) { repository.use { it }.stopSync() }
       startLocked()
+    }
+  }
+
+  /** Stops announcing this device after its Sync screen closes, which can outlive the screen. */
+  fun stopNearby() {
+    scope.launch {
+      gate.withLock {
+        runCatching {
+          val core = repository.use { it }
+          if (core.syncRunning()) {
+            core.stopNearby()
+            core.clearOutgoingPairing()
+          }
+        }
+      }
     }
   }
 
