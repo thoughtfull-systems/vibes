@@ -17,6 +17,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import systems.thoughtfull.commonplace.core.ActionDates
@@ -43,6 +44,7 @@ class NotebookRepository(context: Context) {
   // Body saves outlive the ViewModel that started them, so closing the app keeps the last edits.
   val saves = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
   val preferences = context.getSharedPreferences("device", Context.MODE_PRIVATE)
+  val sync = DeviceSync(context, this)
 
   suspend fun <T> use(block: (MobileNotebook) -> T): T = withContext(dispatcher) {
     val core = notebook ?: MobileNotebook.open(directory.path).also { notebook = it }
@@ -84,6 +86,7 @@ class NotebookModel(application: Application) : AndroidViewModel(application) {
 
   init {
     refresh()
+    viewModelScope.launch { repository.sync.merges.drop(1).collect { refresh() } }
   }
 
   fun clearError() {

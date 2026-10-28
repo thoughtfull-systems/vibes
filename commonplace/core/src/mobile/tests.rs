@@ -238,3 +238,35 @@ fn phone_dragging_reorders_and_nests_whole_subtrees() {
     assert_eq!(mobile.note(child).unwrap().unwrap().parent, Some(a));
     assert!(mobile.move_action(b, Some(child), None).is_err());
 }
+
+struct Quiet;
+
+impl SyncListener for Quiet {
+    fn sync_changed(&self) {}
+
+    fn libraries_changed(&self) {}
+}
+
+#[test]
+fn sync_forgets_the_shares_of_removed_libraries() {
+    let dir = tempfile::tempdir().unwrap();
+    let mobile = MobileNotebook::open(dir.path().join("library").to_string_lossy().into()).unwrap();
+    assert!(mobile.sync_config().is_err());
+    let sync = dir.path().join("sync").to_string_lossy().into_owned();
+    mobile.clone().start_sync(sync.clone(), Box::new(Quiet)).unwrap();
+    let address = mobile.sync_address().unwrap();
+    let other = iroh::SecretKey::generate().public().to_string();
+    let device = mobile.add_device(other, "Laptop".into()).unwrap();
+    mobile.set_sync_automatic(false).unwrap();
+    let space = mobile.create_space().unwrap();
+    mobile.share_library(space.clone(), device.clone()).unwrap();
+    assert_eq!(mobile.sync_config().unwrap().shares[0].library, space);
+    mobile.remove_space(space).unwrap();
+    assert!(mobile.sync_config().unwrap().shares.is_empty());
+    mobile.stop_sync();
+    assert!(!mobile.sync_running());
+    mobile.clone().start_sync(sync, Box::new(Quiet)).unwrap();
+    assert_eq!(mobile.sync_address().unwrap(), address);
+    assert_eq!(mobile.sync_config().unwrap().devices[0].name, "Laptop");
+    mobile.stop_sync();
+}

@@ -74,6 +74,7 @@ fun CommonplaceApp(model: NotebookModel, incoming: Intent?, consumed: () -> Unit
     mutableStateOf<CaptureRequest?>(null)
   }
   var libraries by remember { mutableStateOf(false) }
+  var syncing by remember { mutableStateOf(false) }
   var inboxEditing by remember { mutableStateOf(false) }
   val focusManager = LocalFocusManager.current
   val keyboard = LocalSoftwareKeyboardController.current
@@ -144,6 +145,7 @@ fun CommonplaceApp(model: NotebookModel, incoming: Intent?, consumed: () -> Unit
       modifier = Modifier.imePadding(),
       topBar = {
         TopAppBar(title = { Text(tab) }, actions = {
+          TextButton(onClick = { syncing = true }) { Text("Sync") }
           TextButton(onClick = { libraries = true }) { Text("Libraries") }
         })
       },
@@ -223,6 +225,7 @@ fun CommonplaceApp(model: NotebookModel, incoming: Intent?, consumed: () -> Unit
     CaptureDialog(model, state, request, { capture = null }) { capture = null }
   }
   if (libraries) LibrariesDialog(model, state) { libraries = false }
+  if (syncing) SyncScreen(model, state) { syncing = false }
   NameUnnamedLibrary(model, state)
   state.error?.let { error ->
     AlertDialog(
