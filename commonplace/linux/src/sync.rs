@@ -21,6 +21,8 @@ use crate::state::{Space, State};
 const START_FAILED: &str = "Commonplace couldn't start sync. Its error went to standard error.";
 
 thread_local! {
+    /// Keeps the subscription to logind's sleep signal, which ends when dropped.
+    static SLEEP: RefCell<Option<gio::SignalSubscription>> = RefCell::default();
     /// The state that sync reads and writes, which only the main thread may touch.
     static STATE: RefCell<Weak<State>> = RefCell::default();
 }
@@ -55,6 +57,45 @@ pub fn restart(state: &Rc<State>, done: impl FnOnce() + 'static) {
             done();
         }
     });
+}
+
+/// Tells sync to reach other devices again whenever the network changes or the system wakes.
+pub fn watch_connectivity(state: &Rc<State>) {
+    let state = Rc::downgrade(state);
+    let reconnect = move || {
+        if let Some(state) = state.upgrade()
+            && let Some(syncer) = state.syncer()
+        {
+            syncer.reconnect();
+        }
+    };
+    let on_network = reconnect.clone();
+    gio::NetworkMonitor::default().connect_network_changed(move |_, available| {
+        if available {
+            on_network();
+        }
+    });
+    let bus = match gio::bus_get_sync(gio::BusType::System, gio::Cancellable::NONE) {
+        Ok(bus) => bus,
+        Err(error) => {
+            eprintln!("commonplace: couldn't watch for the system waking: {error}");
+            return;
+        }
+    };
+    let subscription = bus.subscribe_to_signal(
+        Some("org.freedesktop.login1"),
+        Some("org.freedesktop.login1.Manager"),
+        Some("PrepareForSleep"),
+        Some("/org/freedesktop/login1"),
+        None,
+        gio::DBusSignalFlags::NONE,
+        move |signal| {
+            if signal.parameters.get::<(bool,)>() == Some((false,)) {
+                reconnect();
+            }
+        },
+    );
+    SLEEP.with(|cell| cell.replace(Some(subscription)));
 }
 
 /// Hands each of sync's calls to the main thread, and waits for the answer.

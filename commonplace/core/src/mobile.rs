@@ -484,6 +484,14 @@ impl MobileNotebook {
         })
     }
 
+    /// Reports that the network changed, so devices that were out of reach may answer now.
+    pub fn sync_reconnect(&self) -> Result<()> {
+        self.with_syncer(|syncer| {
+            syncer.reconnect();
+            Ok(())
+        })
+    }
+
     /// This device's name, which devices that pair with it learn.
     pub fn sync_name(&self) -> Result<String> {
         self.with_syncer(|syncer| Ok(syncer.name()))
