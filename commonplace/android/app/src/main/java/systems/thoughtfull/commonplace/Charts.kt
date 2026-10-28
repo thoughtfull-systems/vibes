@@ -207,9 +207,15 @@ private fun NumberChart(
     high += 1
   }
   val sample = selected?.let { closestPoint(points, it, start, end) }
+  val lowest = points.minOf { it.second }
+  val highest = points.maxOf { it.second }
+  val legend = if (lowest == highest) {
+    chartNumber(lowest, question.kind)
+  } else {
+    "${chartNumber(lowest, question.kind)} – ${chartNumber(highest, question.kind)}"
+  }
   Text(
-    sample?.let { "${dateLabel(it.first)} · ${chartNumber(it.second, question.kind)}" }
-      ?: "${chartNumber(low, question.kind)} – ${chartNumber(high, question.kind)}",
+    sample?.let { "${dateLabel(it.first)} · ${chartNumber(it.second, question.kind)}" } ?: legend,
     Modifier.testTag("chart-value-${question.id}"),
     style = MaterialTheme.typography.labelSmall
   )
@@ -259,7 +265,13 @@ private fun DayChart(
         }
         if (question.kind == QuestionKind.YesNo) state else "${row.label}: $state"
       }
-    } ?: "A dot for a selection, × for no, a dashed ring for no answer",
+    } ?: if (question.kind == QuestionKind.YesNo) {
+      val row = rows.firstOrNull()
+      "A dot for yes, an × for no, and a dashed ring for no answer · " +
+        "Yes on ${row?.count ?: 0} of ${row?.answered ?: 0} days"
+    } else {
+      "A dot for each day that picked the option, and a dashed ring for days with no answer"
+    },
     Modifier.testTag("chart-value-${question.id}"),
     style = MaterialTheme.typography.labelSmall
   )
@@ -313,7 +325,11 @@ private fun DayChart(
         }
       }
       Text(
-        if (question.kind == QuestionKind.YesNo) "${row.count}/${row.answered}" else "${row.count}",
+        if (question.kind == QuestionKind.YesNo) {
+          "${row.count} of ${row.answered}"
+        } else {
+          "${row.count}"
+        },
         Modifier.width(48.dp),
         textAlign = TextAlign.End,
         style = MaterialTheme.typography.labelSmall

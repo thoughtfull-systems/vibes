@@ -87,9 +87,9 @@ impl JournalPanel {
         let questions = gtk::ListBox::builder().css_classes(["boxed-list"]).build();
         let schedules = gtk::ListBox::builder().css_classes(["boxed-list"]).build();
         let add_question =
-            gtk::Button::builder().label("Add Question").halign(gtk::Align::Start).build();
+            gtk::Button::builder().label("Add question").halign(gtk::Align::Start).build();
         let add_schedule =
-            gtk::Button::builder().label("Add Schedule").halign(gtk::Align::Start).build();
+            gtk::Button::builder().label("Add schedule").halign(gtk::Align::Start).build();
         let widget = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
             .spacing(12)
@@ -186,9 +186,9 @@ impl JournalPanel {
                 .title(glib::markup_escape_text(question.prompt.trim()))
                 .subtitle(describe_question(question))
                 .build();
-            let up = icon_button("go-up-symbolic", "Move Up");
+            let up = icon_button("go-up-symbolic", "Move up");
             up.set_sensitive(index > 0);
-            let down = icon_button("go-down-symbolic", "Move Down");
+            let down = icon_button("go-down-symbolic", "Move down");
             down.set_sensitive(index + 1 < current.len());
             let edit = icon_button("document-edit-symbolic", "Edit");
             let remove = icon_button("user-trash-symbolic", "Remove");
@@ -277,7 +277,7 @@ impl JournalPanel {
         let editor = QuestionEditor::new(question.as_ref());
         let adding = question.is_none();
         let dialog = adw::AlertDialog::new(
-            Some(if adding { "Add Question" } else { "Edit Question" }),
+            Some(if adding { "Add question" } else { "Edit question" }),
             None,
         );
         dialog.add_responses(&[
@@ -318,7 +318,7 @@ impl JournalPanel {
         let editor = ScheduleEditor::new(schedule.as_ref());
         let adding = schedule.is_none();
         let dialog = adw::AlertDialog::new(
-            Some(if adding { "Add Schedule" } else { "Edit Schedule" }),
+            Some(if adding { "Add schedule" } else { "Edit schedule" }),
             None,
         );
         dialog.add_responses(&[
@@ -408,7 +408,7 @@ impl QuestionEditor {
             }
             _ => {}
         }
-        let add = gtk::Button::builder().label("Add Option").halign(gtk::Align::Start).build();
+        let add = gtk::Button::builder().label("Add option").halign(gtk::Align::Start).build();
         add.connect_clicked(glib::clone!(
             #[weak]
             options_box,
@@ -527,7 +527,7 @@ impl QuestionEditor {
 
 fn add_option(holder: &gtk::Box, options: &Options, id: Option<String>, label: &str) {
     let entry = gtk::Entry::builder().text(label).placeholder_text("Option").hexpand(true).build();
-    let remove = icon_button("list-remove-symbolic", "Remove Option");
+    let remove = icon_button("list-remove-symbolic", "Remove option");
     let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     row.append(&entry);
     row.append(&remove);

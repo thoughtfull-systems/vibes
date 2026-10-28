@@ -123,7 +123,7 @@ class JournalInterfaceTest {
     assertEquals(1, repository.preferences.getInt("journals.range", -1))
     screenshot("timeline")
     compose.onNodeWithTag("journals-range").performTouchInput { click(center) }
-    compose.onNodeWithText("All Time").performClick()
+    compose.onNodeWithText("All time").performClick()
     compose.onNodeWithTag("note-row-$prior").assertExists()
     compose.onNodeWithTag("journals-menu").performClick()
     compose.onNodeWithText("New journal…").assertExists()
@@ -153,7 +153,7 @@ class JournalInterfaceTest {
       runCatching { compose.onNodeWithTag("journals-menu").assertExists() }.isSuccess
     }
     dot(entry, "brown").assertExists()
-    compose.onNodeWithText("All Notes").performClick()
+    compose.onNodeWithText("All notes").performClick()
     compose.onNodeWithTag("note-row-$entry").performScrollTo()
     dot(entry, "brown").assertExists()
     screenshot("all-notes")

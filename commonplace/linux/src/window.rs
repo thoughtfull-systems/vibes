@@ -198,7 +198,7 @@ impl Window {
         actions_content.set_vexpand(true);
         actions_page.append(&actions_content);
         let actions_results = NoteList::new(state.clone());
-        actions_results.set_empty("system-search-symbolic", "No Actions Found", "Try other words");
+        actions_results.set_empty("system-search-symbolic", "No actions found", "Try other words");
         let actions_stack = gtk::Stack::new();
         actions_stack.add_named(&actions_page, Some("list"));
         actions_stack.add_named(&actions_results.widget, Some("results"));
@@ -210,7 +210,7 @@ impl Window {
             (memos.widget.upcast_ref::<gtk::Widget>(), "memos", "Memos", crate::rows::MEMO_ICON),
             (actions_stack.upcast_ref(), "actions", "Actions", "object-select-symbolic"),
             (journals.widget.upcast_ref(), "journals", "Journals", crate::rows::JOURNAL_ICON),
-            (all_notes.widget.upcast_ref(), "all", "All Notes", "view-list-bullet-symbolic"),
+            (all_notes.widget.upcast_ref(), "all", "All notes", "view-list-bullet-symbolic"),
             (trash.widget.upcast_ref(), "trash", "Trash", "user-trash-symbolic"),
         ] {
             tabs.add_titled_with_icon(page, Some(name), title, icon);
@@ -243,7 +243,7 @@ impl Window {
         header.pack_end(
             &gtk::MenuButton::builder()
                 .icon_name("open-menu-symbolic")
-                .tooltip_text("Main Menu")
+                .tooltip_text("Main menu")
                 .menu_model(&menu)
                 .primary(true)
                 .build(),
@@ -837,7 +837,7 @@ impl Window {
             Mode::Execute => {
                 self.actions.set_empty(
                     "media-playback-start-symbolic",
-                    "Nothing to Do Next",
+                    "Nothing to do next",
                     "Tasks on the active list show up here",
                 );
                 let next = view(ActionView::Next);
@@ -846,15 +846,15 @@ impl Window {
                 };
                 vec![
                     section("Overdue", status(ActionStatus::Overdue), false),
-                    section("Due Soon", status(ActionStatus::DueSoon), false),
+                    section("Due soon", status(ActionStatus::DueSoon), false),
                     section("Active", status(ActionStatus::Normal), false),
-                    section("Starting Soon", status(ActionStatus::Upcoming), false),
+                    section("Starting soon", status(ActionStatus::Upcoming), false),
                 ]
             }
             Mode::Plan => {
                 self.actions.set_empty(
                     "document-edit-symbolic",
-                    "Nothing to Plan",
+                    "Nothing to plan",
                     "Actions queued for planning and stalled projects show up here",
                 );
                 let queue = view(ActionView::Planning);
@@ -862,15 +862,15 @@ impl Window {
                 let queued: Vec<NoteId> = queue.iter().map(|entry| entry.note.id).collect();
                 stalled.retain(|entry| !queued.contains(&entry.note.id));
                 vec![
-                    section("Planning Queue", queue, true),
-                    section("Stalled Projects", stalled, true),
+                    section("Planning queue", queue, true),
+                    section("Stalled projects", stalled, true),
                 ]
             }
             Mode::Inbox => unreachable!("the inbox has its own view"),
             Mode::Review => {
                 self.actions.set_empty(
                     "view-reveal-symbolic",
-                    "Nothing to Review",
+                    "Nothing to review",
                     "Projects, and waiting, scheduled, someday, and maybe actions show up here",
                 );
                 let since = glib::real_time() / 1000 - RECENT_DAYS * 24 * 60 * 60 * 1000;
@@ -889,11 +889,11 @@ impl Window {
                 };
                 vec![
                     section("Projects", unqueued(ActionView::Projects), true),
-                    section("Waiting For", unqueued(ActionView::Waiting), true),
+                    section("Waiting for", unqueued(ActionView::Waiting), true),
                     section("Scheduled", unqueued(ActionView::Scheduled), true),
                     section("Someday", unqueued(ActionView::Someday), true),
                     section("Maybe", unqueued(ActionView::Maybe), true),
-                    section("Recently Done", done, false),
+                    section("Recently done", done, false),
                 ]
             }
         };
@@ -936,7 +936,7 @@ impl Window {
         let content = gtk::Box::new(gtk::Orientation::Vertical, 12);
         content.append(&name);
         content.append(&library);
-        let dialog = adw::AlertDialog::new(Some("New Journal"), None);
+        let dialog = adw::AlertDialog::new(Some("New journal"), None);
         dialog.add_responses(&[("cancel", "_Cancel"), ("create", "_Create")]);
         dialog.set_response_appearance("create", adw::ResponseAppearance::Suggested);
         dialog.set_default_response(Some("create"));

@@ -98,12 +98,12 @@ class InterfaceTest {
     compose.onNodeWithTag("search").performTextClearance()
     compose.onNodeWithText("Actions").performClick()
     compose.onNodeWithText("Overdue").assertExists()
-    compose.onNodeWithText("Waiting For").assertDoesNotExist()
+    compose.onNodeWithText("Waiting for").assertDoesNotExist()
     screenshot("execute")
     compose.onNodeWithText("Execute").performClick()
     compose.onNodeWithText("Review").performClick()
-    compose.onNodeWithTag("actions").performScrollToNode(hasText("Waiting For"))
-    compose.onNodeWithText("Waiting For").assertExists()
+    compose.onNodeWithTag("actions").performScrollToNode(hasText("Waiting for"))
+    compose.onNodeWithText("Waiting for").assertExists()
     compose.onNodeWithText("Memos").performClick()
     compose.onNodeWithTag("search").performTextInput("Packing list")
     runBlocking {
@@ -224,7 +224,7 @@ class InterfaceTest {
       runCatching { compose.onNodeWithText("Trip to Portugal").assertExists() }.isSuccess
     }
     compose.onNodeWithTag("note-bottom-panel").assertExists()
-    compose.onNodeWithText("Linked From").assertExists()
+    compose.onNodeWithText("Linked from").assertExists()
     screenshot("bottom")
     compose.onNodeWithContentDescription("Back").performClick()
     compose.waitUntil(5_000) {
@@ -237,13 +237,12 @@ class InterfaceTest {
     screenshot("history")
     compose.onNodeWithContentDescription("Back").performClick()
     compose.waitUntil(5_000) {
-      runCatching { compose.onNodeWithText("All Notes").assertExists() }.isSuccess
+      runCatching { compose.onNodeWithText("All notes").assertExists() }.isSuccess
     }
-    compose.onNodeWithText("All Notes").performClick()
+    compose.onNodeWithText("All notes").performClick()
     compose.onNodeWithTag("search").performTextClearance()
     compose.onNodeWithTag("search").performTextInput("Fix up the house")
     val house = model.state.value.notes.first { it.title == "Fix up the house" }
-    repository.preferences.edit().putBoolean("steps.showDone.${house.id}", false).commit()
     compose.onAllNodesWithText("Fix up the house").onLast().performClick()
     compose.onNodeWithText("Steps").assertExists()
     compose.onNodeWithTag("step-entry").assertExists()

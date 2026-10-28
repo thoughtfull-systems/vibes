@@ -12,6 +12,8 @@ import android.net.wifi.WifiManager
 import android.os.Build
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -52,12 +54,17 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.google.zxing.BarcodeFormat
+import com.journeyapps.barcodescanner.BarcodeEncoder
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 import java.time.Instant
@@ -72,6 +79,7 @@ import systems.thoughtfull.commonplace.core.MobileOffer
 import systems.thoughtfull.commonplace.core.MobileOutgoingPairing
 import systems.thoughtfull.commonplace.core.MobilePairingRequest
 import systems.thoughtfull.commonplace.core.MobilePairingState
+import systems.thoughtfull.commonplace.core.MobileSpace
 import systems.thoughtfull.commonplace.core.MobileSyncConfig
 import systems.thoughtfull.commonplace.core.MobileSyncStatus
 import systems.thoughtfull.commonplace.core.isSyncInvite
@@ -104,6 +112,7 @@ internal fun SyncScreen(
   var adding by remember { mutableStateOf(false) }
   var naming by remember { mutableStateOf<MobileOffer?>(null) }
   var opening by remember { mutableStateOf(false) }
+  var inviting by remember { mutableStateOf(false) }
   var hiddenCode by remember { mutableStateOf<String?>(null) }
   LaunchedEffect(revision, state.revision) {
     view = try {
@@ -176,20 +185,6 @@ internal fun SyncScreen(
       toast(context, "That code isn't a Commonplace invite")
     }
   }
-  fun shareInvite() {
-    scope.launch {
-      try {
-        val link = sync.call { it.syncInvite(emptyList()) }
-        val send = Intent(Intent.ACTION_SEND).setType("text/plain")
-          .putExtra(Intent.EXTRA_TEXT, link)
-        context.startActivity(Intent.createChooser(send, "Share invite"))
-      } catch (cancelled: CancellationException) {
-        throw cancelled
-      } catch (error: Exception) {
-        toast(context, (error as? MobileException.Failed)?.reason ?: error.message.orEmpty())
-      }
-    }
-  }
   Dialog(close, DialogProperties(usePlatformDefaultWidth = false)) {
     Scaffold(
       modifier = Modifier.imePadding(),
@@ -249,10 +244,10 @@ internal fun SyncScreen(
         ) { Text("Scan invite") }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
           OutlinedButton(
-            onClick = ::shareInvite,
-            Modifier.weight(1f),
+            onClick = { inviting = true },
+            Modifier.weight(1f).testTag("sync-show-invite"),
             colors = neutralButtonColors()
-          ) { Text("Share invite") }
+          ) { Text("Show invite") }
           OutlinedButton(
             onClick = { opening = true },
             Modifier.weight(1f),
@@ -402,11 +397,12 @@ internal fun SyncScreen(
         confirmButton = { TextButton(onClick = { hiddenCode = code }) { Text("Hide") } }
       )
     }
+    if (inviting) InviteDialog(model, names) { inviting = false }
     if (opening) {
       TextInputDialog(
         "Open invite",
         "",
-        "Paste the link that the other device's invite gives",
+        "Paste the link that the other device's Show invite gives",
         { opening = false },
         valid = { isSyncInvite(it) }
       ) { link ->
@@ -433,6 +429,92 @@ internal fun SyncScreen(
           model.repository.preferences.edit().putString("name.$key", name.trim()).apply()
           model.refresh()
           act { it.acceptOffer(offer.share, offer.device, key) }
+        }
+      }
+    }
+  }
+}
+
+/** Shows an invite as a QR code and a link, with a switch for each library to share. */
+@Composable
+private fun InviteDialog(model: NotebookModel, spaces: List<MobileSpace>, close: () -> Unit) {
+  val context = LocalContext.current
+  var shared by remember { mutableStateOf(emptySet<String>()) }
+  var link by remember { mutableStateOf<String?>(null) }
+  LaunchedEffect(shared) {
+    link = try {
+      model.repository.sync.call { core ->
+        core.syncInvite(spaces.map { it.key }.filter { it in shared })
+      }
+    } catch (cancelled: CancellationException) {
+      throw cancelled
+    } catch (error: Exception) {
+      toast(context, (error as? MobileException.Failed)?.reason ?: error.message.orEmpty())
+      null
+    }
+  }
+  val code = remember(link) {
+    link?.let { BarcodeEncoder().encodeBitmap(it, BarcodeFormat.QR_CODE, 768, 768).asImageBitmap() }
+  }
+  Dialog(close, DialogProperties(usePlatformDefaultWidth = false)) {
+    Scaffold(
+      topBar = {
+        TopAppBar(
+          title = { Text("Invite a device") },
+          navigationIcon = { IconButton(onClick = close) { AppIcon(R.drawable.back, "Back") } }
+        )
+      }
+    ) { padding ->
+      Column(
+        Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState())
+          .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+      ) {
+        Text(
+          "Scan this code with a phone, or open the link on the other device. It works once, " +
+            "for 15 minutes.",
+          textAlign = TextAlign.Center
+        )
+        code?.let {
+          // Scanners need dark modules on a light background, whatever the theme.
+          Image(
+            it,
+            null,
+            Modifier.size(240.dp).background(Color.White).padding(12.dp)
+              .testTag("sync-invite-code")
+          )
+        }
+        link?.let { current ->
+          SelectionContainer {
+            Text(
+              current,
+              Modifier.testTag("sync-invite-link"),
+              fontFamily = FontFamily.Monospace,
+              style = MaterialTheme.typography.bodySmall
+            )
+          }
+          Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = {
+              context.getSystemService(ClipboardManager::class.java)
+                .setPrimaryClip(ClipData.newPlainText("Commonplace invite", current))
+              // Android 13 and later confirm copies on their own.
+              if (Build.VERSION.SDK_INT < 33) toast(context, "Invite link copied")
+            }, colors = neutralButtonColors()) { Text("Copy link") }
+            OutlinedButton(onClick = {
+              val send = Intent(Intent.ACTION_SEND).setType("text/plain")
+                .putExtra(Intent.EXTRA_TEXT, current)
+              context.startActivity(Intent.createChooser(send, "Share link"))
+            }, colors = neutralButtonColors()) { Text("Share link") }
+          }
+        }
+        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+          Section("Share", "Libraries to offer the device that uses this invite")
+          spaces.forEach { space ->
+            ToggleRow(model.repository.name(space.key), space.key in shared) { on ->
+              shared = if (on) shared + space.key else shared - space.key
+            }
+          }
         }
       }
     }

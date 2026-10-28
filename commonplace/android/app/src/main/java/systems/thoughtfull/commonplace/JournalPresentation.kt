@@ -123,11 +123,11 @@ internal fun entryTime(timestamp: Long): String = Instant.ofEpochMilli(timestamp
 // Match the Linux dropdown's increasing ranges, including today in each range.
 internal enum class JournalRange(val label: String, val days: Int) {
   TODAY("Today", 1),
-  WEEK("Last 7 Days", 7),
-  MONTH("Last 30 Days", 30),
-  QUARTER("Last 90 Days", 90),
-  YEAR("Last Year", 365),
-  ALL("All Time", 0);
+  WEEK("Last 7 days", 7),
+  MONTH("Last 30 days", 30),
+  QUARTER("Last 90 days", 90),
+  YEAR("Last year", 365),
+  ALL("All time", 0);
 
   fun since(today: LocalDate = LocalDate.now(), zone: ZoneId = ZoneId.systemDefault()): Long =
     if (days == 0) {

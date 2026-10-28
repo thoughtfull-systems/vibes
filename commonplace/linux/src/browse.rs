@@ -143,7 +143,7 @@ impl Browser {
         let labels: Vec<&str> = scope.orders().iter().map(|order| order.label()).collect();
         let order = gtk::DropDown::from_strings(&labels);
         let newest_first = gtk::ToggleButton::new();
-        let any_day = gtk::Button::with_mnemonic("_Any Day");
+        let any_day = gtk::Button::with_mnemonic("_Any day");
         let (from_button, calendar) = day_picker("Any day", Some(any_day.upcast_ref()));
         let reset = gtk::Button::with_mnemonic("_Reset");
         let dimmed = |text: &str| gtk::Label::builder().label(text).css_classes(["dimmed"]).build();
@@ -289,9 +289,9 @@ impl Browser {
         let order = self.selected_order();
         let newest_first = self.newest_first.is_active();
         let (icon, tooltip) = if newest_first {
-            ("view-sort-descending-symbolic", "Latest First")
+            ("view-sort-descending-symbolic", "Latest first")
         } else {
-            ("view-sort-ascending-symbolic", "Earliest First")
+            ("view-sort-ascending-symbolic", "Earliest first")
         };
         self.newest_first.set_icon_name(icon);
         self.newest_first.set_tooltip_text(Some(tooltip));
@@ -340,23 +340,23 @@ impl Browser {
         let filtered = !query.trim().is_empty() || from.is_some();
         let (icon, title, description) = match (scope, filtered) {
             (Scope::All, false) => {
-                ("document-edit-symbolic", "No Notes", "Capture a memo or an action to start")
+                ("document-edit-symbolic", "No notes", "Capture a memo or an action to start")
             }
             (Scope::Memos, false) => {
-                (crate::rows::MEMO_ICON, "No Memos", "Capture one with commonplace capture memo")
+                (crate::rows::MEMO_ICON, "No memos", "Capture one with commonplace capture memo")
             }
             (Scope::Trash, false) => {
-                ("user-trash-symbolic", "Trash Is Empty", "Notes you trash wait here")
+                ("user-trash-symbolic", "Trash is empty", "Notes you trash wait here")
             }
             (Scope::All, true) => {
-                ("system-search-symbolic", "No Notes Found", "Try other words or another day")
+                ("system-search-symbolic", "No notes found", "Try other words or another day")
             }
             (Scope::Memos, true) => {
-                ("system-search-symbolic", "No Memos Found", "Try other words or another day")
+                ("system-search-symbolic", "No memos found", "Try other words or another day")
             }
             (Scope::Trash, true) => (
                 "system-search-symbolic",
-                "Nothing Found in the Trash",
+                "Nothing found in the trash",
                 "Try other words or another day",
             ),
         };

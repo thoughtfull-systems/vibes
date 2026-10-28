@@ -133,7 +133,7 @@ internal fun BrowseScreen(
   }
   // The menus follow the Linux browser's order.
   val orders = when (tab) {
-    "All Notes" -> listOf(
+    "All notes" -> listOf(
       BrowseOrder.CREATED,
       BrowseOrder.MODIFIED,
       BrowseOrder.DUE,
@@ -153,6 +153,7 @@ internal fun BrowseScreen(
       verticalArrangement = Arrangement.spacedBy(0.dp)
     ) {
       Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("Order by", color = MaterialTheme.colorScheme.onSurfaceVariant)
         MenuControl(
           order,
           orders,
@@ -171,6 +172,11 @@ internal fun BrowseScreen(
         }
       }
       Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+          "From",
+          Modifier.padding(end = 4.dp),
+          color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
         OutlinedButton(
           onClick = { calendar = true },
           shape = RoundedCornerShape(6.dp),
@@ -225,11 +231,11 @@ internal fun BrowseScreen(
 private fun BrowseEmpty(tab: String, filtered: Boolean) {
   val retry = "Try other words or another day"
   when {
-    filtered && tab == "Memos" -> EmptyNotes(R.drawable.search, "No Memos Found", retry)
-    filtered && tab == "Trash" -> EmptyNotes(R.drawable.search, "Nothing Found in the Trash", retry)
-    filtered -> EmptyNotes(R.drawable.search, "No Notes Found", retry)
-    tab == "Memos" -> EmptyNotes(R.drawable.memo, "No Memos", "Capture one with quick capture")
-    tab == "Trash" -> EmptyNotes(R.drawable.trash, "Trash Is Empty", "Notes you trash wait here")
-    else -> EmptyNotes(R.drawable.plan, "No Notes", "Capture a memo or an action to start")
+    filtered && tab == "Memos" -> EmptyNotes(R.drawable.search, "No memos found", retry)
+    filtered && tab == "Trash" -> EmptyNotes(R.drawable.search, "Nothing found in the trash", retry)
+    filtered -> EmptyNotes(R.drawable.search, "No notes found", retry)
+    tab == "Memos" -> EmptyNotes(R.drawable.memo, "No memos", "Capture one with quick capture")
+    tab == "Trash" -> EmptyNotes(R.drawable.trash, "Trash is empty", "Notes you trash wait here")
+    else -> EmptyNotes(R.drawable.plan, "No notes", "Capture a memo or an action to start")
   }
 }

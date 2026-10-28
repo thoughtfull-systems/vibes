@@ -83,13 +83,13 @@ internal fun InboxScreen(
       if (skipped.isEmpty()) {
         EmptyNotes(
           R.drawable.inbox,
-          "Inbox Is Empty",
+          "Inbox is empty",
           "Tasks you capture wait here until you sort them"
         )
       } else {
         EmptyNotes(
           R.drawable.inbox,
-          "Nothing Left to Sort",
+          "Nothing left to sort",
           "Start over to sort the actions you skipped"
         )
         Button(onClick = { skipped = emptyList() }) { Text("Start over") }
@@ -179,7 +179,7 @@ private fun InboxItem(
   }
   Column(Modifier.fillMaxSize().testTag("inbox-processor")) {
     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
-      Text("Sort the Inbox", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+      Text("Sort the inbox", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
       Text(if (remaining == 1) "Last one" else "${remaining - 1} more")
     }
     Column(

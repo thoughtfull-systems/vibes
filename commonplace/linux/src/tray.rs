@@ -26,9 +26,9 @@ pub enum Event {
 /// The menu's items, in the order it shows them, by their ID in the menu's layout. ID 0 is the
 /// menu itself.
 const ITEMS: [(i32, &str, Event); 4] = [
-    (1, "Quick Capture _Action", Event::CaptureAction),
-    (4, "Quick Capture _Journal Entry", Event::CaptureEntry),
-    (2, "Quick Capture _Memo", Event::CaptureMemo),
+    (1, "Quick capture _action", Event::CaptureAction),
+    (4, "Quick capture _journal entry", Event::CaptureEntry),
+    (2, "Quick capture _memo", Event::CaptureMemo),
     (3, "_Quit", Event::Quit),
 ];
 

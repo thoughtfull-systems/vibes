@@ -22,6 +22,10 @@ const LOCK: &str = "lock";
 /// The files of a library kept directly in the directory, before libraries had folders of their
 /// own.
 const SINGLE_LIBRARY: [&str; 2] = ["library.loro", "library.log"];
+/// The note setting that every app shares for whether an action's steps list shows done steps.
+const SHOW_DONE_STEPS: &str = "steps.show_done";
+/// Where the Linux app kept that setting before the Android app shared it.
+const LINUX_SHOW_DONE_STEPS: &str = "linux.steps.show_done";
 
 struct Space {
     key: String,
@@ -289,6 +293,12 @@ impl Spaces {
         self.owner(id)?.note_setting(id, key)
     }
 
+    /// Whether an action's list of steps shows the ones that are done.
+    pub fn shows_done_steps(&self, id: NoteId) -> bool {
+        let setting = |key| self.note_setting(id, key);
+        setting(SHOW_DONE_STEPS).or_else(|| setting(LINUX_SHOW_DONE_STEPS)) == Some(1)
+    }
+
     pub fn create_memo(&mut self, space: &str, body: &str) -> Result<NoteId, Error> {
         self.library_mut(space)?.create_memo(body)
     }
@@ -433,6 +443,11 @@ impl Spaces {
 
     pub fn remove_note_setting(&mut self, id: NoteId, key: &str) -> Result<(), Error> {
         self.owner_mut(id)?.remove_note_setting(id, key)
+    }
+
+    pub fn set_shows_done_steps(&mut self, id: NoteId, shown: bool) -> Result<(), Error> {
+        self.set_note_setting(id, SHOW_DONE_STEPS, i64::from(shown))?;
+        self.remove_note_setting(id, LINUX_SHOW_DONE_STEPS)
     }
 
     /// Moves an action under `parent`, or to the top level of its library, at `index` among its
@@ -636,6 +651,19 @@ mod tests {
         single.create_memo("only", "x").unwrap();
         single.set_shown("only", false);
         assert_eq!(single.notes().len(), 1);
+    }
+
+    #[test]
+    fn keeps_whether_done_steps_show_where_every_app_reads_it() {
+        let mut spaces = Spaces::in_memory(&["a"]);
+        let project = spaces.library_mut("a").unwrap().create_task("project", None).unwrap();
+        assert!(!spaces.shows_done_steps(project));
+        spaces.set_note_setting(project, LINUX_SHOW_DONE_STEPS, 1).unwrap();
+        assert!(spaces.shows_done_steps(project));
+        spaces.set_shows_done_steps(project, false).unwrap();
+        assert!(!spaces.shows_done_steps(project));
+        assert_eq!(spaces.note_setting(project, LINUX_SHOW_DONE_STEPS), None);
+        assert_eq!(spaces.note_setting(project, SHOW_DONE_STEPS), Some(0));
     }
 
     #[test]

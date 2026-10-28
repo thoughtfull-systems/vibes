@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use crate::sync::{Config, Host, OutgoingState, Status, Syncer};
 use crate::{
     Action, ActionChange, ActionDates, ActionView, Answer, Date, Days, EditBase, Handled, Journal,
-    ListKey, Note, NoteId, Question, Schedule, ShownTitles, Spaces, Style,
+    ListKey, Note, NoteId, Question, QuestionKind, Schedule, ShownTitles, Spaces, Style,
 };
 
 uniffi::custom_type!(Date, String, {
@@ -920,6 +920,14 @@ impl MobileNotebook {
     pub fn note_setting(&self, id: NoteId, key: String) -> Result<Option<i64>> {
         Ok(self.state()?.spaces.note_setting(id, &key))
     }
+
+    pub fn shows_done_steps(&self, id: NoteId) -> Result<bool> {
+        Ok(self.state()?.spaces.shows_done_steps(id))
+    }
+
+    pub fn set_shows_done_steps(&self, id: NoteId, shown: bool) -> Result<()> {
+        self.write(|state| state.spaces.set_shows_done_steps(id, shown))
+    }
 }
 
 fn mobile_note(spaces: &Spaces, note: Note) -> MobileNote {
@@ -962,6 +970,16 @@ pub fn note_uri(id: NoteId) -> String {
 #[uniffi::export]
 pub fn parse_note_uri(uri: String) -> Option<NoteId> {
     crate::parse_note_uri(&uri)
+}
+
+#[uniffi::export]
+pub fn answer_placeholder(kind: QuestionKind) -> String {
+    kind.placeholder()
+}
+
+#[uniffi::export]
+pub fn parse_answer(kind: QuestionKind, text: String) -> Option<Answer> {
+    kind.parse_answer(&text)
 }
 
 /// Reads `HH:MM` as minutes since midnight.

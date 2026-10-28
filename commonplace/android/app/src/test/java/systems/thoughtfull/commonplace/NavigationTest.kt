@@ -18,9 +18,9 @@ class NavigationTest {
 
   @Test
   fun missingNotesAreSkippedAndOpeningTheCurrentLocationDoesNotAddHistory() {
-    val start = Navigation(Location("All Notes"))
-    val first = start.go(Location("All Notes", "deleted"))
-    val second = first.go(Location("All Notes", "current"))
+    val start = Navigation(Location("All notes"))
+    val first = start.go(Location("All notes", "deleted"))
+    val second = first.go(Location("All notes", "current"))
     assertEquals(start, second.back { it != "deleted" })
     assertEquals(second, second.go(second.current))
   }

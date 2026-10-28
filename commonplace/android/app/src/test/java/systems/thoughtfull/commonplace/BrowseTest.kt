@@ -69,13 +69,13 @@ class BrowseTest {
     val undated = note("undated")
     assertEquals(
       listOf(withDue, undated),
-      browseNotes(listOf(undated, withDue), "All Notes", "", BrowseOrder.DUE, false, null)
+      browseNotes(listOf(undated, withDue), "All notes", "", BrowseOrder.DUE, false, null)
     )
     assertEquals(
       listOf(withDue),
       browseNotes(
         listOf(undated, withDue),
-        "All Notes",
+        "All notes",
         "",
         BrowseOrder.DUE,
         false,
@@ -110,7 +110,7 @@ class ActionSectionsTest {
     assertEquals(listOf("active"), execute[2].entries.map { it.note.id })
     assertTrue(execute.flatMap { it.entries }.none { it.note.id == "waiting" })
     val review = actionSections("Review", views, "")
-    assertEquals(listOf(waiting), review.first { it.title == "Waiting For" }.entries)
+    assertEquals(listOf(waiting), review.first { it.title == "Waiting for" }.entries)
   }
 
   @Test

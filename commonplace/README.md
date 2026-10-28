@@ -26,26 +26,28 @@ drill a fact, to develop an idea a little more each time, or to check on a proje
 
 The Linux app covers memos, actions, and journals:
 
-- Switch between the five tabs, Memos, Actions, Journals, All Notes, and Trash. The search bar
+- Switch between the five tabs, Memos, Actions, Journals, All notes, and Trash. The search bar
   beside them filters each tab's notes until you clear it. A note opens below the tabs and the
   search bar. Back retraces visited notes and tabs; Escape returns to the listing.
 - Write and edit memos in an editor that renders Markdown as you write, shows the syntax of whatever
   the cursor touches, and saves as you type. A memo shows its details beside it and its backlinks
   below it.
-- Capture a memo or a task from a small window or from the command line, or create one from the link
-  picker. Only capture puts actions in the inbox, so an action's list picker offers Inbox only while
-  the action started there.
+- Capture a memo, a task, or a journal entry from a small window, with buttons that switch between
+  the three, or capture a memo or a task from the command line, or create one from the link picker.
+  Only capture puts actions in the inbox, so an action's list picker offers Inbox only while the
+  action started there.
 - Organize actions the Getting Things Done way, with projects, steps, lists, due dates, and start
   dates, and work with them in four modes, Execute, Plan, Review, and Inbox.
   [Where actions show](#where-actions-show) describes what each mode lists.
 - Mark an action done.
 - Archive any note with the button at the bottom of its details sidebar, to set it aside without
   changing it. Archived memos leave the Memos tab, and archived actions leave the four modes. All
-  Notes lists archived notes, and ordering it by archive date lists only them.
+  notes lists archived notes, and ordering it by archive date lists only them.
 - Keep journals, each with its own questions: text that the entry's body holds under a heading for
   each, and short text, numbers, scales, choices, yes or no, durations, and times of day that the
-  entry keeps as answers. A journal's sidebar edits its questions, its color, its schedules, and
-  whether it prompts on this device.
+  entry keeps as answers. A duration takes minutes, such as `90`, or hours and minutes, such as
+  `1:30` or `1h30m`. A journal's sidebar edits its questions, its color, its schedules, and whether
+  it prompts on this device.
 - Get prompted by a notification that names the journal, on the days a schedule picks, at fixed
   times or at random times within a window. Answer it, snooze it for 15 minutes or an hour, or skip
   it. Answering opens the capture window for that prompt. Your notification server's do-not-disturb
@@ -68,8 +70,8 @@ The Linux app covers memos, actions, and journals:
   again to double it, as `**` makes text bold and `==` highlights it.
 - Search notes, move them to the trash from a note's menu, and restore or delete them from the Trash
   tab.
-- Browse memos in the Memos tab, every note in All Notes, and the trash in Trash. Order them by
-  creation, change, or trash date, and in All Notes by the due or start dates of actions, or by
+- Browse memos in the Memos tab, every note in All notes, and the trash in Trash. Order them by
+  creation, change, or trash date, and in All notes by the due or start dates of actions, or by
   archive date, which lists only the archive. Pick a day to start from, and the list runs forward or
   back from it in the order's direction. Reset returns a tab to its defaults.
 - Keep the filters, the sidebar widths, and the screen you last viewed on the device, so the app
@@ -85,8 +87,9 @@ The Linux app covers memos, actions, and journals:
   quits.
 - Sync libraries with your other devices, Linux or Android, over encrypted connections. In the Sync
   dialog, pair a device on the same network with a click and a matching code, show an invite as a QR
-  code for a phone to scan, or open an invite link from another device. Then choose which libraries
-  each device shares. Sync runs by hand, or on its own after each change.
+  code for a phone to scan, with the libraries it offers, or open an invite link from another
+  device. Then choose which libraries each device shares. Sync runs by hand, or on its own after
+  each change. A new relay server takes effect at once.
 - Open notes from `commonplace:` links.
 - Print an action with the bodies of the projects it belongs to, outermost first, with
   `commonplace print URI`, to hand it to a coding agent as a prompt.
@@ -157,7 +160,7 @@ devenv shell -- commonplace-test --date 2026-01-15
 The generator uses noon Coordinated Universal Time (UTC) on that date for creation, modification,
 archive, and trash timestamps. It also dates action states and journal entries from that time, and
 counts due and start dates from the chosen day. The app uses the real clock when it opens, so later
-edits use the current time. Choose **All Time** in Journals to see entries outside its recent date
+edits use the current time. Choose **All time** in Journals to see entries outside its recent date
 range. Run `commonplace-test --help` to see the options.
 
 Exit and reenter `devenv shell` after changing the launcher, or use the command here from outside
@@ -202,8 +205,8 @@ Some actions stay out of all four modes on purpose:
 - **Actions inside a done or archived project,** which no longer matter.
 - **Projects and tasks that start more than a week from now,** which their start date hides until
   then. Review shows those with a start date of their own.
-- **Archived actions.** All Notes lists them, and ordering it by archive date lists only them.
-- **Done actions** after their first week. All Notes lists them.
+- **Archived actions.** All notes lists them, and ordering it by archive date lists only them.
+- **Done actions** after their first week. All notes lists them.
 - **Inbox actions you skip,** until the next time you sort the inbox.
 
 An action stays in the planning queue, out of Execute and Review, until you take it out, even after
@@ -265,11 +268,12 @@ xdg-mime default systems.thoughtfull.Commonplace.desktop x-scheme-handler/common
 
 Linux has no standard way for an app to claim a global keyboard shortcut, so bind keys to
 `commonplace capture memo`, `commonplace capture action`, and `commonplace capture journal` in your
-desktop's settings. Each opens the quick capture window for its kind of note. A journal entry starts
-in the journal you name after `journal`, by its name or its `commonplace:` URI, or in the journal
-you last wrote in, and buttons in the window switch journals. A binding that gives the URI keeps
-working when you rename the journal. Its Discard button throws the text away. The commands start
-Commonplace if it isn't running, and work the same from inside the app.
+desktop's settings. Each opens the quick capture window on its kind of note, and buttons at the top
+of the window switch kinds. A journal entry starts in the journal you name after `journal`, by its
+name or its `commonplace:` URI, or in the journal you last wrote in, and buttons in the window
+switch journals. A binding that gives the URI keeps working when you rename the journal. Its Discard
+button throws the text away. The commands start Commonplace if it isn't running, and work the same
+from inside the app.
 
 In Sway, for example, these lines make the window float and bind a key sequence to each command:
 press `$mod+c`, then `m` for a memo, `a` for an action, or `j` for a journal entry. Escape backs
@@ -287,7 +291,7 @@ mode $capture {
     bindsym Escape mode "default"
 }
 bindsym $mod+c mode $capture
-for_window [app_id="systems.thoughtfull.Commonplace" title="^Quick Capture$"] floating enable
+for_window [app_id="systems.thoughtfull.Commonplace" title="^Quick capture$"] floating enable
 ```
 
 [0001]: ../decisions/0001-languages-and-technologies.md

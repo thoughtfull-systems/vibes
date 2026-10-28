@@ -64,10 +64,7 @@ internal fun NoteBottomPanel(
   if (note.action == null && backlinks.isEmpty()) return
   val state by model.state.collectAsState()
   val context = rememberRowContext(state)
-  val settings = model.repository.preferences
-  var showDone by rememberSaveable(note.id) {
-    mutableStateOf(settings.getBoolean("steps.showDone.${note.id}", false))
-  }
+  var showDone by remember(note.id) { mutableStateOf(false) }
   var steps by remember(note.id) { mutableStateOf(emptyList<MobileAction>()) }
   var stepText by rememberSaveable(note.id) { mutableStateOf("") }
   var adding by remember(note.id) { mutableStateOf(false) }
@@ -100,6 +97,7 @@ internal fun NoteBottomPanel(
   }
   LaunchedEffect(note.id, state.revision) {
     if (note.action != null) {
+      showDone = model.read { it.showsDoneSteps(note.id) } ?: showDone
       steps = model.read { it.actionSteps(note.id, LocalDate.now().toString()) }.orEmpty()
     }
   }
@@ -146,7 +144,7 @@ internal fun NoteBottomPanel(
             Text("Show done?", color = MaterialTheme.colorScheme.onSurfaceVariant)
             Switch(showDone, {
               showDone = it
-              settings.edit().putBoolean("steps.showDone.${note.id}", it).apply()
+              if (!note.readOnly) model.perform { core -> core.setShowsDoneSteps(note.id, it) }
             }, modifier = Modifier.testTag("steps-show-done"))
           }
         }
@@ -164,7 +162,7 @@ internal fun NoteBottomPanel(
       }
       if (backlinks.isNotEmpty()) {
         Text(
-          "Linked From",
+          "Linked from",
           Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
           style = MaterialTheme.typography.titleSmall
         )

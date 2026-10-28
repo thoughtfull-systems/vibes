@@ -191,6 +191,11 @@ Match layout, wording, icons, ordering, and interactions. Diverge only where a p
 or limit forces it, such as the back button on Android, and keep the difference as small as
 possible.
 
+Write every user interface string in sentence case on both platforms: titles, headings, buttons,
+menu items, tabs, section headers, empty states, toasts, and hover text. Capitalize only the first
+word, proper nouns, and the names of other controls, such as the **Show invite** button. This
+departs from the GNOME guidelines on purpose, so the two apps read the same.
+
 ## Commonplace test library
 
 `commonplace/core/src/samples.rs` builds the sample libraries that `commonplace-test` and the

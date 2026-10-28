@@ -72,6 +72,8 @@ pub struct NotePage {
     picker: Rc<LinkPicker>,
     action_panel: Rc<ActionPanel>,
     restore_button: gtk::Button,
+    /// Shows in place of the word count while the text hasn't saved.
+    retry_save: gtk::Button,
     /// A button for each library, the one that holds the note on, to move the note to another.
     space_row: adw::WrapBox,
     space_row_shown: RefCell<Option<SpaceRow>>,
@@ -118,7 +120,7 @@ impl NotePage {
         let editor_scrolled = gtk::ScrolledWindow::builder().child(&view).vexpand(true).build();
         let backlinks = gtk::ListBox::builder().css_classes(["navigation-sidebar"]).build();
         let backlinks_heading = gtk::Label::builder()
-            .label("Linked From")
+            .label("Linked from")
             .xalign(0.0)
             .css_classes(["heading"])
             .margin_start(12)
@@ -147,11 +149,11 @@ impl NotePage {
             .build();
         let editor_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
         let note_menu = gio::Menu::new();
-        note_menu.append(Some("_Copy Link"), Some("win.copy-link"));
-        note_menu.append(Some("_Move to Trash"), Some("win.trash-note"));
+        note_menu.append(Some("_Copy link"), Some("win.copy-link"));
+        note_menu.append(Some("_Move to trash"), Some("win.trash-note"));
         let note_menu_button = gtk::MenuButton::builder()
             .icon_name("view-more-symbolic")
-            .tooltip_text("Note Menu")
+            .tooltip_text("Note menu")
             .menu_model(&note_menu)
             .halign(gtk::Align::End)
             .valign(gtk::Align::Start)
@@ -168,15 +170,24 @@ impl NotePage {
             .css_classes(["view"])
             .build();
         text_box.append(&editor_overlay);
+        let retry_save = gtk::Button::builder()
+            .label("Retry save")
+            .halign(gtk::Align::End)
+            .hexpand(true)
+            .margin_end(6)
+            .visible(false)
+            .css_classes(["flat"])
+            .build();
         word_count.set_hexpand(true);
         let status = gtk::Box::builder().height_request(32).spacing(6).build();
         status.append(&word_count);
+        status.append(&retry_save);
         text_box.append(&status);
         let bottom = gtk::Box::new(gtk::Orientation::Vertical, 0);
         let bottom_pane = BottomPane::new(&text_box, &bottom);
         editor_box.append(&bottom_pane.widget);
 
-        let hide_details = flat_button("sidebar-show-right-symbolic", "Hide Details");
+        let hide_details = flat_button("sidebar-show-right-symbolic", "Hide details");
         let details_bar = gtk::Box::builder().margin_top(6).margin_start(6).margin_end(6).build();
         details_bar.append(&hide_details);
         let details_scrolled = gtk::ScrolledWindow::builder()
@@ -190,7 +201,7 @@ impl NotePage {
             .build();
         details.append(&details_bar);
         details.append(&details_scrolled);
-        let show_details = flat_button("sidebar-show-right-symbolic", "Show Details");
+        let show_details = flat_button("sidebar-show-right-symbolic", "Show details");
         let details_hidden_bar =
             gtk::Box::builder().valign(gtk::Align::Start).margin_top(6).margin_end(6).build();
         details_hidden_bar.append(&show_details);
@@ -230,7 +241,7 @@ impl NotePage {
         let entry_panel = EntryPanel::new(state.clone());
         details_content.append(&entry_panel.widget);
         let convert_button = gtk::MenuButton::builder()
-            .label("Make Journal Entry")
+            .label("Make journal entry")
             .tooltip_text("Turn this memo into an entry, leaving a link to it here")
             .margin_start(12)
             .margin_end(12)
@@ -409,6 +420,7 @@ impl NotePage {
             picker,
             action_panel,
             restore_button,
+            retry_save,
             space_row,
             space_row_shown: RefCell::default(),
             state,
@@ -586,6 +598,11 @@ impl NotePage {
             move |id| this.request_open(id)
         ));
 
+        self.retry_save.connect_clicked(glib::clone!(
+            #[weak(rename_to = this)]
+            self,
+            move |_| this.save_now()
+        ));
         let buffer = self.view.buffer();
         buffer.connect_changed(glib::clone!(
             #[weak(rename_to = this)]
@@ -713,6 +730,7 @@ impl NotePage {
         let note = id.and_then(|id| self.state.read(|library| library.note(id)));
         self.current.set(note.as_ref().map(|note| note.id));
         self.loading.set(true);
+        self.show_save_failed(false);
         match &note {
             Some(note) => {
                 let text = self.state.read(|spaces| self.link_titles.expand(spaces, &note.body));
@@ -771,11 +789,11 @@ impl NotePage {
         self.note_menu_button.set_visible(note.is_some());
         self.delete_note.set_enabled(in_trash && !read_only);
         self.note_menu.remove_all();
-        self.note_menu.append(Some("_Copy Link"), Some("win.copy-link"));
+        self.note_menu.append(Some("_Copy link"), Some("win.copy-link"));
         if in_trash {
-            self.note_menu.append(Some("_Delete Permanently…"), Some("win.delete-note"));
+            self.note_menu.append(Some("_Delete permanently…"), Some("win.delete-note"));
         } else {
-            self.note_menu.append(Some("_Move to Trash"), Some("win.trash-note"));
+            self.note_menu.append(Some("_Move to trash"), Some("win.trash-note"));
         }
         self.timestamps.set_visible(note.is_some());
         if let Some(note) = &note {
@@ -905,6 +923,12 @@ impl NotePage {
         *self.pending_save.borrow_mut() = Some(source);
     }
 
+    /// Shows Retry save in place of the word count, or the word count again.
+    fn show_save_failed(&self, failed: bool) {
+        self.retry_save.set_visible(failed);
+        self.word_count.set_visible(!failed);
+    }
+
     pub fn save_now(&self) {
         if let Some(source) = self.pending_save.take() {
             source.remove();
@@ -925,17 +949,23 @@ impl NotePage {
         }
         let base = self.edit_base.borrow().clone();
         let Some(base) = base else {
-            self.report(self.state.write(|library| library.set_body(id, &body)));
+            let result = self.state.write(|library| library.set_body(id, &body));
+            self.show_save_failed(result.is_err());
+            self.report(result);
             return;
         };
         match self.state.write(|spaces| spaces.set_body_since(id, &body, &base)) {
             Ok((base, merged)) => {
+                self.show_save_failed(false);
                 *self.edit_base.borrow_mut() = Some(base);
                 if merged {
                     self.load_stored_body(id);
                 }
             }
-            Err(error) => self.report(Err(error)),
+            Err(error) => {
+                self.show_save_failed(true);
+                self.report(Err(error));
+            }
         }
     }
 

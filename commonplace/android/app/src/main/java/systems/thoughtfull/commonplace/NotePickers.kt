@@ -60,7 +60,7 @@ internal fun NotePicker(
   }
   AlertDialog(
     onDismissRequest = dismiss,
-    title = { Text(if (topLevel == null) "Choose a note" else "Move action") },
+    title = { Text(if (topLevel == null) "Link to…" else "Move to…") },
     text = {
       val focused = LocalWindowInfo.current.isWindowFocused
       LaunchedEffect(focused) { if (focused) focus.requestFocus() }
@@ -165,7 +165,7 @@ internal fun JournalEntryMenu(model: NotebookModel, note: MobileNote, opened: (S
   if (journals.isEmpty()) return
   Box {
     OutlinedButton(onClick = { expanded = true }, colors = neutralButtonColors()) {
-      Text("Make Journal Entry")
+      Text("Make journal entry")
       AppIcon(R.drawable.dropdown)
     }
     DropdownMenu(expanded, onDismissRequest = { expanded = false }) {

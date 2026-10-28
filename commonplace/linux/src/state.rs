@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0-no-copyleft-exception
 
-use std::cell::{OnceCell, RefCell};
+use std::cell::RefCell;
+use std::rc::Rc;
 
 use commonplace_core::sync::Syncer;
 use commonplace_core::{Error, NoteId, Spaces};
@@ -31,7 +32,7 @@ pub struct State {
     listeners: RefCell<Vec<Box<dyn Fn()>>>,
     spaces: RefCell<Spaces>,
     sync_listeners: RefCell<Vec<Box<dyn Fn() -> bool>>>,
-    syncer: OnceCell<Syncer>,
+    syncer: RefCell<Option<Rc<Syncer>>>,
 }
 
 impl State {
@@ -47,7 +48,7 @@ impl State {
             listeners: RefCell::default(),
             spaces: RefCell::new(spaces),
             sync_listeners: RefCell::default(),
-            syncer: OnceCell::new(),
+            syncer: RefCell::default(),
         }
     }
 
@@ -61,7 +62,7 @@ impl State {
         let libraries = self.library_commits();
         let result = f(&mut self.spaces.borrow_mut());
         if result.is_ok() && self.spaces.borrow().commits() != before {
-            if let Some(syncer) = self.syncer.get() {
+            if let Some(syncer) = self.syncer() {
                 for library in self.library_commits() {
                     if !libraries.contains(&library) {
                         syncer.changed(&library.0);
@@ -81,12 +82,18 @@ impl State {
             .collect()
     }
 
-    pub fn syncer(&self) -> Option<&Syncer> {
-        self.syncer.get()
+    pub fn syncer(&self) -> Option<Rc<Syncer>> {
+        self.syncer.borrow().clone()
     }
 
     pub fn set_syncer(&self, syncer: Syncer) {
-        let _ = self.syncer.set(syncer);
+        *self.syncer.borrow_mut() = Some(Rc::new(syncer));
+    }
+
+    /// Stops sync and hands back the syncer, unless a caller still holds it.
+    pub fn take_syncer(&self) -> Option<Syncer> {
+        let syncer = self.syncer.borrow_mut().take()?;
+        Rc::try_unwrap(syncer).map_err(|syncer| *self.syncer.borrow_mut() = Some(syncer)).ok()
     }
 
     /// Calls `listener` whenever sync changes its configuration or a device's status, until it
@@ -179,7 +186,7 @@ impl State {
     }
 
     fn forget_shares(&self, key: &str) {
-        if let Some(syncer) = self.syncer.get()
+        if let Some(syncer) = self.syncer()
             && let Err(error) = syncer.forget_library(key)
         {
             eprintln!("commonplace: couldn't stop syncing {key}: {error}");

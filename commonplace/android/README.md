@@ -7,11 +7,11 @@ editor. Steps and backlinks appear in a panel you can scroll below the note body
 Details. The keyboard and toolbar hide that panel while you edit, giving the note body more room.
 
 Details uses library toggles to move notes and keeps **Archive** at the bottom. Memo details offers
-**Make Journal Entry**. Action fields follow the same order as Linux. The parent path and **Move…**
+**Make journal entry**. Action fields follow the same order as Linux. The parent path and **Move…**
 appear before the steps.
 
 The Journals menu creates journals or opens them to edit, and a date range menu filters the
-timeline. Entry rows use their journal's colored dot in Journals, All Notes, and Trash. A journal's
+timeline. Entry rows use their journal's colored dot in Journals, All notes, and Trash. A journal's
 color menu shows each color beside its name, and schedules use the same descriptions as Linux. List
 timestamps show the time today, a short date this year, or a full date for earlier years.
 
@@ -116,10 +116,11 @@ Choose **Sync** to pair the phone with other devices, as the Linux app's Sync di
 
 - With both devices on the same Wi-Fi network and their Sync screens open, choose **Pair** next to
   the other device. Accept on the other device once both show the same code.
-- Or choose **Scan invite** and scan the QR code that the Linux app's **Show Invite** shows. The
+- Or choose **Scan invite** and scan the QR code that another device's **Show invite** shows. The
   phone pairs at once, and receives offers for any libraries that the invite shares.
-- Or choose **Share invite** to send a link that pairs the device that opens it, once, within 15
-  minutes. Opening an invite link on the phone, or pasting it under **Open invite**, pairs with the
+- Or choose **Show invite** to show a QR code and a link that pair the device that uses them, once,
+  within 15 minutes. Turn on **Share** for each library to offer with the invite, and copy or share
+  the link. Opening an invite link on the phone, or pasting it under **Open invite**, pairs with the
   device that made it.
 - To pair by hand, add each device's address on the other.
 - Open the device and turn on **Share** for each library to sync with it. The other device then
@@ -156,10 +157,10 @@ You can also add **Quick capture** through the Quick Settings panel's **Edit** c
 
 **Libraries** offers **Add quick capture to home screen**. Choose it to add the capture icon. You
 can also hold the app icon and drag its **Quick capture** shortcut onto the home screen. The
-shortcut opens a capture dialog over your current app. Saving or canceling returns to that app.
+shortcut opens a capture dialog over your current app. Saving or discarding returns to that app.
 Enable **Quick capture notification** in **Libraries** for the same capture dialog from an ongoing
 notification. Quick capture remembers the note type and library from your last successful save,
-including a journal entry's journal and library. Canceling leaves those defaults unchanged. Capture
+including a journal entry's journal and library. Discarding leaves those defaults unchanged. Capture
 preserves the current screen and search; the app has no floating add button.
 
 New journal entries start with the date as their title. Drag across a numeric chart to inspect the

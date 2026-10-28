@@ -221,7 +221,7 @@ device, under the keys below. Versions before spaces kept them in the library, a
 copies them from there once, when it moves that library into a folder of its own.
 
 The Linux app keeps the widths of its sidebars, in pixels, under `linux.sidebar.actions`,
-`linux.sidebar.details`, and `linux.sidebar.outline`. It keeps the filters of its Memos, All Notes,
+`linux.sidebar.details`, and `linux.sidebar.outline`. It keeps the filters of its Memos, All notes,
 and Trash tabs under `linux.filter.memos`, `linux.filter.all`, and `linux.filter.trash`, each
 followed by one of these names:
 
@@ -231,7 +231,7 @@ followed by one of these names:
 | `newest_first` | 1 to list the latest first, or 0 to list the earliest first.         |
 | `from`         | The day to start from, written as year, month, and day digits, or 0. |
 
-For example, `linux.filter.all.from` holds `20261024` to start All Notes from October 24, 2026.
+For example, `linux.filter.all.from` holds `20261024` to start All notes from October 24, 2026.
 
 The string `linux.screen` holds the screen the owner last viewed, so the app opens there: `memos`,
 `all`, `trash`, or `actions.` followed by `execute`, `plan`, `review`, or `inbox`. With a note open,
@@ -242,8 +242,12 @@ A note's own `settings` map follows the same rules, for preferences that belong 
 and go with it when it's deleted. Changing one doesn't change the note's `modified` time. The Linux
 app keeps the height, in pixels, that the owner dragged the panel below the note's text to under
 `linux.bottom.height`, and removes it when the owner fits the panel to what it shows again. Without
-it, the panel fits what it shows. It keeps whether an action's list of steps shows its done steps
-under `linux.steps.show_done`: 1 to show them, or 0 to hide them. Without it, the list hides them.
+it, the panel fits what it shows.
+
+A key without an implementation's prefix belongs to every implementation. Every app keeps whether an
+action's list of steps shows its done steps under `steps.show_done`: 1 to show them, or 0 to hide
+them. Without it, apps read `linux.steps.show_done`, where the Linux app kept the choice before, and
+without either, the list hides them. Writing `steps.show_done` removes `linux.steps.show_done`.
 
 ### `deleted`
 

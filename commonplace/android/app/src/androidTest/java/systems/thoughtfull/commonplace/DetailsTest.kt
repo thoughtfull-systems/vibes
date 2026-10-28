@@ -125,7 +125,7 @@ class DetailsTest {
     compose.onNodeWithText("Unarchive").performClick()
     saved(memo) { it.archived == null }
     screenshot("memo")
-    compose.onNodeWithText("Make Journal Entry").performScrollTo().performClick()
+    compose.onNodeWithText("Make journal entry").performScrollTo().performClick()
     compose.onNodeWithText("Details journal").performClick()
     compose.waitUntil(10_000) {
       model.state.value.notes.any { it.entry?.journal == journal && it.title == "Time off" }

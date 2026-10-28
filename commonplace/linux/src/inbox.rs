@@ -53,7 +53,7 @@ impl InboxView {
         let progress = gtk::Label::builder().css_classes(["dimmed"]).build();
         let heading = gtk::CenterBox::builder()
             .start_widget(
-                &gtk::Label::builder().label("Sort the Inbox").css_classes(["title-3"]).build(),
+                &gtk::Label::builder().label("Sort the inbox").css_classes(["title-3"]).build(),
             )
             .end_widget(&progress)
             .build();
@@ -104,7 +104,7 @@ impl InboxView {
 
         let empty = adw::StatusPage::builder().icon_name("mail-unread-symbolic").build();
         let start_over = gtk::Button::builder()
-            .label("_Start Over")
+            .label("_Start over")
             .use_underline(true)
             .halign(gtk::Align::Center)
             .css_classes(["pill"])
@@ -341,9 +341,9 @@ impl InboxView {
             self.save_now();
             self.current.set(None);
             let (title, description) = if skipped.is_empty() {
-                ("Inbox Is Empty", "Tasks you capture wait here until you sort them")
+                ("Inbox is empty", "Tasks you capture wait here until you sort them")
             } else {
-                ("Nothing Left to Sort", "Start over to sort the actions you skipped")
+                ("Nothing left to sort", "Start over to sort the actions you skipped")
             };
             self.empty.set_title(title);
             self.empty.set_description(Some(description));
