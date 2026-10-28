@@ -15,12 +15,39 @@ required-features = ["bindgen"]
 
 [features]
 bindgen = ["mobile", "uniffi/cli"]
-mobile = ["dep:uniffi"]
+mobile = ["dep:uniffi", "sync"]
+sync = [
+  "dep:blake3",
+  "dep:getrandom",
+  "dep:iroh",
+  "dep:iroh-mdns-address-lookup",
+  "dep:postcard",
+  "dep:qrcode",
+  "dep:serde",
+  "dep:serde_json",
+  "dep:tokio",
+  "dep:tokio-stream",
+]
 
 [dependencies]
+blake3 = { version = "1.8.7", optional = true }
+getrandom = { version = "0.3.4", optional = true }
+iroh = { version = "1.4.1", optional = true }
+iroh-mdns-address-lookup = { version = "0.6.1", optional = true }
 loro = "1.16.2"
+postcard = { version = "1.1.3", features = ["use-std"], optional = true }
 pulldown-cmark = "0.13.4"
+qrcode = { version = "0.14.1", default-features = false, optional = true }
+serde = { version = "1.0.228", features = ["derive"], optional = true }
+serde_json = { version = "1.0.154", optional = true }
 thiserror = "2.0.21"
+tokio = { version = "1.48.0", features = [
+  "macros",
+  "rt-multi-thread",
+  "sync",
+  "time",
+], optional = true }
+tokio-stream = { version = "0.1.17", optional = true }
 uniffi = { version = "0.32.2", optional = true }
 uuid = { version = "1.28.0", features = ["v7"] }
 

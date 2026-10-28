@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: MPL-2.0-no-copyleft-exception
 
+use std::collections::HashSet;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use loro::{
-    Container, LoroDoc, LoroList, LoroMap, LoroText, LoroValue, UpdateOptions, ValueOrContainer,
+    Container, ExportMode, LoroDoc, LoroList, LoroMap, LoroText, LoroValue, UpdateOptions,
+    ValueOrContainer, VersionVector,
 };
 
 use crate::actions::{ACTION, Action};
@@ -28,6 +30,11 @@ const TRASHED: &str = "trashed";
 
 pub const MEMO: &str = "memo";
 pub(crate) const ACTION_KIND: &str = "action";
+
+/// The version of a library that an editor's text reflects, so that saving the text keeps changes
+/// that arrived since. See [`Library::set_body_since`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct EditBase(loro::Frontiers);
 
 /// A copy of a note's contents at one moment.
 #[derive(Clone, Debug, PartialEq)]
@@ -223,6 +230,42 @@ impl Library {
         text.update(body, UpdateOptions::default()).map_err(loro_error)?;
         note.insert(MODIFIED, self.now()).map_err(loro_error)?;
         self.commit()
+    }
+
+    /// The version that an editor's text reflects once it loads a body from the library.
+    pub fn edit_base(&self) -> EditBase {
+        EditBase(self.doc.oplog_frontiers())
+    }
+
+    /// Saves an editor's text, which reflects the library at `base`, and returns the version that
+    /// the text reflects afterward. Changes that reached the library since `base`, such as another
+    /// device's, survive, because the edit applies to the library as it was at `base` and then
+    /// merges. Returns whether such changes arrived, so the editor knows to load the merged text.
+    pub fn set_body_since(
+        &mut self,
+        id: NoteId,
+        body: &str,
+        base: &EditBase,
+    ) -> Result<(EditBase, bool), Error> {
+        if base.0 == self.doc.oplog_frontiers() {
+            self.set_body(id, body)?;
+            return Ok((self.edit_base(), false));
+        }
+        self.check_writable()?;
+        let mut branch = Self {
+            clock: self.clock,
+            commits: 0,
+            doc: self.doc.fork_at(&base.0).map_err(loro_error)?,
+            read_only: false,
+            store: None,
+        };
+        let before = branch.doc.oplog_vv();
+        branch.set_body(id, body)?;
+        let after = branch.edit_base();
+        let updates = branch.doc.export(ExportMode::updates(&before)).map_err(loro_error)?;
+        self.doc.import(&updates).map_err(loro_error)?;
+        self.commit()?;
+        Ok((after, true))
     }
 
     pub(crate) fn body_text(&self, id: NoteId) -> Result<LoroText, Error> {
@@ -450,6 +493,69 @@ impl Library {
     pub(crate) fn validate_snapshot(bytes: &[u8]) -> Result<(), Error> {
         let doc = LoroDoc::new();
         doc.import(bytes).map_err(loro_error)?;
+        Self::validate(&doc)
+    }
+
+    /// The library's version vector, in Loro's encoding, which names every change it holds.
+    pub fn version(&self) -> Vec<u8> {
+        self.doc.oplog_vv().encode()
+    }
+
+    /// The changes that a library at `version` lacks, in Loro's update encoding, or `None` if it
+    /// lacks none.
+    pub fn updates_since(&self, version: &[u8]) -> Result<Option<Vec<u8>>, Error> {
+        let version = VersionVector::decode(version).map_err(loro_error)?;
+        if version.includes_vv(&self.doc.oplog_vv()) {
+            return Ok(None);
+        }
+        self.doc.export(ExportMode::updates(&version)).map(Some).map_err(loro_error)
+    }
+
+    /// Merges changes from another device, after checking in a copy that they leave a library this
+    /// version can write. With `repair`, it then writes back each note that either side held and
+    /// the merge lost, as merging libraries does.
+    pub fn merge_updates(&mut self, bytes: &[u8], repair: bool) -> Result<(), Error> {
+        self.check_writable()?;
+        let trial = self.doc.fork();
+        trial.import(bytes).map_err(loro_error)?;
+        Self::validate(&trial)?;
+        let before = repair.then(|| self.doc.fork());
+        self.doc.import(bytes).map_err(loro_error)?;
+        self.move_archived_to_notes()?;
+        if let Some(before) = before {
+            // Changes that build on history this library lacks don't import on their own, but
+            // then the two sides share history, and nothing needs repair on their account.
+            let incoming = LoroDoc::new();
+            let _ = incoming.import(bytes);
+            self.restore_lost(&[before.get_map("notes"), incoming.get_map("notes")])?;
+        }
+        self.commit()
+    }
+
+    /// Writes back, without committing, each note in `originals` that the library no longer holds,
+    /// and returns whether it wrote any.
+    pub(crate) fn restore_lost(&mut self, originals: &[LoroMap]) -> Result<bool, Error> {
+        let held: HashSet<NoteId> = originals
+            .iter()
+            .flat_map(|notes| notes.keys())
+            .filter_map(|key| key.parse().ok())
+            .collect();
+        let mut restored = false;
+        for id in held {
+            if self.note_map(id).is_ok() {
+                continue;
+            }
+            let original = originals.iter().find_map(|notes| note_map_in(notes, id));
+            if let Some(original) = original {
+                self.insert_copy(id, &original)?;
+                restored = true;
+            }
+        }
+        Ok(restored)
+    }
+
+    /// Checks that `doc` is a library that this version can write.
+    fn validate(doc: &LoroDoc) -> Result<(), Error> {
         let meta = doc.get_map("meta");
         let format = meta.get("format").and_then(value).and_then(string);
         if format.as_deref() != Some(FORMAT) {
@@ -492,6 +598,13 @@ impl Library {
             Some(store) => store.save(&self.doc),
             None => Ok(()),
         }
+    }
+}
+
+fn note_map_in(notes: &LoroMap, id: NoteId) -> Option<LoroMap> {
+    match notes.get(&id.to_string()) {
+        Some(ValueOrContainer::Container(container)) => container.into_map().ok(),
+        _ => None,
     }
 }
 
@@ -613,6 +726,37 @@ pub(crate) fn loro_error(error: impl ToString) -> Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_editor_keeps_changes_that_arrive_while_it_shows_a_note() {
+        let mut laptop = Library::in_memory();
+        let id = laptop.create_memo("one\ntwo").unwrap();
+        let mut phone = Library::in_memory();
+        phone.merge_updates(&laptop.export_snapshot().unwrap(), false).unwrap();
+        let base = laptop.edit_base();
+        phone.set_body(id, "one\ntwo\nfrom the phone").unwrap();
+        let updates = phone.updates_since(&laptop.version()).unwrap().unwrap();
+        laptop.merge_updates(&updates, false).unwrap();
+
+        let (base, merged) = laptop.set_body_since(id, "one, edited\ntwo", &base).unwrap();
+        assert!(merged);
+        assert_eq!(laptop.note(id).unwrap().body, "one, edited\ntwo\nfrom the phone");
+        // The editor still shows the text without the phone's line, and saves it again.
+        let (_, merged) = laptop.set_body_since(id, "one, edited again\ntwo", &base).unwrap();
+        assert!(merged);
+        assert_eq!(laptop.note(id).unwrap().body, "one, edited again\ntwo\nfrom the phone");
+    }
+
+    #[test]
+    fn an_editor_saves_in_place_while_nothing_else_changes() {
+        let mut library = Library::in_memory();
+        let id = library.create_memo("one").unwrap();
+        let base = library.edit_base();
+        let (base, merged) = library.set_body_since(id, "one two", &base).unwrap();
+        assert!(!merged);
+        assert_eq!(base, library.edit_base());
+        assert_eq!(library.note(id).unwrap().body, "one two");
+    }
 
     #[test]
     fn a_fixed_clock_dates_every_change() {

@@ -49,6 +49,7 @@ while the item scrolls. Due and Project precede the parent name and its Move but
 - Receive journal notifications, answer them, snooze them for 15 minutes or an hour, or skip them.
 - Open `commonplace:note/` links and copy note links.
 - Archive notes, move them to the trash, restore them, and delete them permanently.
+- Sync libraries with Linux devices and other phones.
 
 ## Build
 
@@ -106,22 +107,48 @@ titles, links, lists, archived and trashed notes, actions in each state, and jou
 question types, schedules, and answers. Dates count from the day you load them. Loading the samples
 keeps existing notes and libraries, and the app offers the action only once to avoid duplicates.
 
-You can also capture your own notes. Sync isn't implemented yet, so the phone doesn't automatically
-receive notes from your Linux libraries.
+You can also capture your own notes, or sync libraries from your Linux devices.
+
+## Sync
+
+Choose **Sync** to pair the phone with other devices, as the Linux app's Sync dialog does.
+[Decision 0013](../../decisions/0013-commonplace-sync.md) explains the design.
+
+- With both devices on the same Wi-Fi network and their Sync screens open, choose **Pair** next to
+  the other device. Accept on the other device once both show the same code.
+- Or choose **Scan invite** and scan the QR code that the Linux app's **Show Invite** shows. The
+  phone pairs at once, and receives offers for any libraries that the invite shares.
+- Or choose **Share invite** to send a link that pairs the device that opens it, once, within 15
+  minutes. Opening an invite link on the phone, or pasting it under **Open invite**, pairs with the
+  device that made it.
+- To pair by hand, add each device's address on the other.
+- Open the device and turn on **Share** for each library to sync with it. The other device then
+  lists an offer, which it accepts into a new library or merges into an existing one. Offers from
+  other devices appear here the same way.
+
+With **Sync automatically** on, the phone syncs shortly after each change, when you open the app,
+and every few minutes while it's open. In the background, a job syncs about every 15 minutes when a
+network is available. Android can delay that job to save battery. **Sync now** syncs with every
+device at once, and each device shows when it last synced or why it couldn't.
+
+Sync uses n0's public relays unless you enter your own under **Relay server**. The phone keeps its
+sync key and devices in a directory that Android never backs up. While the Sync screen is open, the
+phone announces its name on the local network and holds a multicast lock, so it can hear nearby
+devices. The scanner asks for camera access the first time you scan.
 
 ## Storage and notifications
 
 Libraries use the core's Loro snapshots and append-only log in the app's private files directory.
 Library names, view filters, and prompt preferences stay in Android's device preferences. The app
-doesn't request network or shared-storage permissions, and automatic Android backup is off.
+uses the network only for sync, doesn't request shared-storage permissions, and turns automatic
+Android backup off.
 
 Allow notifications and turn on **Prompt here?** in a journal's settings to receive its prompts.
 Android can delay inexact alarms while saving battery. Prompts respect notification permissions and
 do-not-disturb settings, and don't show entry contents.
 
 [Decision 0011](../../decisions/0011-commonplace-android.md) explains the platform boundary and
-storage choices. Sync transport, curios, zettels, and spaced repetition remain future work on both
-platforms.
+storage choices. Curios, zettels, and spaced repetition remain future work on both platforms.
 
 **Libraries → Add quick capture to Quick Settings** adds a tile to the panel you pull down from the
 status bar. The tile opens capture over your current app and returns there when you save or cancel.

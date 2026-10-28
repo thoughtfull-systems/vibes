@@ -22,6 +22,7 @@ mod note_page;
 mod prompts;
 mod rows;
 mod state;
+mod sync;
 mod tray;
 mod window;
 
@@ -33,6 +34,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use adw::prelude::*;
+use commonplace_core::sync::Syncer;
 use commonplace_core::{Spaces, note_uri, parse_note_uri};
 use gtk::{gio, glib};
 
@@ -87,7 +89,8 @@ Usage:
   commonplace capture action TEXT…    Save TEXT as an action in the inbox, and print its URI
                                       (both in the library that capture last saved into)
   commonplace print URI               Print the action at URI, after the projects it's part of
-  commonplace URI                     Open the note at a commonplace: URI
+  commonplace URI                     Open the note at a commonplace: URI, or pair with the
+                                      device whose invite it is
 
 The libraries live in $COMMONPLACE_LIBRARY, or in $XDG_DATA_HOME/commonplace if that's unset.
 Set $COMMONPLACE_APP_ID to run a separate copy beside the one already running.
@@ -151,6 +154,7 @@ fn main() -> glib::ExitCode {
             };
             if let Ok(state) = &state {
                 prompts::start(app, state.clone());
+                sync::start(state, &library_dir());
             }
             shared.borrow_mut().state = Some(state);
             let quit = gio::ActionEntry::builder("quit")
@@ -307,6 +311,11 @@ fn run(
                     return glib::ExitCode::FAILURE;
                 }
             }
+        }
+        [uri] if Syncer::is_invite(uri) => {
+            let window = main_window(app, &state, shared);
+            window.present();
+            window.open_sync(Some(uri));
         }
         [uri] if parse_note_uri(uri).is_some() => {
             let window = main_window(app, &state, shared);

@@ -239,6 +239,7 @@ impl Window {
         header.pack_start(&spaces_bar);
         let menu = gio::Menu::new();
         menu.append(Some("_Libraries"), Some("win.libraries"));
+        menu.append(Some("_Sync"), Some("win.sync"));
         header.pack_end(
             &gtk::MenuButton::builder()
                 .icon_name("open-menu-symbolic")
@@ -308,6 +309,11 @@ impl Window {
         this.refresh();
         this.restore_screen();
         this
+    }
+
+    /// Shows the Sync dialog, opening `invite` if there is one.
+    pub fn open_sync(&self, invite: Option<&str>) {
+        crate::sync::present_dialog(&self.state, &self.window, invite);
     }
 
     pub fn present(&self) {
@@ -745,8 +751,14 @@ impl Window {
             self,
             move |_, _| libraries::present_dialog(&this.state, &this.window)
         ));
+        let sync = gio::SimpleAction::new("sync", None);
+        sync.connect_activate(glib::clone!(
+            #[weak(rename_to = this)]
+            self,
+            move |_, _| this.open_sync(None)
+        ));
         for action in
-            [follow_link, insert_link, libraries, save, search, toggle_checkbox, toggle_space]
+            [follow_link, insert_link, libraries, save, search, sync, toggle_checkbox, toggle_space]
         {
             self.window.add_action(&action);
         }

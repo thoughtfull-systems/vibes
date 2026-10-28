@@ -37,6 +37,16 @@ class MainActivity : ComponentActivity() {
     incoming = intent
   }
 
+  override fun onStart() {
+    super.onStart()
+    model.repository.sync.hold()
+  }
+
+  override fun onStop() {
+    model.repository.sync.release()
+    super.onStop()
+  }
+
   override fun onPause() {
     model.flushSaves()
     super.onPause()

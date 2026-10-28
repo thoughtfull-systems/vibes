@@ -5,7 +5,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use adw::prelude::*;
-use commonplace_core::{Error, Link, Note, NoteId, note_uri, wikilink, word_count};
+use commonplace_core::{EditBase, Error, Link, Note, NoteId, note_uri, wikilink, word_count};
 use gtk::{gdk, gio, glib};
 
 use crate::action_panel::ActionPanel;
@@ -57,6 +57,8 @@ pub struct NotePage {
     details_restore: Rc<Cell<Option<i32>>>,
     /// The details' width when they last showed.
     details_width: Rc<Cell<i32>>,
+    /// The version of the library that the editor's text reflects.
+    edit_base: RefCell<Option<EditBase>>,
     link_titles: editor::LinkTitles,
     /// Set while the view changes widgets itself, so their change signals don't echo back.
     loading: Cell<bool>,
@@ -394,6 +396,7 @@ impl NotePage {
             details,
             details_restore,
             details_width,
+            edit_base: RefCell::default(),
             link_titles: editor::LinkTitles::default(),
             loading: Cell::new(false),
             on_leave: RefCell::default(),
@@ -475,6 +478,9 @@ impl NotePage {
         self.loading.set(true);
         self.state.read(|spaces| self.link_titles.update(&self.view.buffer(), spaces));
         self.loading.set(false);
+        if self.pending_save.borrow().is_none() {
+            self.load_stored_body(id);
+        }
         self.refresh_space_row();
         self.refresh_backlinks();
         self.highlight_links();
@@ -711,6 +717,7 @@ impl NotePage {
             Some(note) => {
                 let text = self.state.read(|spaces| self.link_titles.expand(spaces, &note.body));
                 crate::link_icons::load(&self.view, &text);
+                *self.edit_base.borrow_mut() = self.state.read(|spaces| spaces.edit_base(note.id));
                 self.view.buffer().place_cursor(&self.view.buffer().start_iter());
                 self.view.set_editable(self.writable(note.id));
             }
@@ -916,7 +923,42 @@ impl NotePage {
         if note.is_trashed() || note.body == body {
             return;
         }
-        self.report(self.state.write(|library| library.set_body(id, &body)));
+        let base = self.edit_base.borrow().clone();
+        let Some(base) = base else {
+            self.report(self.state.write(|library| library.set_body(id, &body)));
+            return;
+        };
+        match self.state.write(|spaces| spaces.set_body_since(id, &body, &base)) {
+            Ok((base, merged)) => {
+                *self.edit_base.borrow_mut() = Some(base);
+                if merged {
+                    self.load_stored_body(id);
+                }
+            }
+            Err(error) => self.report(Err(error)),
+        }
+    }
+
+    /// Shows the stored body of note `id` in place of the editor's text, if they differ, as they do
+    /// once another device's changes arrive. The cursor keeps its offset.
+    fn load_stored_body(&self, id: NoteId) {
+        let Some(note) = self.state.read(|spaces| spaces.note(id)) else {
+            return;
+        };
+        let buffer = self.view.buffer();
+        let shown = editor::text(&buffer);
+        if self.state.read(|spaces| self.link_titles.collapse(spaces, &shown)) == note.body {
+            *self.edit_base.borrow_mut() = self.state.read(|spaces| spaces.edit_base(id));
+            return;
+        }
+        let offset = buffer.cursor_position();
+        let text = self.state.read(|spaces| self.link_titles.expand(spaces, &note.body));
+        self.loading.set(true);
+        crate::link_icons::load(&self.view, &text);
+        buffer.place_cursor(&buffer.iter_at_offset(offset));
+        self.loading.set(false);
+        *self.edit_base.borrow_mut() = self.state.read(|spaces| spaces.edit_base(id));
+        self.highlight_links();
     }
 
     fn leave(&self) {

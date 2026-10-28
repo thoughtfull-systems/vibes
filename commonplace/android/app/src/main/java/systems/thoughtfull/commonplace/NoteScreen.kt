@@ -115,6 +115,20 @@ internal fun NoteScreen(
         saveError = model.saveFailed(id)
         initialized = true
       }
+    } else if (initialized && model.draft(id) == null) {
+      // Another device's changes can arrive while the note is open, and saving the text from
+      // before them would undo them.
+      model.read { it.editorBody(id) }?.takeIf { it != value.text }?.let { body ->
+        if (model.draft(id) == null) {
+          value = TextFieldValue(
+            body,
+            TextRange(
+              value.selection.start.coerceAtMost(body.length),
+              value.selection.end.coerceAtMost(body.length)
+            )
+          )
+        }
+      }
     }
   }
   fun update(next: TextFieldValue) {

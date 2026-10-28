@@ -2,11 +2,12 @@
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, Weak};
 
+use crate::sync::{Config, Host, OutgoingState, Status, Syncer};
 use crate::{
-    Action, ActionChange, ActionDates, ActionView, Answer, Date, Days, Handled, Journal, ListKey,
-    Note, NoteId, Question, Schedule, ShownTitles, Spaces, Style,
+    Action, ActionChange, ActionDates, ActionView, Answer, Date, Days, EditBase, Handled, Journal,
+    ListKey, Note, NoteId, Question, Schedule, ShownTitles, Spaces, Style,
 };
 
 uniffi::custom_type!(Date, String, {
@@ -36,6 +37,7 @@ impl From<crate::Error> for MobileError {
     }
 }
 
+type CoreResult<T> = std::result::Result<T, crate::Error>;
 type Result<T> = std::result::Result<T, MobileError>;
 
 #[derive(uniffi::Record)]
@@ -147,14 +149,128 @@ pub struct MobilePrompt {
     pub title: String,
 }
 
+#[derive(uniffi::Record)]
+pub struct MobileDevice {
+    pub address: String,
+    pub name: String,
+}
+
+#[derive(uniffi::Record)]
+pub struct MobileShare {
+    pub devices: Vec<String>,
+    pub id: String,
+    pub library: String,
+}
+
+#[derive(uniffi::Record)]
+pub struct MobileOffer {
+    pub device: String,
+    pub share: String,
+}
+
+#[derive(uniffi::Record)]
+pub struct MobileSyncConfig {
+    pub automatic: bool,
+    pub devices: Vec<MobileDevice>,
+    /// The offers that wait for the owner to accept or decline them.
+    pub offers: Vec<MobileOffer>,
+    pub relay: Option<String>,
+    pub shares: Vec<MobileShare>,
+}
+
+impl From<Config> for MobileSyncConfig {
+    fn from(config: Config) -> Self {
+        Self {
+            automatic: config.automatic,
+            offers: config
+                .open_offers()
+                .map(|offer| MobileOffer {
+                    device: offer.device.clone(),
+                    share: offer.share.clone(),
+                })
+                .collect(),
+            devices: config
+                .devices
+                .into_iter()
+                .map(|device| MobileDevice { address: device.address, name: device.name })
+                .collect(),
+            relay: config.relay,
+            shares: config
+                .shares
+                .into_iter()
+                .map(|share| MobileShare {
+                    devices: share.devices,
+                    id: share.id,
+                    library: share.library,
+                })
+                .collect(),
+        }
+    }
+}
+
+#[derive(uniffi::Record)]
+pub struct MobilePairingRequest {
+    pub address: String,
+    pub code: String,
+    pub name: String,
+}
+
+#[derive(uniffi::Record)]
+pub struct MobileOutgoingPairing {
+    pub address: String,
+    /// The code that the other device shows too. Pairing by invite needs none.
+    pub code: Option<String>,
+    pub state: MobilePairingState,
+}
+
+#[derive(uniffi::Enum)]
+pub enum MobilePairingState {
+    Waiting,
+    Paired { name: String },
+    Failed { reason: String },
+}
+
+#[derive(uniffi::Record)]
+pub struct MobileSyncStatus {
+    pub error: Option<String>,
+    pub synced: Option<i64>,
+    pub syncing: bool,
+}
+
+impl From<Status> for MobileSyncStatus {
+    fn from(status: Status) -> Self {
+        Self { error: status.error, synced: status.synced, syncing: status.syncing }
+    }
+}
+
+/// Hears from sync on one of its own threads, so it has to return without waiting for the
+/// notebook.
+#[uniffi::export(callback_interface)]
+pub trait SyncListener: Send + Sync {
+    /// The configuration or a device's status changed.
+    fn sync_changed(&self);
+
+    /// Another device's changes merged into a library.
+    fn libraries_changed(&self);
+}
+
+/// What the core keeps about a note that an editor shows.
+#[derive(Default)]
+struct Editor {
+    /// The version of the library that the editor's text reflects.
+    base: Option<EditBase>,
+    titles: ShownTitles,
+}
+
 struct State {
-    editors: HashMap<NoteId, ShownTitles>,
+    editors: HashMap<NoteId, Editor>,
     spaces: Spaces,
 }
 
 #[derive(uniffi::Object)]
 pub struct MobileNotebook {
     state: Mutex<State>,
+    syncer: Mutex<Option<Syncer>>,
 }
 
 impl MobileNotebook {
@@ -162,6 +278,104 @@ impl MobileNotebook {
         self.state.lock().map_err(|_| MobileError::Failed {
             reason: "the library stopped after an internal error; restart Commonplace".into(),
         })
+    }
+
+    /// Changes the libraries, then tells sync which ones `change` committed to.
+    fn write<T>(&self, change: impl FnOnce(&mut State) -> CoreResult<T>) -> Result<T> {
+        let (result, changed) = {
+            let mut state = self.state()?;
+            let before = library_commits(&state.spaces);
+            let result = change(&mut state);
+            let changed: Vec<String> = library_commits(&state.spaces)
+                .into_iter()
+                .filter(|library| !before.contains(library))
+                .map(|(key, _)| key)
+                .collect();
+            (result, changed)
+        };
+        if !changed.is_empty()
+            && let Some(syncer) = self.syncer.lock().unwrap_or_else(|p| p.into_inner()).as_ref()
+        {
+            for library in &changed {
+                syncer.changed(library);
+            }
+        }
+        Ok(result?)
+    }
+
+    fn with_syncer<T>(&self, call: impl FnOnce(&Syncer) -> CoreResult<T>) -> Result<T> {
+        let syncer = self.syncer.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let syncer = syncer
+            .as_ref()
+            .ok_or_else(|| MobileError::Failed { reason: "sync isn't running".into() })?;
+        Ok(call(syncer)?)
+    }
+
+    fn forget_library(&self, library: &str) -> Result<()> {
+        let syncer = self.syncer.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        match syncer.as_ref() {
+            Some(syncer) => Ok(syncer.forget_library(library)?),
+            None => Ok(()),
+        }
+    }
+}
+
+fn library_commits(spaces: &Spaces) -> Vec<(String, u64)> {
+    spaces
+        .keys()
+        .into_iter()
+        .filter_map(|key| spaces.library(&key).map(|library| (key.clone(), library.commits())))
+        .collect()
+}
+
+/// Lets sync read and write the notebook's libraries.
+struct NotebookHost {
+    listener: Box<dyn SyncListener>,
+    // A strong reference would keep the notebook alive through its own syncer.
+    notebook: Weak<MobileNotebook>,
+}
+
+impl NotebookHost {
+    fn notebook(&self) -> CoreResult<Arc<MobileNotebook>> {
+        self.notebook.upgrade().ok_or_else(|| crate::Error::Sync("Commonplace is closing".into()))
+    }
+}
+
+fn host_error(error: MobileError) -> crate::Error {
+    let MobileError::Failed { reason } = error;
+    crate::Error::Sync(reason)
+}
+
+impl Host for NotebookHost {
+    fn version(&self, library: &str) -> CoreResult<Vec<u8>> {
+        let notebook = self.notebook()?;
+        let state = notebook.state().map_err(host_error)?;
+        let library =
+            state.spaces.library(library).ok_or(crate::Error::NoSuchLibrary(library.into()))?;
+        Ok(library.version())
+    }
+
+    fn updates_since(&self, library: &str, version: &[u8]) -> CoreResult<Option<Vec<u8>>> {
+        let notebook = self.notebook()?;
+        let state = notebook.state().map_err(host_error)?;
+        state
+            .spaces
+            .library(library)
+            .ok_or(crate::Error::NoSuchLibrary(library.into()))?
+            .updates_since(version)
+    }
+
+    fn merge_updates(&self, library: &str, updates: &[u8], repair: bool) -> CoreResult<()> {
+        let notebook = self.notebook()?;
+        notebook
+            .write(|state| state.spaces.library_mut(library)?.merge_updates(updates, repair))
+            .map_err(host_error)?;
+        self.listener.libraries_changed();
+        Ok(())
+    }
+
+    fn changed(&self) {
+        self.listener.sync_changed();
     }
 }
 
@@ -174,7 +388,191 @@ impl MobileNotebook {
                 editors: HashMap::new(),
                 spaces: Spaces::open(Path::new(&directory))?,
             }),
+            syncer: Mutex::default(),
         }))
+    }
+
+    /// Starts syncing, with the device's key and configuration kept in `directory`, unless sync
+    /// already runs.
+    pub fn start_sync(
+        self: Arc<Self>,
+        directory: String,
+        listener: Box<dyn SyncListener>,
+    ) -> Result<()> {
+        let mut syncer = self.syncer.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if syncer.is_none() {
+            let host = NotebookHost { listener, notebook: Arc::downgrade(&self) };
+            *syncer = Some(Syncer::start(Path::new(&directory), Arc::new(host))?);
+        }
+        Ok(())
+    }
+
+    /// Stops syncing, and closes connections to other devices.
+    pub fn stop_sync(&self) {
+        let syncer = self.syncer.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).take();
+        // Dropping the syncer waits for its connections to close, and a sync that merges into a
+        // library in the meantime takes the lock.
+        drop(syncer);
+    }
+
+    pub fn sync_running(&self) -> bool {
+        self.syncer.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).is_some()
+    }
+
+    pub fn sync_address(&self) -> Result<String> {
+        self.with_syncer(|syncer| Ok(syncer.address()))
+    }
+
+    pub fn sync_config(&self) -> Result<MobileSyncConfig> {
+        self.with_syncer(|syncer| Ok(syncer.config().into()))
+    }
+
+    pub fn sync_status(&self, device: String) -> Result<MobileSyncStatus> {
+        self.with_syncer(|syncer| Ok(syncer.status(&device).into()))
+    }
+
+    /// Whether a sync with any device is still running.
+    pub fn syncing(&self) -> Result<bool> {
+        self.with_syncer(|syncer| {
+            let config = syncer.config();
+            Ok(config.devices.iter().any(|device| syncer.status(&device.address).syncing))
+        })
+    }
+
+    /// Trusts the device at `address`, and returns its key in its usual form.
+    pub fn add_device(&self, address: String, name: String) -> Result<String> {
+        self.with_syncer(|syncer| syncer.add_device(&address, &name))
+    }
+
+    pub fn rename_device(&self, address: String, name: String) -> Result<()> {
+        self.with_syncer(|syncer| syncer.rename_device(&address, &name))
+    }
+
+    pub fn remove_device(&self, address: String) -> Result<()> {
+        self.with_syncer(|syncer| syncer.remove_device(&address))
+    }
+
+    pub fn share_library(&self, library: String, device: String) -> Result<()> {
+        self.with_syncer(|syncer| syncer.share(&library, &device))
+    }
+
+    pub fn unshare_library(&self, library: String, device: String) -> Result<()> {
+        self.with_syncer(|syncer| syncer.unshare(&library, &device))
+    }
+
+    pub fn accept_offer(&self, share: String, device: String, library: String) -> Result<()> {
+        self.with_syncer(|syncer| syncer.accept(&share, &device, &library))
+    }
+
+    pub fn decline_offer(&self, share: String, device: String) -> Result<()> {
+        self.with_syncer(|syncer| syncer.decline(&share, &device))
+    }
+
+    pub fn set_sync_automatic(&self, automatic: bool) -> Result<()> {
+        self.with_syncer(|syncer| syncer.set_automatic(automatic))
+    }
+
+    /// Sets the relay server to use instead of the public ones, from the next start.
+    pub fn set_sync_relay(&self, relay: Option<String>) -> Result<()> {
+        self.with_syncer(|syncer| syncer.set_relay(relay.as_deref()))
+    }
+
+    pub fn sync_now(&self) -> Result<()> {
+        self.with_syncer(|syncer| {
+            syncer.sync_now();
+            Ok(())
+        })
+    }
+
+    /// This device's name, which devices that pair with it learn.
+    pub fn sync_name(&self) -> Result<String> {
+        self.with_syncer(|syncer| Ok(syncer.name()))
+    }
+
+    pub fn set_sync_name(&self, name: String) -> Result<()> {
+        self.with_syncer(|syncer| syncer.set_name(&name))
+    }
+
+    /// Makes an invite link that pairs the device that opens it within 15 minutes, once, and
+    /// shares `libraries` with it.
+    pub fn sync_invite(&self, libraries: Vec<String>) -> Result<String> {
+        self.with_syncer(|syncer| syncer.invite(&libraries))
+    }
+
+    /// Pairs with the device whose invite `link` is, in the background.
+    pub fn open_sync_invite(&self, link: String) -> Result<()> {
+        self.with_syncer(|syncer| syncer.open_invite(&link))
+    }
+
+    /// Announces this device on the local network, and listens for others, while the Sync screen
+    /// is open.
+    pub fn start_nearby(&self) -> Result<()> {
+        self.with_syncer(|syncer| syncer.start_nearby())
+    }
+
+    pub fn stop_nearby(&self) -> Result<()> {
+        self.with_syncer(|syncer| {
+            syncer.stop_nearby();
+            Ok(())
+        })
+    }
+
+    pub fn nearby_devices(&self) -> Result<Vec<MobileDevice>> {
+        self.with_syncer(|syncer| {
+            Ok(syncer
+                .nearby()
+                .into_iter()
+                .map(|device| MobileDevice { address: device.address, name: device.name })
+                .collect())
+        })
+    }
+
+    pub fn pair_nearby(&self, address: String) -> Result<()> {
+        self.with_syncer(|syncer| syncer.pair_nearby(&address))
+    }
+
+    pub fn pairing_requests(&self) -> Result<Vec<MobilePairingRequest>> {
+        self.with_syncer(|syncer| {
+            Ok(syncer
+                .requests()
+                .into_iter()
+                .map(|request| MobilePairingRequest {
+                    address: request.address,
+                    code: request.code,
+                    name: request.name,
+                })
+                .collect())
+        })
+    }
+
+    pub fn answer_pairing(&self, address: String, accept: bool) -> Result<()> {
+        self.with_syncer(|syncer| {
+            syncer.answer(&address, accept);
+            Ok(())
+        })
+    }
+
+    /// The pairing that this device asked for most recently.
+    pub fn outgoing_pairing(&self) -> Result<Option<MobileOutgoingPairing>> {
+        self.with_syncer(|syncer| {
+            Ok(syncer.outgoing().map(|outgoing| MobileOutgoingPairing {
+                address: outgoing.address,
+                code: outgoing.code,
+                state: match outgoing.state {
+                    OutgoingState::Waiting => MobilePairingState::Waiting,
+                    OutgoingState::Paired(name) => MobilePairingState::Paired { name },
+                    OutgoingState::Failed(reason) => MobilePairingState::Failed { reason },
+                },
+            }))
+        })
+    }
+
+    /// Forgets the outgoing pairing once the owner has seen how it went.
+    pub fn clear_outgoing_pairing(&self) -> Result<()> {
+        self.with_syncer(|syncer| {
+            syncer.clear_outgoing();
+            Ok(())
+        })
     }
 
     pub fn spaces(&self) -> Result<Vec<MobileSpace>> {
@@ -192,19 +590,22 @@ impl MobileNotebook {
     }
 
     pub fn load_test_library(&self, today: Date) -> Result<HashMap<String, String>> {
-        Ok(crate::samples::populate(&mut self.state()?.spaces, today)?.into_iter().collect())
+        let names = self.write(|state| crate::samples::populate(&mut state.spaces, today))?;
+        Ok(names.into_iter().collect())
     }
 
     pub fn create_space(&self) -> Result<String> {
-        Ok(self.state()?.spaces.create()?)
+        self.write(|state| state.spaces.create())
     }
 
     pub fn remove_space(&self, key: String) -> Result<()> {
-        Ok(self.state()?.spaces.remove(&key)?)
+        self.write(|state| state.spaces.remove(&key))?;
+        self.forget_library(&key)
     }
 
     pub fn merge_spaces(&self, source: String, target: String) -> Result<()> {
-        Ok(self.state()?.spaces.merge(&source, &target)?)
+        self.write(|state| state.spaces.merge(&source, &target))?;
+        self.forget_library(&source)
     }
 
     pub fn show_space(&self, key: String, shown: bool) -> Result<()> {
@@ -273,15 +674,15 @@ impl MobileNotebook {
     }
 
     pub fn create_memo(&self, space: String, body: String) -> Result<NoteId> {
-        Ok(self.state()?.spaces.create_memo(&space, &body)?)
+        self.write(|state| state.spaces.create_memo(&space, &body))
     }
 
     pub fn create_action(&self, space: String, body: String) -> Result<NoteId> {
-        Ok(self.state()?.spaces.create_inbox_task(&space, &body)?)
+        self.write(|state| state.spaces.create_inbox_task(&space, &body))
     }
 
     pub fn create_step(&self, parent: NoteId, body: String) -> Result<NoteId> {
-        Ok(self.state()?.spaces.create_task(&body, parent)?)
+        self.write(|state| state.spaces.create_task(&body, parent))
     }
 
     pub fn editor_body(&self, id: NoteId) -> Result<String> {
@@ -289,30 +690,42 @@ impl MobileNotebook {
         let note = state.spaces.note(id).ok_or(crate::Error::NotFound(id))?;
         let mut titles = ShownTitles::default();
         let body = titles.expand(&note.body, |id| state.spaces.link_title(id));
-        state.editors.insert(id, titles);
+        let base = state.spaces.edit_base(id);
+        state.editors.insert(id, Editor { base, titles });
         Ok(body)
     }
 
     pub fn link_text(&self, source: NoteId, target: NoteId) -> Result<String> {
         let mut state = self.state()?;
-        let mut titles = state.editors.remove(&source).unwrap_or_default();
+        let mut editor = state.editors.remove(&source).unwrap_or_default();
         let mut text = crate::wikilink(target, None);
-        for (range, replacement) in titles.updates(&text, |id| state.spaces.link_title(id)) {
+        for (range, replacement) in editor.titles.updates(&text, |id| state.spaces.link_title(id)) {
             text.replace_range(range, &replacement);
         }
-        state.editors.insert(source, titles);
+        state.editors.insert(source, editor);
         Ok(text)
     }
 
-    pub fn set_body(&self, id: NoteId, text: String) -> Result<()> {
-        let mut state = self.state()?;
-        state.editors.entry(id).or_default();
-        let body = state.editors[&id].collapse(&text, |id| state.spaces.link_title(id));
-        Ok(state.spaces.set_body(id, &body)?)
+    /// Saves an editor's text, and returns whether changes from elsewhere, such as another device,
+    /// merged into it, so the editor should load the body again.
+    pub fn set_body(&self, id: NoteId, text: String) -> Result<bool> {
+        self.write(|state| {
+            let editor = state.editors.entry(id).or_default();
+            let body = editor.titles.collapse(&text, |id| state.spaces.link_title(id));
+            let Some(base) = editor.base.clone() else {
+                state.spaces.set_body(id, &body)?;
+                return Ok(false);
+            };
+            let (base, merged) = state.spaces.set_body_since(id, &body, &base)?;
+            if let Some(editor) = state.editors.get_mut(&id) {
+                editor.base = Some(base);
+            }
+            Ok(merged)
+        })
     }
 
     pub fn change_action(&self, id: NoteId, change: ActionChange) -> Result<()> {
-        Ok(self.state()?.spaces.change_action(id, change)?)
+        self.write(|state| state.spaces.change_action(id, change))
     }
 
     pub fn move_action(
@@ -321,35 +734,35 @@ impl MobileNotebook {
         parent: Option<NoteId>,
         index: Option<u32>,
     ) -> Result<()> {
-        Ok(self.state()?.spaces.move_action(id, parent, index.map(|n| n as usize))?)
+        self.write(|state| state.spaces.move_action(id, parent, index.map(|n| n as usize)))
     }
 
     pub fn move_action_beside(&self, id: NoteId, sibling: NoteId, after: bool) -> Result<()> {
-        Ok(self.state()?.spaces.move_action_beside(id, sibling, after)?)
+        self.write(|state| state.spaces.move_action_beside(id, sibling, after))
     }
 
     pub fn reorder_action(&self, id: NoteId, up: bool) -> Result<()> {
-        Ok(self.state()?.spaces.move_action_among_siblings(id, up)?)
+        self.write(|state| state.spaces.move_action_among_siblings(id, up))
     }
 
     pub fn move_to_space(&self, id: NoteId, space: String) -> Result<()> {
-        Ok(self.state()?.spaces.move_to_space(id, &space)?)
+        self.write(|state| state.spaces.move_to_space(id, &space))
     }
 
     pub fn set_archived(&self, id: NoteId, archived: bool) -> Result<()> {
-        Ok(self.state()?.spaces.set_archived(id, archived)?)
+        self.write(|state| state.spaces.set_archived(id, archived))
     }
 
     pub fn trash(&self, id: NoteId) -> Result<()> {
-        Ok(self.state()?.spaces.trash(id)?)
+        self.write(|state| state.spaces.trash(id))
     }
 
     pub fn restore(&self, id: NoteId) -> Result<()> {
-        Ok(self.state()?.spaces.restore(id)?)
+        self.write(|state| state.spaces.restore(id))
     }
 
     pub fn delete(&self, id: NoteId) -> Result<()> {
-        Ok(self.state()?.spaces.delete(id)?)
+        self.write(|state| state.spaces.delete(id))
     }
 
     pub fn backlinks(&self, id: NoteId) -> Result<Vec<MobileNote>> {
@@ -363,7 +776,7 @@ impl MobileNotebook {
     }
 
     pub fn create_journal(&self, space: String, name: String) -> Result<NoteId> {
-        Ok(self.state()?.spaces.create_journal(&space, &name)?)
+        self.write(|state| state.spaces.create_journal(&space, &name))
     }
 
     pub fn journals(&self) -> Result<Vec<MobileNote>> {
@@ -377,29 +790,29 @@ impl MobileNotebook {
     }
 
     pub fn set_journal_color(&self, id: NoteId, color: String) -> Result<()> {
-        Ok(self.state()?.spaces.set_journal_color(id, &color)?)
+        self.write(|state| state.spaces.set_journal_color(id, &color))
     }
 
     pub fn set_question(&self, id: NoteId, question: Question, new: bool) -> Result<()> {
-        let mut state = self.state()?;
-        if new {
-            state.spaces.add_question(id, &question)?;
-        } else {
-            state.spaces.set_question(id, &question)?;
-        }
-        Ok(())
+        self.write(|state| {
+            if new {
+                state.spaces.add_question(id, &question)
+            } else {
+                state.spaces.set_question(id, &question)
+            }
+        })
     }
 
     pub fn move_question(&self, id: NoteId, question: String, up: bool) -> Result<()> {
-        Ok(self.state()?.spaces.move_question(id, &question, up)?)
+        self.write(|state| state.spaces.move_question(id, &question, up))
     }
 
     pub fn set_schedule(&self, id: NoteId, schedule: Schedule) -> Result<()> {
-        Ok(self.state()?.spaces.set_schedule(id, &schedule)?)
+        self.write(|state| state.spaces.set_schedule(id, &schedule))
     }
 
     pub fn remove_schedule(&self, id: NoteId, schedule: String) -> Result<()> {
-        Ok(self.state()?.spaces.remove_schedule(id, &schedule)?)
+        self.write(|state| state.spaces.remove_schedule(id, &schedule))
     }
 
     pub fn create_entry(
@@ -412,26 +825,20 @@ impl MobileNotebook {
         today: Date,
     ) -> Result<NoteId> {
         let prompt = prompt.as_ref().map(|prompt| (prompt.key.as_str(), prompt.prompted));
-        Ok(self.state()?.spaces.create_entry(
-            journal,
-            &body,
-            at,
-            prompt,
-            &answers.into_iter().collect(),
-            today,
-        )?)
+        let answers = answers.into_iter().collect();
+        self.write(|state| state.spaces.create_entry(journal, &body, at, prompt, &answers, today))
     }
 
     pub fn set_entry_at(&self, id: NoteId, at: i64) -> Result<()> {
-        Ok(self.state()?.spaces.set_entry_at(id, at)?)
+        self.write(|state| state.spaces.set_entry_at(id, at))
     }
 
     pub fn set_answer(&self, id: NoteId, question: String, answer: Option<Answer>) -> Result<()> {
-        Ok(self.state()?.spaces.set_answer(id, &question, answer.as_ref())?)
+        self.write(|state| state.spaces.set_answer(id, &question, answer.as_ref()))
     }
 
     pub fn convert_memo(&self, memo: NoteId, journal: NoteId) -> Result<NoteId> {
-        Ok(self.state()?.spaces.convert_memo(memo, journal)?)
+        self.write(|state| state.spaces.convert_memo(memo, journal))
     }
 
     pub fn handle_prompt(
@@ -441,7 +848,7 @@ impl MobileNotebook {
         handled: Handled,
         today: Date,
     ) -> Result<()> {
-        Ok(self.state()?.spaces.handle_prompt(journal, &key, handled, today)?)
+        self.write(|state| state.spaces.handle_prompt(journal, &key, handled, today))
     }
 
     pub fn scheduled_prompts(
@@ -507,7 +914,7 @@ impl MobileNotebook {
     }
 
     pub fn set_note_setting(&self, id: NoteId, key: String, value: i64) -> Result<()> {
-        Ok(self.state()?.spaces.set_note_setting(id, &key, value)?)
+        self.write(|state| state.spaces.set_note_setting(id, &key, value))
     }
 
     pub fn note_setting(&self, id: NoteId, key: String) -> Result<Option<i64>> {
@@ -691,6 +1098,12 @@ pub fn outline(body: String) -> Vec<MobileHeading> {
 #[uniffi::export]
 pub fn word_count(body: String) -> u64 {
     crate::word_count(&body) as u64
+}
+
+/// Whether `text` is a link that invites this device to pair with another.
+#[uniffi::export]
+pub fn is_sync_invite(text: String) -> bool {
+    Syncer::is_invite(&text)
 }
 
 #[cfg(test)]

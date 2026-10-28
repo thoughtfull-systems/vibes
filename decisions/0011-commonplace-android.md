@@ -13,7 +13,8 @@ format, with navigation, capture, notifications, and storage that fit a phone.
   through another storage format.
 - **One implementation of rules.** Android uses the core's action views, scheduling, journal
   answers, link handling, and editor operations.
-- **Offline operation.** Opening the app, editing notes, and answering prompts need no network.
+- **Offline operation.** Opening the app, editing notes, and answering prompts need no network. Only
+  sync with other devices does.
 - **Platform integration.** Android sharing, note links, notifications, and document pickers use the
   platform's services.
 - **Responsive editing.** Disk writes and library operations stay off the main thread, and leaving
@@ -81,7 +82,7 @@ range for numeric and choice graphs, including days without answers.
 Keep one sample-library generator in the shared core. The Linux command-line example and Android's
 **Load test library** action both use it, with dates relative to when they run. Loading samples
 preserves existing notes. Android doesn't expose a separate snapshot exchange interface; both apps
-wait for the shared sync transport.
+use the shared sync transport that [decision 0013](0013-commonplace-sync.md) describes.
 
 The Linux test launcher also accepts `--date` to generate historical samples. The core scopes a
 fixed timestamp to sample generation on the calling thread, including creation, modification, action
@@ -94,7 +95,8 @@ Against the criteria:
 - **Compatible data:** both platforms use `commonplace-core` and its existing storage format.
 - **One implementation of rules:** the bindings expose core operations instead of implementing them
   again in Kotlin.
-- **Offline operation:** all data and operations stay on the device.
+- **Offline operation:** all data stays on the device, and every operation except sync works without
+  a network.
 - **Platform integration:** intents, notifications, alarms, and the document picker connect the app
   to Android.
 - **Responsive editing:** background operations serialize writes, and the model keeps editor writes
@@ -113,8 +115,13 @@ Against the criteria:
 
 - Android builds need the Android development kit and native development kit, Gradle, Java, and the
   Rust Android targets. The Android README documents their versions and build commands.
-- An Android library stays in private app storage. Sync remains future work, so notes stay on the
-  device that creates them.
+- An Android library stays in private app storage, and reaches other devices only through the sync
+  that decision 0013 describes. The bindings sync through the same lock as every other operation,
+  and report each write that commits to a library, so automatic sync sends it. The app runs sync
+  while it's in the foreground and for a minute after, and a WorkManager job syncs every 15 minutes,
+  with a network, while automatic sync is on. Android can defer that job while saving battery.
+- The device's sync key and configuration live in Android's no-backup directory, so neither
+  automatic backup nor device transfer copies the key to another device.
 - Changes to the exported interface require regenerating the bindings. Generated Kotlin and native
   libraries stay in build directories and don't enter source control.
 - Android has no desktop tray or command-line capture window. Sharing and in-app capture preserve

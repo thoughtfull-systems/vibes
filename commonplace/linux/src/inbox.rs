@@ -6,7 +6,9 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use adw::prelude::*;
-use commonplace_core::{ActionChange, ActionList, ActionState, ActionView, Error, NoteId, Spaces};
+use commonplace_core::{
+    ActionChange, ActionList, ActionState, ActionView, EditBase, Error, NoteId, Spaces,
+};
 use gtk::{gdk, glib};
 
 use crate::editor;
@@ -22,6 +24,8 @@ const SAVE_DELAY: Duration = Duration::from_millis(500);
 pub struct InboxView {
     current: Cell<Option<NoteId>>,
     due_button: gtk::MenuButton,
+    /// The version of the library that the editor's text reflects.
+    edit_base: RefCell<Option<EditBase>>,
     /// Whether the user has typed in the editor since its text was last loaded or saved. Only
     /// typed text is saved, so the editor never writes an old copy over a change made elsewhere.
     edited: Cell<bool>,
@@ -119,6 +123,7 @@ impl InboxView {
         let view = Rc::new(Self {
             current: Cell::new(None),
             due_button,
+            edit_base: RefCell::default(),
             edited: Cell::new(false),
             editor,
             empty,
@@ -357,9 +362,11 @@ impl InboxView {
             let text = self.state.read(|spaces| self.link_titles.expand(spaces, &note.body));
             crate::link_icons::load(&self.editor, &text);
             self.editor.buffer().place_cursor(&self.editor.buffer().start_iter());
+            *self.edit_base.borrow_mut() = self.state.read(|spaces| spaces.edit_base(id));
         } else if !self.edited.get() && self.stored_text() != note.body {
             let text = self.state.read(|spaces| self.link_titles.expand(spaces, &note.body));
             crate::link_icons::load(&self.editor, &text);
+            *self.edit_base.borrow_mut() = self.state.read(|spaces| spaces.edit_base(id));
         } else {
             self.state.read(|spaces| self.link_titles.update(&self.editor.buffer(), spaces));
         }
@@ -470,9 +477,41 @@ impl InboxView {
         let body = self.stored_text();
         let unchanged =
             self.state.read(|library| library.note(id)).is_none_or(|note| note.body == body);
-        if !unchanged {
-            self.report(self.state.write(|library| library.set_body(id, &body)));
+        if unchanged {
+            return;
         }
+        let base = self.edit_base.borrow().clone();
+        let Some(base) = base else {
+            self.report(self.state.write(|library| library.set_body(id, &body)));
+            return;
+        };
+        match self.state.write(|spaces| spaces.set_body_since(id, &body, &base)) {
+            Ok((base, merged)) => {
+                *self.edit_base.borrow_mut() = Some(base);
+                if merged && !self.edited.get() {
+                    self.load_stored_body(id);
+                }
+            }
+            Err(error) => self.report(Err(error)),
+        }
+    }
+
+    /// Shows the stored body of note `id` in place of the editor's text, once another device's
+    /// changes merge into it.
+    fn load_stored_body(&self, id: NoteId) {
+        let Some(note) = self.state.read(|spaces| spaces.note(id)) else {
+            return;
+        };
+        if self.stored_text() != note.body {
+            let buffer = self.editor.buffer();
+            let offset = buffer.cursor_position();
+            let text = self.state.read(|spaces| self.link_titles.expand(spaces, &note.body));
+            self.loading.set(true);
+            crate::link_icons::load(&self.editor, &text);
+            buffer.place_cursor(&buffer.iter_at_offset(offset));
+            self.loading.set(false);
+        }
+        *self.edit_base.borrow_mut() = self.state.read(|spaces| spaces.edit_base(id));
     }
 
     /// The editor's text as the note stores it, without the titles it shows in links.

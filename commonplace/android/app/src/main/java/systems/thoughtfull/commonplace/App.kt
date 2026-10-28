@@ -46,6 +46,7 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.launch
 import systems.thoughtfull.commonplace.core.MobileNote
+import systems.thoughtfull.commonplace.core.isSyncInvite
 import systems.thoughtfull.commonplace.core.parseNoteUri
 
 // The navigation order follows the Linux app's tabs.
@@ -74,6 +75,8 @@ fun CommonplaceApp(model: NotebookModel, incoming: Intent?, consumed: () -> Unit
     mutableStateOf<CaptureRequest?>(null)
   }
   var libraries by remember { mutableStateOf(false) }
+  var syncing by remember { mutableStateOf(false) }
+  var invite by remember { mutableStateOf<String?>(null) }
   var inboxEditing by remember { mutableStateOf(false) }
   val focusManager = LocalFocusManager.current
   val keyboard = LocalSoftwareKeyboardController.current
@@ -110,6 +113,11 @@ fun CommonplaceApp(model: NotebookModel, incoming: Intent?, consumed: () -> Unit
           ).distinct().joinToString("\n\n")
         )
 
+        incoming.action == Intent.ACTION_VIEW && isSyncInvite(incoming.dataString.orEmpty()) -> {
+          invite = incoming.dataString
+          syncing = true
+        }
+
         incoming.action == Intent.ACTION_VIEW -> {
           val target = parseNoteUri(incoming.dataString.orEmpty())
           if (target ==
@@ -144,6 +152,7 @@ fun CommonplaceApp(model: NotebookModel, incoming: Intent?, consumed: () -> Unit
       modifier = Modifier.imePadding(),
       topBar = {
         TopAppBar(title = { Text(tab) }, actions = {
+          TextButton(onClick = { syncing = true }) { Text("Sync") }
           TextButton(onClick = { libraries = true }) { Text("Libraries") }
         })
       },
@@ -223,6 +232,7 @@ fun CommonplaceApp(model: NotebookModel, incoming: Intent?, consumed: () -> Unit
     CaptureDialog(model, state, request, { capture = null }) { capture = null }
   }
   if (libraries) LibrariesDialog(model, state) { libraries = false }
+  if (syncing) SyncScreen(model, state, invite, { invite = null }) { syncing = false }
   NameUnnamedLibrary(model, state)
   state.error?.let { error ->
     AlertDialog(

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0-no-copyleft-exception
 
 use super::*;
-use crate::{ActionList, ActionState, ChoiceOption, QuestionKind, Times};
+use crate::{ActionList, ActionState, ChoiceOption, Library, QuestionKind, Times};
 
 #[test]
 fn mobile_and_linux_share_the_same_library() {
@@ -21,6 +21,33 @@ fn mobile_and_linux_share_the_same_library() {
     assert!(spaces.note(memo).unwrap().archived.is_some());
     assert_eq!(spaces.library(&space).unwrap().action_parent(step), Some(task));
     assert_eq!(spaces.note(step).unwrap().action.unwrap().state, ActionState::Done);
+}
+
+#[test]
+fn an_open_editor_keeps_another_devices_changes() {
+    let dir = tempfile::tempdir().unwrap();
+    let mobile = MobileNotebook::open(dir.path().to_string_lossy().into()).unwrap();
+    let space = mobile.spaces().unwrap().remove(0).key;
+    let memo = mobile.create_memo(space.clone(), "Groceries".into()).unwrap();
+    let shown = mobile.editor_body(memo).unwrap();
+    {
+        let mut state = mobile.state().unwrap();
+        let library = state.spaces.library_mut(&space).unwrap();
+        let mut laptop = Library::in_memory();
+        laptop.merge_updates(&library.export_snapshot().unwrap(), false).unwrap();
+        laptop.set_body(memo, "Saturday\nGroceries").unwrap();
+        let updates = laptop.updates_since(&library.version()).unwrap().unwrap();
+        library.merge_updates(&updates, false).unwrap();
+    }
+    assert!(mobile.set_body(memo, format!("{shown} for the week")).unwrap());
+    // The editor loads the merged text, then saves in place again.
+    let shown = mobile.editor_body(memo).unwrap();
+    assert_eq!(shown, "Saturday\nGroceries for the week");
+    assert!(!mobile.set_body(memo, shown + "\n- milk").unwrap());
+    assert_eq!(
+        mobile.note(memo).unwrap().unwrap().body,
+        "Saturday\nGroceries for the week\n- milk"
+    );
 }
 
 #[test]
@@ -237,4 +264,36 @@ fn phone_dragging_reorders_and_nests_whole_subtrees() {
     assert_eq!(mobile.note(a).unwrap().unwrap().parent, Some(b));
     assert_eq!(mobile.note(child).unwrap().unwrap().parent, Some(a));
     assert!(mobile.move_action(b, Some(child), None).is_err());
+}
+
+struct Quiet;
+
+impl SyncListener for Quiet {
+    fn sync_changed(&self) {}
+
+    fn libraries_changed(&self) {}
+}
+
+#[test]
+fn sync_forgets_the_shares_of_removed_libraries() {
+    let dir = tempfile::tempdir().unwrap();
+    let mobile = MobileNotebook::open(dir.path().join("library").to_string_lossy().into()).unwrap();
+    assert!(mobile.sync_config().is_err());
+    let sync = dir.path().join("sync").to_string_lossy().into_owned();
+    mobile.clone().start_sync(sync.clone(), Box::new(Quiet)).unwrap();
+    let address = mobile.sync_address().unwrap();
+    let other = iroh::SecretKey::generate().public().to_string();
+    let device = mobile.add_device(other, "Laptop".into()).unwrap();
+    mobile.set_sync_automatic(false).unwrap();
+    let space = mobile.create_space().unwrap();
+    mobile.share_library(space.clone(), device.clone()).unwrap();
+    assert_eq!(mobile.sync_config().unwrap().shares[0].library, space);
+    mobile.remove_space(space).unwrap();
+    assert!(mobile.sync_config().unwrap().shares.is_empty());
+    mobile.stop_sync();
+    assert!(!mobile.sync_running());
+    mobile.clone().start_sync(sync, Box::new(Quiet)).unwrap();
+    assert_eq!(mobile.sync_address().unwrap(), address);
+    assert_eq!(mobile.sync_config().unwrap().devices[0].name, "Laptop");
+    mobile.stop_sync();
 }
