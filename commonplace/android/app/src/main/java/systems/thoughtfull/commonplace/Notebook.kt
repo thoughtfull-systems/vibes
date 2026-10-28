@@ -196,10 +196,13 @@ class NotebookModel(application: Application) : AndroidViewModel(application) {
     complete: (MobileNote?) -> Unit
   ) {
     try {
+      var merged = false
       val note = repository.use {
-        it.setBody(id, text)
+        merged = it.setBody(id, text)
         it.note(id)
       }
+      // The editor shows its own text, which lacks the changes that merged into it.
+      if (merged) refresh()
       if (drafts[id]?.first == sequence) {
         drafts.remove(id)
         failedSaves.remove(id)

@@ -811,7 +811,9 @@ fn parse_address(address: &str) -> Result<(String, Vec<SocketAddr>), Error> {
         Some((key, direct)) => (key, Some(direct)),
         None => (address.trim(), None),
     };
-    let key: EndpointId = key.trim().parse().map_err(|_| invalid())?;
+    // Devices show addresses in groups, which owners may copy with the spaces between them.
+    let key: String = key.chars().filter(|c| !c.is_whitespace()).collect();
+    let key: EndpointId = key.parse().map_err(|_| invalid())?;
     let direct = match direct {
         Some(direct) => direct
             .split(',')
@@ -990,6 +992,8 @@ mod tests {
     fn parses_addresses() {
         let key = SecretKey::generate().public().to_string();
         assert_eq!(parse_address(&key).unwrap(), (key.clone(), vec![]));
+        let grouped = format!("{} {}", &key[..8], &key[8..]);
+        assert_eq!(parse_address(&grouped).unwrap().0, key);
         let (_, direct) = parse_address(&format!(" {key}@127.0.0.1:4, [::1]:5 ")).unwrap();
         assert_eq!(direct, ["127.0.0.1:4".parse().unwrap(), "[::1]:5".parse().unwrap()]);
         assert!(parse_address("nonsense").is_err());

@@ -50,7 +50,8 @@ one to pair with. A device never announces itself at any other time.
 
 ### Addresses
 
-The owner can also add a device by entering its address, on each device. An address may end with `@`
+The owner can also add a device by entering its address, on each device. Devices may show an address
+in groups of characters, and ignore white space in one the owner enters. An address may end with `@`
 and a comma-separated list of socket addresses, such as `@192.168.1.20:41641`, which the device
 tries before it looks the address up.
 

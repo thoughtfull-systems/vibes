@@ -102,7 +102,6 @@ internal fun NoteScreen(
   var menu by remember { mutableStateOf(false) }
   var editorActive by remember { mutableStateOf(false) }
   LaunchedEffect(id, state.revision) {
-    val previous = note
     note = model.read { it.note(id) }
     loaded = true
     backlinks = model.read { it.backlinks(id) }.orEmpty()
@@ -116,7 +115,7 @@ internal fun NoteScreen(
         saveError = model.saveFailed(id)
         initialized = true
       }
-    } else if (initialized && note?.body != previous?.body && model.draft(id) == null) {
+    } else if (initialized && model.draft(id) == null) {
       // Another device's changes can arrive while the note is open, and saving the text from
       // before them would undo them.
       model.read { it.editorBody(id) }?.takeIf { it != value.text }?.let { body ->

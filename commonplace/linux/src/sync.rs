@@ -164,7 +164,7 @@ pub fn present_dialog(state: &Rc<State>, parent: &impl IsA<gtk::Widget>, invite:
     this_device.add(&name);
     let address_row = adw::ActionRow::builder()
         .title("Address, for Pairing by Hand")
-        .subtitle(&address)
+        .subtitle(grouped(&address))
         .subtitle_selectable(true)
         .css_classes(["property"])
         .build();
@@ -563,6 +563,10 @@ impl Dialog {
             .wrap_mode(gtk::pango::WrapMode::Char)
             .css_classes(["monospace", "caption"])
             .build();
+        // Pango marks a word broken across lines with a hyphen, which reads as part of the link.
+        let attributes = gtk::pango::AttrList::new();
+        attributes.insert(gtk::pango::AttrInt::new_insert_hyphens(false));
+        link.set_attributes(Some(&attributes));
         let copy = gtk::Button::builder()
             .label("_Copy Link")
             .use_underline(true)
@@ -919,6 +923,13 @@ fn qr_texture(text: &str) -> Option<gtk::gdk::Texture> {
         side,
     );
     Some(texture.upcast())
+}
+
+/// An address in groups of eight characters, which wrap between groups and are easier to compare.
+fn grouped(address: &str) -> String {
+    let groups: Vec<&str> =
+        address.as_bytes().chunks(8).filter_map(|group| std::str::from_utf8(group).ok()).collect();
+    groups.join(" ")
 }
 
 /// A six-digit code split in two halves, as people read it aloud.

@@ -13,8 +13,8 @@ use loro::ExportMode;
 use crate::actions::order_key;
 use crate::library::{MODIFIED, loro_error};
 use crate::{
-    ActionChange, ActionDates, ActionEntry, ActionView, Answer, Date, Error, Handled, Library,
-    Note, NoteId, Question, Schedule, plain_links,
+    ActionChange, ActionDates, ActionEntry, ActionView, Answer, Date, EditBase, Error, Handled,
+    Library, Note, NoteId, Question, Schedule, plain_links,
 };
 
 const LIBRARIES: &str = "libraries";
@@ -304,6 +304,21 @@ impl Spaces {
 
     pub fn set_body(&mut self, id: NoteId, body: &str) -> Result<(), Error> {
         self.owner_mut(id)?.set_body(id, body)
+    }
+
+    /// The version that an editor's text reflects once it loads note `id`.
+    pub fn edit_base(&self, id: NoteId) -> Option<EditBase> {
+        self.owner(id).map(Library::edit_base)
+    }
+
+    /// Saves an editor's text for note `id`, as [`Library::set_body_since`] does.
+    pub fn set_body_since(
+        &mut self,
+        id: NoteId,
+        body: &str,
+        base: &EditBase,
+    ) -> Result<(EditBase, bool), Error> {
+        self.owner_mut(id)?.set_body_since(id, body, base)
     }
 
     pub fn trash(&mut self, id: NoteId) -> Result<(), Error> {

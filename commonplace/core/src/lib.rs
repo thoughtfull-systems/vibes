@@ -33,7 +33,7 @@ pub use journals::{
     Question, QuestionKind, Schedule, Times, format_time, parse_loose_time, parse_time, prompt_key,
 };
 pub use label::label;
-pub use library::{Library, MEMO, Note};
+pub use library::{EditBase, Library, MEMO, Note};
 pub use links::{
     Link, LinkSyntax, ShownTitles, collapse_links, expand_links, label_separator, link_label,
     note_uri, parse_links, parse_note_uri, plain_links, wikilink,

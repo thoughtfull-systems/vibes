@@ -6,8 +6,8 @@ use std::sync::{Arc, Mutex, MutexGuard, Weak};
 
 use crate::sync::{Config, Host, OutgoingState, Status, Syncer};
 use crate::{
-    Action, ActionChange, ActionDates, ActionView, Answer, Date, Days, Handled, Journal, ListKey,
-    Note, NoteId, Question, Schedule, ShownTitles, Spaces, Style,
+    Action, ActionChange, ActionDates, ActionView, Answer, Date, Days, EditBase, Handled, Journal,
+    ListKey, Note, NoteId, Question, Schedule, ShownTitles, Spaces, Style,
 };
 
 uniffi::custom_type!(Date, String, {
@@ -254,8 +254,16 @@ pub trait SyncListener: Send + Sync {
     fn libraries_changed(&self);
 }
 
+/// What the core keeps about a note that an editor shows.
+#[derive(Default)]
+struct Editor {
+    /// The version of the library that the editor's text reflects.
+    base: Option<EditBase>,
+    titles: ShownTitles,
+}
+
 struct State {
-    editors: HashMap<NoteId, ShownTitles>,
+    editors: HashMap<NoteId, Editor>,
     spaces: Spaces,
 }
 
@@ -682,26 +690,37 @@ impl MobileNotebook {
         let note = state.spaces.note(id).ok_or(crate::Error::NotFound(id))?;
         let mut titles = ShownTitles::default();
         let body = titles.expand(&note.body, |id| state.spaces.link_title(id));
-        state.editors.insert(id, titles);
+        let base = state.spaces.edit_base(id);
+        state.editors.insert(id, Editor { base, titles });
         Ok(body)
     }
 
     pub fn link_text(&self, source: NoteId, target: NoteId) -> Result<String> {
         let mut state = self.state()?;
-        let mut titles = state.editors.remove(&source).unwrap_or_default();
+        let mut editor = state.editors.remove(&source).unwrap_or_default();
         let mut text = crate::wikilink(target, None);
-        for (range, replacement) in titles.updates(&text, |id| state.spaces.link_title(id)) {
+        for (range, replacement) in editor.titles.updates(&text, |id| state.spaces.link_title(id)) {
             text.replace_range(range, &replacement);
         }
-        state.editors.insert(source, titles);
+        state.editors.insert(source, editor);
         Ok(text)
     }
 
-    pub fn set_body(&self, id: NoteId, text: String) -> Result<()> {
+    /// Saves an editor's text, and returns whether changes from elsewhere, such as another device,
+    /// merged into it, so the editor should load the body again.
+    pub fn set_body(&self, id: NoteId, text: String) -> Result<bool> {
         self.write(|state| {
-            state.editors.entry(id).or_default();
-            let body = state.editors[&id].collapse(&text, |id| state.spaces.link_title(id));
-            state.spaces.set_body(id, &body)
+            let editor = state.editors.entry(id).or_default();
+            let body = editor.titles.collapse(&text, |id| state.spaces.link_title(id));
+            let Some(base) = editor.base.clone() else {
+                state.spaces.set_body(id, &body)?;
+                return Ok(false);
+            };
+            let (base, merged) = state.spaces.set_body_since(id, &body, &base)?;
+            if let Some(editor) = state.editors.get_mut(&id) {
+                editor.base = Some(base);
+            }
+            Ok(merged)
         })
     }
 

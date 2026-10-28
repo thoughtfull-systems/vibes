@@ -31,6 +31,11 @@ const TRASHED: &str = "trashed";
 pub const MEMO: &str = "memo";
 pub(crate) const ACTION_KIND: &str = "action";
 
+/// The version of a library that an editor's text reflects, so that saving the text keeps changes
+/// that arrived since. See [`Library::set_body_since`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct EditBase(loro::Frontiers);
+
 /// A copy of a note's contents at one moment.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Note {
@@ -225,6 +230,42 @@ impl Library {
         text.update(body, UpdateOptions::default()).map_err(loro_error)?;
         note.insert(MODIFIED, self.now()).map_err(loro_error)?;
         self.commit()
+    }
+
+    /// The version that an editor's text reflects once it loads a body from the library.
+    pub fn edit_base(&self) -> EditBase {
+        EditBase(self.doc.oplog_frontiers())
+    }
+
+    /// Saves an editor's text, which reflects the library at `base`, and returns the version that
+    /// the text reflects afterward. Changes that reached the library since `base`, such as another
+    /// device's, survive, because the edit applies to the library as it was at `base` and then
+    /// merges. Returns whether such changes arrived, so the editor knows to load the merged text.
+    pub fn set_body_since(
+        &mut self,
+        id: NoteId,
+        body: &str,
+        base: &EditBase,
+    ) -> Result<(EditBase, bool), Error> {
+        if base.0 == self.doc.oplog_frontiers() {
+            self.set_body(id, body)?;
+            return Ok((self.edit_base(), false));
+        }
+        self.check_writable()?;
+        let mut branch = Self {
+            clock: self.clock,
+            commits: 0,
+            doc: self.doc.fork_at(&base.0).map_err(loro_error)?,
+            read_only: false,
+            store: None,
+        };
+        let before = branch.doc.oplog_vv();
+        branch.set_body(id, body)?;
+        let after = branch.edit_base();
+        let updates = branch.doc.export(ExportMode::updates(&before)).map_err(loro_error)?;
+        self.doc.import(&updates).map_err(loro_error)?;
+        self.commit()?;
+        Ok((after, true))
     }
 
     pub(crate) fn body_text(&self, id: NoteId) -> Result<LoroText, Error> {
@@ -685,6 +726,37 @@ pub(crate) fn loro_error(error: impl ToString) -> Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_editor_keeps_changes_that_arrive_while_it_shows_a_note() {
+        let mut laptop = Library::in_memory();
+        let id = laptop.create_memo("one\ntwo").unwrap();
+        let mut phone = Library::in_memory();
+        phone.merge_updates(&laptop.export_snapshot().unwrap(), false).unwrap();
+        let base = laptop.edit_base();
+        phone.set_body(id, "one\ntwo\nfrom the phone").unwrap();
+        let updates = phone.updates_since(&laptop.version()).unwrap().unwrap();
+        laptop.merge_updates(&updates, false).unwrap();
+
+        let (base, merged) = laptop.set_body_since(id, "one, edited\ntwo", &base).unwrap();
+        assert!(merged);
+        assert_eq!(laptop.note(id).unwrap().body, "one, edited\ntwo\nfrom the phone");
+        // The editor still shows the text without the phone's line, and saves it again.
+        let (_, merged) = laptop.set_body_since(id, "one, edited again\ntwo", &base).unwrap();
+        assert!(merged);
+        assert_eq!(laptop.note(id).unwrap().body, "one, edited again\ntwo\nfrom the phone");
+    }
+
+    #[test]
+    fn an_editor_saves_in_place_while_nothing_else_changes() {
+        let mut library = Library::in_memory();
+        let id = library.create_memo("one").unwrap();
+        let base = library.edit_base();
+        let (base, merged) = library.set_body_since(id, "one two", &base).unwrap();
+        assert!(!merged);
+        assert_eq!(base, library.edit_base());
+        assert_eq!(library.note(id).unwrap().body, "one two");
+    }
 
     #[test]
     fn a_fixed_clock_dates_every_change() {

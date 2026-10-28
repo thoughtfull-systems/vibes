@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0-no-copyleft-exception
 
 use super::*;
-use crate::{ActionList, ActionState, ChoiceOption, QuestionKind, Times};
+use crate::{ActionList, ActionState, ChoiceOption, Library, QuestionKind, Times};
 
 #[test]
 fn mobile_and_linux_share_the_same_library() {
@@ -21,6 +21,33 @@ fn mobile_and_linux_share_the_same_library() {
     assert!(spaces.note(memo).unwrap().archived.is_some());
     assert_eq!(spaces.library(&space).unwrap().action_parent(step), Some(task));
     assert_eq!(spaces.note(step).unwrap().action.unwrap().state, ActionState::Done);
+}
+
+#[test]
+fn an_open_editor_keeps_another_devices_changes() {
+    let dir = tempfile::tempdir().unwrap();
+    let mobile = MobileNotebook::open(dir.path().to_string_lossy().into()).unwrap();
+    let space = mobile.spaces().unwrap().remove(0).key;
+    let memo = mobile.create_memo(space.clone(), "Groceries".into()).unwrap();
+    let shown = mobile.editor_body(memo).unwrap();
+    {
+        let mut state = mobile.state().unwrap();
+        let library = state.spaces.library_mut(&space).unwrap();
+        let mut laptop = Library::in_memory();
+        laptop.merge_updates(&library.export_snapshot().unwrap(), false).unwrap();
+        laptop.set_body(memo, "Saturday\nGroceries").unwrap();
+        let updates = laptop.updates_since(&library.version()).unwrap().unwrap();
+        library.merge_updates(&updates, false).unwrap();
+    }
+    assert!(mobile.set_body(memo, format!("{shown} for the week")).unwrap());
+    // The editor loads the merged text, then saves in place again.
+    let shown = mobile.editor_body(memo).unwrap();
+    assert_eq!(shown, "Saturday\nGroceries for the week");
+    assert!(!mobile.set_body(memo, shown + "\n- milk").unwrap());
+    assert_eq!(
+        mobile.note(memo).unwrap().unwrap().body,
+        "Saturday\nGroceries for the week\n- milk"
+    );
 }
 
 #[test]
