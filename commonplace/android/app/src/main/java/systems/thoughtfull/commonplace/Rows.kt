@@ -322,7 +322,7 @@ internal fun NoteRow(
       // checkbox's box instead. A star's points weigh it toward the bottom of its box, so the
       // offset lifts it to look level with the checkbox.
       Box(
-        Modifier.size(32.dp).alignBy { it.measuredHeight / 2 }.offset(y = (-1).dp),
+        Modifier.size(32.dp).alignBy { it.measuredHeight / 2 }.offset(y = (-2).dp),
         contentAlignment = Alignment.Center
       ) {
         CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 32.dp) {
