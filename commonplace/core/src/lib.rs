@@ -32,7 +32,7 @@ pub use journals::{
     Answer, COLORS, ChoiceOption, Days, ENTRY_KIND, Entry, Handled, JOURNAL_KIND, Journal, Prompt,
     Question, QuestionKind, Schedule, Times, format_time, parse_loose_time, parse_time, prompt_key,
 };
-pub use label::label;
+pub use label::{label, relabel};
 pub use library::{EditBase, Library, MEMO, Note};
 pub use links::{
     Link, LinkSyntax, ShownTitles, collapse_links, expand_links, label_separator, link_label,

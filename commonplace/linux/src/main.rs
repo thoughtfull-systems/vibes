@@ -77,6 +77,7 @@ button.star {
 }
 button.star:not(:checked) image { opacity: 0.55; }
 button.star:checked image { color: @yellow_4; }
+button.step-edit { min-width: 0; min-height: 0; padding: 2px; }
 .drop-line { background-color: @accent_color; border-radius: 1px; }
 .dragged { opacity: 0.55; }
 .drop-inside { box-shadow: inset 0 0 0 2px @accent_color; border-radius: 6px; }

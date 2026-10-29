@@ -2,6 +2,7 @@
 
 package systems.thoughtfull.commonplace
 
+import android.content.ClipboardManager
 import android.os.SystemClock
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.height
@@ -19,7 +20,9 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performImeAction
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.unit.dp
@@ -35,6 +38,7 @@ import systems.thoughtfull.commonplace.core.Question
 import systems.thoughtfull.commonplace.core.QuestionKind
 import systems.thoughtfull.commonplace.core.Schedule
 import systems.thoughtfull.commonplace.core.Times
+import systems.thoughtfull.commonplace.core.noteUri
 
 class RefinementsTest {
   @get:Rule val compose = createComposeRule()
@@ -122,6 +126,45 @@ class RefinementsTest {
     val after = compose.onNodeWithTag("action-parent").fetchSemanticsNode().boundsInRoot.top
     assertEquals(before, after, 0.5f)
     compose.onNodeWithText("Move…").assertExists()
+  }
+
+  @Test fun stepRowsEditTitlesInPlaceAndCopyLinksFromTheirMenus() {
+    val library = space()
+    val (parent, step) = runBlocking {
+      repository.use { core ->
+        val parent = core.createAction(library, "Title project")
+        parent to core.createStep(parent, "## Old title\n\nDetails")
+      }
+    }
+    val model = NotebookModel(app)
+    compose.setContent {
+      CommonplaceTheme {
+        val state by model.state.collectAsState()
+        state.notes.find { it.id == parent }?.let { note ->
+          Column { NoteBottomPanel(model, note, emptyList(), {}, Modifier.height(560.dp)) }
+        }
+      }
+    }
+    compose.waitUntil(10_000) {
+      runCatching { compose.onNodeWithTag("step-edit-$step").assertExists() }.isSuccess
+    }
+    val title = compose.onNodeWithText("Old title").fetchSemanticsNode().boundsInRoot
+    val edit = compose.onNodeWithTag("step-edit-$step").fetchSemanticsNode().boundsInRoot
+    assertEquals(title.center.y, edit.center.y, 2f)
+    compose.onNodeWithTag("step-edit-$step").performClick()
+    compose.onNodeWithTag("step-title-field").performTextReplacement("New title")
+    compose.onNodeWithTag("step-title-field").performImeAction()
+    compose.waitUntil(10_000) {
+      runBlocking { repository.use { it.note(step)?.body } } == "## New title\n\nDetails"
+    }
+    compose.onNodeWithTag("step-menu-$step").performClick()
+    compose.onNodeWithText("Copy link").performClick()
+    val clipboard = app.getSystemService(ClipboardManager::class.java)
+    var copied: String? = null
+    InstrumentationRegistry.getInstrumentation().runOnMainSync {
+      copied = clipboard.primaryClip?.getItemAt(0)?.text?.toString()
+    }
+    assertEquals(noteUri(step), copied)
   }
 
   @Test fun spaceFilteringDoesNotShiftControlsOrOfferSamples() {

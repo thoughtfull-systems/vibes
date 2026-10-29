@@ -37,6 +37,7 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
@@ -249,7 +250,12 @@ internal fun NoteRow(
   stalled: Boolean = false,
   plan: (() -> Unit)? = null,
   star: (() -> Unit)? = null,
-  complete: (() -> Unit)? = null
+  complete: (() -> Unit)? = null,
+  leading: (@Composable () -> Unit)? = null,
+  indent: Dp = 0.dp,
+  titleEditor: (@Composable () -> Unit)? = null,
+  titleAfter: (@Composable () -> Unit)? = null,
+  trailing: (@Composable () -> Unit)? = null
 ) {
   val titleCenter = with(LocalDensity.current) {
     MaterialTheme.typography.bodyLarge.lineHeight.roundToPx() / 2
@@ -259,10 +265,14 @@ internal fun NoteRow(
   Row(
     Modifier.fillMaxWidth().testTag("note-row-${note.id}").clickable { open(note.id) }
       .alpha(if (dimmed) 0.55f else 1f)
-      .padding(start = 12.dp, end = 16.dp)
+      .padding(start = if (leading != null) 4.dp else 12.dp, end = 16.dp)
       .padding(vertical = 12.dp),
     verticalAlignment = Alignment.CenterVertically
   ) {
+    if (leading != null) {
+      Box(Modifier.alignBy { it.measuredHeight / 2 }) { leading() }
+    }
+    Spacer(Modifier.width(indent))
     Box(
       Modifier.size(32.dp).alignBy { it.measuredHeight / 2 }.testTag(
         if (note.action != null) "note-checkbox" else "note-kind-icon"
@@ -292,20 +302,28 @@ internal fun NoteRow(
       verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
       val pressing = urgency == ActionStatus.OVERDUE || urgency == ActionStatus.DUE_SOON
-      Text(
-        formattedTitle(displayLabel(note)),
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
-        color = when (urgency) {
-          ActionStatus.OVERDUE -> MaterialTheme.colorScheme.error
-          ActionStatus.DUE_SOON -> Color(0xFFB26314)
-          else -> MaterialTheme.colorScheme.onSurface
-        },
-        style = MaterialTheme.typography.bodyLarge.copy(
-          fontStyle = if (note.action?.project == true) FontStyle.Italic else FontStyle.Normal,
-          fontWeight = if (pressing) FontWeight.Bold else FontWeight.Normal
-        )
-      )
+      Row(verticalAlignment = Alignment.CenterVertically) {
+        if (titleEditor != null) {
+          Box(Modifier.weight(1f)) { titleEditor() }
+        } else {
+          Text(
+            formattedTitle(displayLabel(note)),
+            Modifier.weight(1f, fill = false),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            color = when (urgency) {
+              ActionStatus.OVERDUE -> MaterialTheme.colorScheme.error
+              ActionStatus.DUE_SOON -> Color(0xFFB26314)
+              else -> MaterialTheme.colorScheme.onSurface
+            },
+            style = MaterialTheme.typography.bodyLarge.copy(
+              fontStyle = if (note.action?.project == true) FontStyle.Italic else FontStyle.Normal,
+              fontWeight = if (pressing) FontWeight.Bold else FontWeight.Normal
+            )
+          )
+        }
+        titleAfter?.invoke()
+      }
       val path = if (showPath) parents.mapNotNull(context::label).joinToString(" › ") else ""
       listOf(
         AnnotatedString(rowSummary(note, stamp, dates, stalled, context)),
@@ -340,6 +358,12 @@ internal fun NoteRow(
           StarButton(note.starred != null, star)
         }
       }
+    }
+    if (trailing != null) {
+      Row(
+        Modifier.alignBy { it.measuredHeight / 2 },
+        verticalAlignment = Alignment.CenterVertically
+      ) { trailing() }
     }
   }
   HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))

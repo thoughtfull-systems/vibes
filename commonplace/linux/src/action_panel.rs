@@ -5,13 +5,18 @@ use std::collections::HashMap;
 use std::rc::{Rc, Weak};
 
 use adw::prelude::*;
-use commonplace_core::{ActionChange, ActionList, ActionState, Date, Note, NoteId};
-use gtk::{gdk, glib};
+use commonplace_core::{
+    ActionChange, ActionEntry, ActionList, ActionState, Date, Error, Note, NoteId, Spaces, note_uri,
+};
+use gtk::{gdk, gio, glib};
 
 use crate::drag_scroll::DragScroll;
 use crate::libraries;
 use crate::link_picker::{Choice, LinkPicker, Purpose};
-use crate::rows::{connect_day_clicked, format_date, note_row, parent_labels, today};
+use crate::rows::{
+    STEP_CHECK_COLUMN, STEP_MENU_COLUMN, STEP_TITLE_COLUMN, connect_day_clicked, format_date,
+    parent_labels, step_row, today,
+};
 use crate::state::State;
 
 const LISTS: [(&str, ActionList); 5] = [
@@ -23,6 +28,7 @@ const LISTS: [(&str, ActionList); 5] = [
 ];
 
 type OpenHandler = Rc<dyn Fn(NoteId)>;
+type StepChange = Box<dyn Fn(&mut Spaces) -> Result<(), Error>>;
 
 /// The fields of the open action, shown above its text, and its steps, shown below.
 pub struct ActionPanel {
@@ -200,7 +206,7 @@ const PROJECT_TARGET_REACH: &str = "word word";
 /// left for drops beside the step, so they don't make it a project by accident.
 fn project_target_end(list: &gtk::ListBox, row: &gtk::ListBoxRow) -> Option<f64> {
     let content = row.child()?;
-    let leading = content.first_child()?.compute_bounds(list)?;
+    let leading = step_check(row)?.compute_bounds(list)?;
     let reach = content.create_pango_layout(Some(PROJECT_TARGET_REACH)).pixel_size().0 as f32;
     let bounds = content.compute_bounds(list)?;
     let half = bounds.x() + bounds.width() / 2.0;
@@ -230,8 +236,14 @@ fn drop_line_start(
         }
         Place::Inside => return None,
     };
-    let content = list.row_at_index(index)?.child()?.compute_bounds(space)?;
-    Some((content.x(), y))
+    let check = step_check(&list.row_at_index(index)?)?.compute_bounds(space)?;
+    Some((check.x(), y))
+}
+
+/// The checkbox in a step's row, which starts at the step's indentation.
+fn step_check(row: &gtk::ListBoxRow) -> Option<gtk::Widget> {
+    let grid = row.child()?.first_child().and_downcast::<gtk::Grid>()?;
+    grid.child_at(STEP_CHECK_COLUMN, 0)
 }
 
 /// A step being dragged. A type of its own, unlike a string, keeps text widgets such as the editor
@@ -240,8 +252,8 @@ fn drop_line_start(
 #[boxed_type(name = "CommonplaceDraggedStep")]
 struct DraggedStep(NoteId);
 
-/// Lets the user drag a step's row. The steps list decides where the step goes.
-fn make_draggable(row: &gtk::Box, id: NoteId) {
+/// Lets the user drag a step's row by its handle. The steps list decides where the step goes.
+fn make_draggable(handle: &gtk::Image, row: &gtk::Box, id: NoteId) {
     let source = gtk::DragSource::builder().actions(gdk::DragAction::MOVE).build();
     source.connect_prepare(move |_, _, _| {
         Some(gdk::ContentProvider::for_value(&DraggedStep(id).to_value()))
@@ -256,7 +268,7 @@ fn make_draggable(row: &gtk::Box, id: NoteId) {
         row,
         move |_, _, _| row.remove_css_class("dragged")
     ));
-    row.add_controller(source);
+    handle.add_controller(source);
 }
 
 impl ActionPanel {
@@ -610,9 +622,7 @@ impl ActionPanel {
         self.shown_drop.set(None);
         self.drop_line.set_visible(false);
         for step in &steps {
-            let row = note_row(&self.state, step, false);
-            make_draggable(&row, step.note.id);
-            self.steps.append(&row);
+            self.steps.append(&self.step_row(step, editable));
         }
         *self.step_ids.borrow_mut() = steps.iter().map(|step| step.note.id).collect();
         *self.step_parents.borrow_mut() =
@@ -671,6 +681,112 @@ impl ActionPanel {
         if let Err(error) = self.state.write(|library| library.change_action(id, change)) {
             eprintln!("commonplace: {error}");
         }
+    }
+
+    /// A row for `step`, with a handle to drag it by, a button to edit its title, and a menu that
+    /// copies its link, archives it, or moves it to the trash.
+    fn step_row(self: &Rc<Self>, step: &ActionEntry, editable: bool) -> gtk::Box {
+        let id = step.note.id;
+        let handle = gtk::Image::builder()
+            .icon_name("list-drag-handle-symbolic")
+            .tooltip_text("Drag to move")
+            .cursor(&gdk::Cursor::from_name("grab", None).expect("grab is a standard cursor"))
+            .visible(editable)
+            .build();
+        let edit = gtk::Button::builder()
+            .icon_name("document-edit-symbolic")
+            .tooltip_text("Edit title")
+            .css_classes(["flat", "step-edit"])
+            .visible(editable)
+            .build();
+        let menu = gio::Menu::new();
+        menu.append(Some("_Copy link"), Some("step.copy-link"));
+        let actions = gio::SimpleActionGroup::new();
+        let copy_link = gio::SimpleAction::new("copy-link", None);
+        actions.add_action(&copy_link);
+        if editable {
+            let archived = step.note.archived.is_some();
+            let archive = if archived { "_Unarchive" } else { "_Archive" };
+            menu.append(Some(archive), Some("step.archive"));
+            menu.append(Some("_Move to trash"), Some("step.trash"));
+            let changes: [(&str, StepChange); 2] = [
+                ("archive", Box::new(move |library| library.set_archived(id, !archived))),
+                ("trash", Box::new(move |library| library.trash(id))),
+            ];
+            for (name, change) in changes {
+                let action = gio::SimpleAction::new(name, None);
+                let state = self.state.clone();
+                action.connect_activate(move |_, _| {
+                    if let Err(error) = state.write(|library| change(library)) {
+                        eprintln!("commonplace: {error}");
+                    }
+                });
+                actions.add_action(&action);
+            }
+        }
+        let menu_button = gtk::MenuButton::builder()
+            .icon_name("view-more-symbolic")
+            .tooltip_text("Step menu")
+            .menu_model(&menu)
+            .css_classes(["flat"])
+            .build();
+        let row = step_row(
+            &self.state,
+            step,
+            handle.upcast_ref(),
+            edit.upcast_ref(),
+            menu_button.upcast_ref(),
+        );
+        row.insert_action_group("step", Some(&actions));
+        make_draggable(&handle, &row, id);
+        copy_link.connect_activate(glib::clone!(
+            #[weak]
+            row,
+            move |_, _| row.clipboard().set_text(&note_uri(id))
+        ));
+        edit.connect_clicked(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            #[weak]
+            row,
+            move |_| panel.edit_title(&row, id)
+        ));
+        row
+    }
+
+    /// Swaps the title in a step's `row` for an entry that edits it. Leaving the entry saves the
+    /// title, unless the user pressed Escape or left it blank.
+    fn edit_title(&self, row: &gtk::Box, id: NoteId) {
+        let Some(grid) = row.first_child().and_downcast::<gtk::Grid>() else { return };
+        let line = grid.child_at(STEP_TITLE_COLUMN, 0).and_downcast::<gtk::Box>();
+        let (Some(line), Some(menu)) = (line, grid.child_at(STEP_MENU_COLUMN, 0)) else { return };
+        let Some(title) = line.first_child() else { return };
+        let Some(text) = self.state.read(|library| library.editable_label(id)) else { return };
+        let entry = gtk::EditableLabel::builder().text(&text).hexpand(true).build();
+        title.set_visible(false);
+        line.prepend(&entry);
+        // The menu takes the row's spare width to sit at its end, which would leave the entry
+        // no wider than the title.
+        line.set_hexpand(true);
+        menu.set_hexpand(false);
+        entry.start_editing();
+        entry.grab_focus();
+        let state = self.state.clone();
+        let line = line.downgrade();
+        entry.connect_editing_notify(move |entry| {
+            let Some(line) = line.upgrade().filter(|_| !entry.is_editing()) else { return };
+            let edited = entry.text();
+            if !edited.trim().is_empty()
+                && edited != text
+                && let Err(error) = state.write(|library| library.set_label(id, &edited))
+            {
+                eprintln!("commonplace: {error}");
+            }
+            line.remove(entry);
+            title.set_visible(true);
+            line.set_hexpand(false);
+            menu.set_hexpand(true);
+        });
     }
 
     fn open(&self, id: NoteId) {

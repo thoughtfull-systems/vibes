@@ -11,6 +11,29 @@ pub fn label(body: &str) -> Option<String> {
     (!line.is_empty()).then(|| line.to_owned())
 }
 
+/// Replaces the text of `body`'s label with `label`, as one line, keeping the marker in front of
+/// it, such as a heading's hashes, and every other line.
+pub fn relabel(body: &str, label: &str) -> String {
+    let label = label.replace(['\n', '\r'], " ");
+    let label = label.trim();
+    let mut offset = 0;
+    for line in body.split_inclusive('\n') {
+        let content = line.trim_end_matches(['\n', '\r']);
+        if !content.trim().is_empty() {
+            let trimmed = content.trim_start();
+            let rest = strip_heading(trimmed)
+                .or_else(|| strip_list_item(trimmed))
+                .or_else(|| trimmed.strip_prefix('>'))
+                .unwrap_or(trimmed)
+                .trim_start();
+            let start = offset + content.len() - rest.len();
+            return format!("{}{label}{}", &body[..start], &body[offset + content.len()..]);
+        }
+        offset += line.len();
+    }
+    format!("{label}{body}")
+}
+
 /// Derives an entry's label, which skips the headings that its journal's template wrote, so
 /// entries in one journal don't all share the label of its first question. An entry with nothing
 /// but headings takes its first heading.
@@ -52,6 +75,22 @@ mod tests {
             ("# ", None),
         ] {
             assert_eq!(label(body).as_deref(), expected, "{body:?}");
+        }
+    }
+
+    #[test]
+    fn relabels() {
+        for (body, new, expected) in [
+            ("", "New", "New"),
+            ("\n\n", "New", "New\n\n"),
+            ("Old\nmore", "New", "New\nmore"),
+            ("\n  Old  \r\nmore", "New", "\n  New\r\nmore"),
+            ("## Old\n", " New ", "## New\n"),
+            ("- [ ] Old", "New", "- [ ] New"),
+            ("> Old", "New\nline", "> New line"),
+            ("-not a list", "New", "New"),
+        ] {
+            assert_eq!(relabel(body, new), expected, "{body:?}");
         }
     }
 

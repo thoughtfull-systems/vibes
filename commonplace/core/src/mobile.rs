@@ -704,6 +704,14 @@ impl MobileNotebook {
         Ok(body)
     }
 
+    pub fn editable_label(&self, id: NoteId) -> Result<String> {
+        Ok(self.state()?.spaces.editable_label(id).ok_or(crate::Error::NotFound(id))?)
+    }
+
+    pub fn set_label(&self, id: NoteId, text: String) -> Result<()> {
+        self.write(|state| state.spaces.set_label(id, &text))
+    }
+
     pub fn link_text(&self, source: NoteId, target: NoteId) -> Result<String> {
         let mut state = self.state()?;
         let mut editor = state.editors.remove(&source).unwrap_or_default();

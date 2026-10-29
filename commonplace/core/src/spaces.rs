@@ -14,7 +14,7 @@ use crate::actions::order_key;
 use crate::library::{MODIFIED, loro_error};
 use crate::{
     ActionChange, ActionDates, ActionEntry, ActionView, Answer, Date, EditBase, Error, Handled,
-    Library, Note, NoteId, Question, Schedule, plain_links,
+    Library, Note, NoteId, Question, Schedule, ShownTitles, label, plain_links, relabel,
 };
 
 const LIBRARIES: &str = "libraries";
@@ -314,6 +314,23 @@ impl Spaces {
 
     pub fn set_body(&mut self, id: NoteId, body: &str) -> Result<(), Error> {
         self.owner_mut(id)?.set_body(id, body)
+    }
+
+    /// The note's label as one line to edit on its own, with each wikilink showing its note's
+    /// title, as an editor shows it.
+    pub fn editable_label(&self, id: NoteId) -> Option<String> {
+        let label = label(&self.note(id)?.body).unwrap_or_default();
+        Some(ShownTitles::default().expand(&label, |id| self.link_title(id)))
+    }
+
+    /// Saves `text` from [`Self::editable_label`] as the note's label, leaving the rest of its
+    /// body as it is.
+    pub fn set_label(&mut self, id: NoteId, text: &str) -> Result<(), Error> {
+        let body = self.note(id).ok_or(Error::NotFound(id))?.body;
+        let mut titles = ShownTitles::default();
+        titles.expand(&label(&body).unwrap_or_default(), |id| self.link_title(id));
+        let text = titles.collapse(text, |id| self.link_title(id));
+        self.set_body(id, &relabel(&body, &text))
     }
 
     /// The version that an editor's text reflects once it loads note `id`.
@@ -764,6 +781,16 @@ mod tests {
         }
         assert_eq!(spaces.note(moved).unwrap().body, "moved");
         assert!(matches!(spaces.remove("b"), Err(Error::LastLibrary)));
+    }
+
+    #[test]
+    fn edits_labels_without_storing_shown_titles() {
+        let mut spaces = Spaces::in_memory(&["a"]);
+        let plan = spaces.create_memo("a", "Plan").unwrap();
+        let step = spaces.create_memo("a", &format!("- Read [[{plan}]]\n\nNotes")).unwrap();
+        assert_eq!(spaces.editable_label(step), Some(format!("Read [[{plan}|Plan]]")));
+        spaces.set_label(step, &format!("Reread [[{plan}|Plan]] twice")).unwrap();
+        assert_eq!(spaces.note(step).unwrap().body, format!("- Reread [[{plan}]] twice\n\nNotes"));
     }
 
     #[test]
