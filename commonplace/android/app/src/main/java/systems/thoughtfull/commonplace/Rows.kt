@@ -65,8 +65,8 @@ internal fun toggleStar(model: NotebookModel, note: MobileNote) {
 
 /** A toggle that stars an action, or takes its star away. Starred actions lead Execute. */
 @Composable
-internal fun StarButton(starred: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
-  IconButton(onClick, modifier.testTag("star")) {
+internal fun StarButton(starred: Boolean, onClick: () -> Unit) {
+  IconButton(onClick, Modifier.testTag("star")) {
     if (starred) {
       // Adwaita's yellow_4, the color the Linux app gives a star.
       Icon(
@@ -317,7 +317,16 @@ internal fun NoteRow(
       }
     }
     if (star != null && note.action != null) {
-      StarButton(note.action.starred != null, Modifier.alignBy { it.measuredHeight / 2 }, star)
+      // Aligning the IconButton itself left the star centered on the row, so it copies the
+      // checkbox's box instead.
+      Box(
+        Modifier.size(32.dp).alignBy { it.measuredHeight / 2 },
+        contentAlignment = Alignment.Center
+      ) {
+        CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 32.dp) {
+          StarButton(note.action.starred != null, star)
+        }
+      }
     }
   }
   HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
