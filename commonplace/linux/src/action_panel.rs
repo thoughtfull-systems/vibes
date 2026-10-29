@@ -11,9 +11,7 @@ use gtk::{gdk, glib};
 use crate::drag_scroll::DragScroll;
 use crate::libraries;
 use crate::link_picker::{Choice, LinkPicker, Purpose};
-use crate::rows::{
-    connect_day_clicked, format_date, note_row, parent_labels, star_button, star_icon, today,
-};
+use crate::rows::{connect_day_clicked, format_date, note_row, parent_labels, star_button, today};
 use crate::state::State;
 
 const LISTS: [(&str, ActionList); 5] = [
@@ -293,9 +291,10 @@ impl ActionPanel {
         let waiting_label = labelled("Waiting for", waiting_for.upcast_ref());
         let fields = gtk::Grid::builder().column_spacing(12).row_spacing(6).build();
         let star = gtk::ToggleButton::builder()
+            .icon_name("starred-symbolic")
             .halign(gtk::Align::Start)
             .valign(gtk::Align::Center)
-            .css_classes(["flat", "circular"])
+            .css_classes(["star"])
             .build();
         fields.attach(&labelled("Starred?", star.upcast_ref()), 0, -2, 1, 1);
         fields.attach(&star, 1, -2, 1, 1);
@@ -543,7 +542,6 @@ impl ActionPanel {
         self.list.set_selected(list as u32);
         self.project.set_active(action.project);
         self.star.set_active(action.starred.is_some());
-        self.star.set_icon_name(star_icon(action.starred.is_some()));
         self.planning.set_active(action.planning.is_some());
         self.planning.set_visible(action.is_open());
         self.planning_label.set_visible(action.is_open());
@@ -758,10 +756,7 @@ impl ActionPanel {
         self.star.connect_toggled(glib::clone!(
             #[weak(rename_to = panel)]
             self,
-            move |star| {
-                star.set_icon_name(star_icon(star.is_active()));
-                panel.change(ActionChange::Starred(star.is_active()));
-            }
+            move |star| panel.change(ActionChange::Starred(star.is_active()))
         ));
         self.planning.connect_active_notify(glib::clone!(
             #[weak(rename_to = panel)]

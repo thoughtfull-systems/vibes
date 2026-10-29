@@ -173,18 +173,17 @@ fn plan_tooltip(queued: bool) -> &'static str {
 /// A toggle that stars an action, or takes its star away. Starred actions lead Execute.
 pub fn star_button(state: &Rc<State>, id: NoteId, starred: bool) -> gtk::ToggleButton {
     let button = gtk::ToggleButton::builder()
-        .icon_name(star_icon(starred))
+        .icon_name("starred-symbolic")
         .active(starred)
         .valign(gtk::Align::Center)
         .tooltip_text(star_tooltip(starred))
-        .css_classes(["flat", "circular"])
+        .css_classes(["star"])
         .build();
     button.connect_toggled(glib::clone!(
         #[strong]
         state,
         move |button| {
             let starred = button.is_active();
-            button.set_icon_name(star_icon(starred));
             button.set_tooltip_text(Some(star_tooltip(starred)));
             if let Err(error) =
                 state.write(|library| library.change_action(id, ActionChange::Starred(starred)))
@@ -194,10 +193,6 @@ pub fn star_button(state: &Rc<State>, id: NoteId, starred: bool) -> gtk::ToggleB
         }
     ));
     button
-}
-
-pub fn star_icon(starred: bool) -> &'static str {
-    if starred { "starred-symbolic" } else { "non-starred-symbolic" }
 }
 
 fn star_tooltip(starred: bool) -> &'static str {

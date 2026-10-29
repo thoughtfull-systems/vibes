@@ -72,6 +72,8 @@ button.unpin {
   background: none; box-shadow: none;
 }
 button.unpin:hover { color: @accent_color; }
+button.star { background: none; box-shadow: none; }
+button.star:not(:checked) image { opacity: 0.55; }
 .drop-line { background-color: @accent_color; border-radius: 1px; }
 .dragged { opacity: 0.55; }
 .drop-inside { box-shadow: inset 0 0 0 2px @accent_color; border-radius: 6px; }

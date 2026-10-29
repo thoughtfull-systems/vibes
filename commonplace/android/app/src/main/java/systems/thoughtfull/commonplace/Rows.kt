@@ -66,8 +66,9 @@ internal fun toggleStar(model: NotebookModel, note: MobileNote) {
 internal fun StarButton(starred: Boolean, onClick: () -> Unit) {
   IconButton(onClick, Modifier.testTag("star")) {
     AppIcon(
-      if (starred) R.drawable.starred else R.drawable.non_starred,
-      if (starred) "Remove the star" else "Star"
+      R.drawable.starred,
+      if (starred) "Remove the star" else "Star",
+      Modifier.alpha(if (starred) 1f else 0.55f)
     )
   }
 }
