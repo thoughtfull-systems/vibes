@@ -81,6 +81,7 @@ An action is a project if its `project` is `true`, and a task otherwise.
 | `list`        | String  | One of `inbox`, `active`, `waiting`, `someday`, or `maybe`.   |
 | `planning`    | Integer | When the action joined the planning queue, as a timestamp.    |
 | `project`     | Boolean | Whether the action is a project.                              |
+| `starred`     | Integer | When the action gained its star, as a timestamp.              |
 | `state`       | String  | `open` or `done`.                                             |
 | `waiting_for` | String  | Who or what the action waits for, in plain text.              |
 
@@ -89,9 +90,11 @@ someday and maybe list of GTD split in two. The next actions list is `active` he
 projects in progress as well as tasks to do now. An action on the someday list is one to do without
 a decided time, and an action on the maybe list is one that might not get done at all. A new action
 starts on the inbox list, and leaves it when its owner sorts it onto another. `closed` is absent
-while the action is open, and `defer`, `due`, `planning`, and `waiting_for` are optional. The
-planning queue holds the actions their owner wants to plan next, and an action leaves it only when
-its owner removes `planning`, because planning can span more than one sitting.
+while the action is open, and `defer`, `due`, `planning`, `starred`, and `waiting_for` are optional.
+The planning queue holds the actions their owner wants to plan next, and an action leaves it only
+when its owner removes `planning`, because planning can span more than one sitting. A star marks an
+action its owner wants to find quickly. An action keeps its star when it closes or goes to the
+archive or the trash, until its owner removes `starred`.
 
 A reader treats a missing or unknown `state` as `open`, a missing or unknown `list` as `active`, and
 a missing `project` as `false`.

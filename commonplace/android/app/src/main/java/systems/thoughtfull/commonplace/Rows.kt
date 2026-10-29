@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -52,6 +53,21 @@ internal fun toggleAction(model: NotebookModel, note: MobileNote) {
       ActionChange.State(
         if (note.action?.state == ActionState.DONE) ActionState.OPEN else ActionState.DONE
       )
+    )
+  }
+}
+
+internal fun toggleStar(model: NotebookModel, note: MobileNote) {
+  model.perform { it.changeAction(note.id, ActionChange.Starred(note.action?.starred == null)) }
+}
+
+/** A toggle that stars an action, or takes its star away. Starred actions lead Execute. */
+@Composable
+internal fun StarButton(starred: Boolean, onClick: () -> Unit) {
+  IconButton(onClick, Modifier.testTag("star")) {
+    AppIcon(
+      if (starred) R.drawable.starred else R.drawable.non_starred,
+      if (starred) "Remove the star" else "Star"
     )
   }
 }
@@ -211,6 +227,7 @@ internal fun NoteRow(
   showPath: Boolean = true,
   stalled: Boolean = false,
   plan: (() -> Unit)? = null,
+  star: (() -> Unit)? = null,
   complete: (() -> Unit)? = null
 ) {
   val titleCenter = with(LocalDensity.current) {
@@ -290,6 +307,7 @@ internal fun NoteRow(
         TextButton(onClick = plan) { Text("Plan") }
       }
     }
+    if (star != null && note.action != null) StarButton(note.action.starred != null, star)
   }
   HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 }

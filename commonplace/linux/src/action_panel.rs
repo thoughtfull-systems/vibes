@@ -11,7 +11,9 @@ use gtk::{gdk, glib};
 use crate::drag_scroll::DragScroll;
 use crate::libraries;
 use crate::link_picker::{Choice, LinkPicker, Purpose};
-use crate::rows::{connect_day_clicked, format_date, note_row, parent_labels, today};
+use crate::rows::{
+    connect_day_clicked, format_date, note_row, parent_labels, star_button, star_icon, today,
+};
 use crate::state::State;
 
 const LISTS: [(&str, ActionList); 5] = [
@@ -57,6 +59,7 @@ pub struct ActionPanel {
     show_done_unsaved: RefCell<HashMap<NoteId, bool>>,
     /// Where the steps list shows a dragged step would go, if anywhere.
     shown_drop: Cell<Option<(i32, Place)>>,
+    star: gtk::ToggleButton,
     state: Rc<State>,
     step_entry: gtk::Entry,
     step_ids: RefCell<Vec<NoteId>>,
@@ -289,6 +292,13 @@ impl ActionPanel {
         };
         let waiting_label = labelled("Waiting for", waiting_for.upcast_ref());
         let fields = gtk::Grid::builder().column_spacing(12).row_spacing(6).build();
+        let star = gtk::ToggleButton::builder()
+            .halign(gtk::Align::Start)
+            .valign(gtk::Align::Center)
+            .css_classes(["flat", "circular"])
+            .build();
+        fields.attach(&labelled("Starred?", star.upcast_ref()), 0, -2, 1, 1);
+        fields.attach(&star, 1, -2, 1, 1);
         fields.attach(&labelled("Done?", done.upcast_ref()), 0, -1, 1, 1);
         fields.attach(&done, 1, -1, 1, 1);
         fields.attach(&labelled("List", list.upcast_ref()), 0, 0, 1, 1);
@@ -420,6 +430,7 @@ impl ActionPanel {
             show_done_label,
             show_done_unsaved: RefCell::default(),
             shown_drop: Cell::new(None),
+            star,
             state,
             step_entry,
             step_ids: RefCell::default(),
@@ -531,6 +542,8 @@ impl ActionPanel {
         let list = self.lists.borrow().iter().position(|list| *list == action.list).unwrap_or(0);
         self.list.set_selected(list as u32);
         self.project.set_active(action.project);
+        self.star.set_active(action.starred.is_some());
+        self.star.set_icon_name(star_icon(action.starred.is_some()));
         self.planning.set_active(action.planning.is_some());
         self.planning.set_visible(action.is_open());
         self.planning_label.set_visible(action.is_open());
@@ -600,6 +613,11 @@ impl ActionPanel {
         self.drop_line.set_visible(false);
         for step in &steps {
             let row = note_row(&self.state, step, false);
+            let starred = step.note.action.as_ref().is_some_and(|action| action.starred.is_some());
+            let star = star_button(&self.state, step.note.id, starred);
+            star.set_hexpand(true);
+            star.set_halign(gtk::Align::End);
+            row.append(&star);
             make_draggable(&row, step.note.id);
             self.steps.append(&row);
         }
@@ -736,6 +754,14 @@ impl ActionPanel {
             #[weak(rename_to = panel)]
             self,
             move |project| panel.change(ActionChange::Project(project.is_active()))
+        ));
+        self.star.connect_toggled(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |star| {
+                star.set_icon_name(star_icon(star.is_active()));
+                panel.change(ActionChange::Starred(star.is_active()));
+            }
         ));
         self.planning.connect_active_notify(glib::clone!(
             #[weak(rename_to = panel)]

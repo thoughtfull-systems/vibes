@@ -202,8 +202,12 @@ fn actions(library: &mut Library, today: Date) -> Result<(), Error> {
     library.change_action(gutters, ActionChange::State(ActionState::Done))?;
     library.create_task("Paint the fence", Some(house))?;
     let kitchen = library.create_task("Redo the kitchen", Some(house))?;
-    library.create_task("Pick the tiles", Some(kitchen))?;
+    let tiles = library.create_task("Pick the tiles", Some(kitchen))?;
     library.create_task("Find a plumber", Some(kitchen))?;
+
+    // Starred actions: a project and a step deep inside it. A task put off to someday has one too.
+    library.change_action(house, ActionChange::Starred(true))?;
+    library.change_action(tiles, ActionChange::Starred(true))?;
 
     // Stalled projects: one with no steps, and one whose only step waits in the inbox.
     let empty = library.create_task("Learn Portuguese", None)?;
@@ -218,6 +222,7 @@ fn actions(library: &mut Library, today: Date) -> Result<(), Error> {
     library.change_action(waiting, ActionChange::WaitingFor(Some("the landlord".to_owned())))?;
     let someday = library.create_task("Learn to sail", None)?;
     list(library, someday, ActionList::Someday)?;
+    library.change_action(someday, ActionChange::Starred(true))?;
     let maybe = library.create_task("Get a dog", None)?;
     list(library, maybe, ActionList::Maybe)?;
     let shelved = library.create_task("Build a cabin", None)?;
@@ -378,6 +383,7 @@ mod tests {
                 for time in [
                     note.action.as_ref().and_then(|action| action.closed),
                     note.action.as_ref().and_then(|action| action.planning),
+                    note.action.as_ref().and_then(|action| action.starred),
                     note.archived,
                     note.trashed,
                 ]

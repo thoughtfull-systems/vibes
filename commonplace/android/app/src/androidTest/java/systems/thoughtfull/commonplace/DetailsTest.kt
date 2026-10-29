@@ -164,6 +164,7 @@ class DetailsTest {
     // Field order follows the desktop panel rather than alphabetical order.
     val tags = listOf(
       "detail-library-$space",
+      "detail-starred",
       "detail-done",
       "detail-list",
       "detail-project",
@@ -201,6 +202,8 @@ class DetailsTest {
     saved(action) { it.action?.due == LocalDate.now().toString() }
     clickControl("detail-unclear", toggle = true)
     saved(action) { it.action?.planning != null }
+    clickControl("detail-starred")
+    saved(action) { it.action?.starred != null }
     compose.onNodeWithTag("detail-archive").performScrollTo().performClick()
     saved(action) { it.archived != null }
     assertNotNull(runBlocking { repository.use { it.note(parent) } })

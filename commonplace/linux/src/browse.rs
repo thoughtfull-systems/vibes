@@ -361,7 +361,13 @@ impl Browser {
             ),
         };
         self.list.set_empty(icon, title, description);
-        self.list.show(vec![Section { entries, plan: false, stamp: order.stamp(), title: "" }]);
+        self.list.show(vec![Section {
+            entries,
+            plan: false,
+            stamp: order.stamp(),
+            star: false,
+            title: "",
+        }]);
     }
 }
 

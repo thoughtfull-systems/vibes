@@ -87,6 +87,7 @@ internal fun actionSections(
     else -> {
       val next = view(ActionView.NEXT)
       listOf(
+        ActionSection("Starred", view(ActionView.STARRED)),
         ActionSection("Overdue", next.filter { it.dates.status == ActionStatus.OVERDUE }),
         ActionSection("Due soon", next.filter { it.dates.status == ActionStatus.DUE_SOON }),
         ActionSection("Active", next.filter { it.dates.status == ActionStatus.NORMAL }),
@@ -144,6 +145,7 @@ internal fun ActionsScreen(
             dates = entry.dates,
             parents = entry.parents,
             stalled = entry.stalled,
+            star = { toggleStar(model, entry.note) },
             plan = if (section.plan) {
               {
                 model.perform {
@@ -183,7 +185,7 @@ private fun ActionsEmpty(mode: String, query: String) {
     else -> EmptyNotes(
       R.drawable.execute,
       "Nothing to do next",
-      "Tasks on the active list show up here"
+      "Starred actions and tasks on the active list show up here"
     )
   }
 }

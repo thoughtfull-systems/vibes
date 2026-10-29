@@ -46,7 +46,7 @@ private fun action(
   list: ActionList = ActionList.ACTIVE,
   state: ActionState = ActionState.OPEN
 ) = note(id).copy(
-  action = Action(null, null, null, list, null, project, state, null),
+  action = Action(null, null, null, list, null, project, null, state, null),
   kind = "action"
 )
 

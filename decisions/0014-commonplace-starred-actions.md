@@ -25,24 +25,23 @@ again through Review or search.
 ## Decision
 
 The owner can star any action: a project as well as a task. Execute lists the starred actions at the
-top, under a **Starred** heading, and the next tasks below them, under a **Next** heading.
+top, under a **Starred** heading, and the next tasks after them.
 
 - **Storage.** A starred action has a `starred` timestamp in its action fields: the time its owner
   starred it. Removing the key removes the star. It's a new optional key, so the
   [library format](../commonplace/spec/library-format.md) stays at version 3, and a device that
   doesn't know the key shows Execute as before.
-- **Which actions.** Starred lists every open starred action that isn't archived or in the trash,
-  whatever its list, start date, or place in the planning queue, because a star is the owner's
-  explicit choice. It orders and colors them the way decision 0004 orders and colors every list, so
-  an action that hasn't started yet shows dimmed.
-- **Next tasks.** The **Next** section lists the next tasks as decision 0004 defines them, without
-  the ones that already show under **Starred**, so no action shows twice. Execute shows no headings
-  while no open action has a star.
+- **Which actions.** Starred lists every starred action that, like each project it belongs to, is
+  open and outside the archive and the trash, whatever its list, start date, or place in the
+  planning queue, because a star is the owner's explicit choice. It orders and colors them the way
+  decision 0004 orders and colors every list, so an action that hasn't started yet shows dimmed.
+- **Next tasks.** Below **Starred**, Execute lists the next tasks as decision 0004 defines them,
+  without the ones that already show under **Starred**, so no action shows twice.
 - **Opening.** Selecting a starred row opens the action, as every list does. A starred project opens
   to its page, with its steps.
 - **Controls.** The details sidebar of every action has a star button. Each row in Execute, Plan,
-  Review, and a project's steps has a star button too, filled for a starred action, that toggles the
-  star.
+  Review, the actions search results, and a project's steps has a star button too, filled for a
+  starred action, that toggles the star.
 - **Closing.** Finishing, archiving, or trashing an action leaves `starred` in place. The action
   leaves **Starred** because it's no longer open, and reopening it brings it back.
 

@@ -38,7 +38,7 @@ private fun task(id: String, status: ActionStatus = ActionStatus.NORMAL) = Mobil
   dates = ActionDates(null, null, status),
   depth = 0u,
   note = note(id).copy(
-    action = Action(null, null, null, ActionList.ACTIVE, null, false, ActionState.OPEN, null)
+    action = Action(null, null, null, ActionList.ACTIVE, null, false, null, ActionState.OPEN, null)
   ),
   parents = emptyList(),
   stalled = false
@@ -97,17 +97,21 @@ class BrowseTest {
 
 class ActionSectionsTest {
   @Test
-  fun executeGroupsByUrgencyAndWaitingOnlyAppearsInReview() {
+  fun executeLeadsWithStarredThenGroupsByUrgencyAndWaitingOnlyAppearsInReview() {
     val active = task("active")
     val overdue = task("overdue", ActionStatus.OVERDUE)
+    val starred = task("starred")
     val waiting = task("waiting")
     val views = mapOf(
       ActionView.NEXT to listOf(active, overdue),
+      ActionView.STARRED to listOf(starred),
       ActionView.WAITING to listOf(waiting)
     )
     val execute = actionSections("Execute", views, "")
-    assertEquals(listOf("overdue"), execute.first().entries.map { it.note.id })
-    assertEquals(listOf("active"), execute[2].entries.map { it.note.id })
+    assertEquals(listOf("Starred", "Overdue"), execute.take(2).map { it.title })
+    assertEquals(listOf(starred), execute.first().entries)
+    assertEquals(listOf("overdue"), execute[1].entries.map { it.note.id })
+    assertEquals(listOf("active"), execute[3].entries.map { it.note.id })
     assertTrue(execute.flatMap { it.entries }.none { it.note.id == "waiting" })
     val review = actionSections("Review", views, "")
     assertEquals(listOf(waiting), review.first { it.title == "Waiting for" }.entries)

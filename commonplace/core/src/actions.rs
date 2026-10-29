@@ -21,6 +21,7 @@ const LIST: &str = "list";
 const NOTE: &str = "note";
 const PLANNING: &str = "planning";
 const PROJECT: &str = "project";
+const STARRED: &str = "starred";
 const STATE: &str = "state";
 const WAITING_FOR: &str = "waiting_for";
 
@@ -224,6 +225,8 @@ pub struct Action {
     /// When the action joined the planning queue, if it's in it.
     pub planning: Option<i64>,
     pub project: bool,
+    /// When the action gained its star, if it has one.
+    pub starred: Option<i64>,
     pub state: ActionState,
     pub waiting_for: Option<String>,
 }
@@ -241,6 +244,7 @@ impl Action {
             list: text(LIST).map_or_else(ActionList::default, |t| ActionList::parse(&t)),
             planning: map.get(PLANNING).and_then(|v| integer(v.clone())),
             project: matches!(map.get(PROJECT), Some(LoroValue::Bool(true))),
+            starred: map.get(STARRED).and_then(|v| integer(v.clone())),
             state: text(STATE).map_or_else(ActionState::default, |t| ActionState::parse(&t)),
             waiting_for: text(WAITING_FOR).filter(|t| !t.trim().is_empty()),
         }
@@ -261,6 +265,8 @@ pub enum ActionChange {
     /// Adds the action to the planning queue, or takes it out.
     Planning(bool),
     Project(bool),
+    /// Stars the action, or takes its star away.
+    Starred(bool),
     State(ActionState),
     WaitingFor(Option<String>),
 }
@@ -288,7 +294,8 @@ pub enum ActionView {
     /// Open actions on the maybe list, outside any put-off project.
     Maybe,
     /// Open tasks on the active list that start within a week and aren't in the planning queue,
-    /// with only the first in order of each top-level project's steps.
+    /// with only the first in order of each top-level project's steps, and without the starred
+    /// tasks, which `Starred` shows.
     Next,
     /// Open actions in the planning queue, the longest queued first.
     Planning,
@@ -298,6 +305,8 @@ pub enum ActionView {
     Scheduled,
     /// Open actions on the someday list, outside any put-off project.
     Someday,
+    /// Open starred actions, on any list, whatever their start date.
+    Starred,
     /// Open projects that have started, aren't put off to someday or maybe, sit outside any
     /// put-off project, and have no open task that isn't put off either.
     Stalled,
@@ -448,6 +457,9 @@ impl Library {
             ActionChange::Planning(true) => action.insert(PLANNING, self.now()),
             ActionChange::Planning(false) => action.delete(PLANNING),
             ActionChange::Project(project) => action.insert(PROJECT, project),
+            ActionChange::Starred(true) if action.get(STARRED).is_some() => Ok(()),
+            ActionChange::Starred(true) => action.insert(STARRED, self.now()),
+            ActionChange::Starred(false) => action.delete(STARRED),
             ActionChange::State(state) => {
                 action.insert(STATE, state.as_str()).map_err(loro_error)?;
                 match state {
@@ -759,8 +771,9 @@ impl Library {
                 }
                 let keep: HashSet<NoteId> = chosen.into_values().map(|(_, id)| id).collect();
                 entries.retain(|entry| {
-                    keep.contains(&entry.note.id)
-                        || !hierarchy.ancestors(entry.note.id).any(|id| is_project(&id))
+                    entry.action.starred.is_none()
+                        && (keep.contains(&entry.note.id)
+                            || !hierarchy.ancestors(entry.note.id).any(|id| is_project(&id)))
                 });
                 flat(entries)
             }
@@ -776,6 +789,10 @@ impl Library {
                 entries.retain(|entry| entry.context.active() && entry.action.planning.is_some());
                 entries.sort_by_key(|entry| (entry.action.planning, outline[&entry.note.id]));
                 result(entries, false)
+            }
+            ActionView::Starred => {
+                entries.retain(|entry| entry.context.active() && entry.action.starred.is_some());
+                flat(entries)
             }
             ActionView::Stalled => {
                 entries.retain(|entry| stalled.contains(&entry.note.id));
@@ -1664,6 +1681,36 @@ mod tests {
         library.change_action(second, ActionChange::Planning(false)).unwrap();
         library.change_action(first, ActionChange::State(ActionState::Done)).unwrap();
         assert!(view(&library).is_empty());
+    }
+
+    #[test]
+    fn stars_actions() {
+        let mut library = Library::in_memory();
+        let house = library.create_task("House", None).unwrap();
+        let paint = library.create_task("Paint", Some(house)).unwrap();
+        library.create_task("Roof", Some(house)).unwrap();
+        let sail = library.create_task("Sail", None).unwrap();
+        library.change_action(sail, ActionChange::List(ActionList::Someday)).unwrap();
+        library.change_action(house, ActionChange::Starred(true)).unwrap();
+        library.change_action(paint, ActionChange::Starred(true)).unwrap();
+        library.change_action(sail, ActionChange::Starred(true)).unwrap();
+        let starred = library.note(sail).unwrap().action.unwrap().starred;
+        library.change_action(sail, ActionChange::Starred(true)).unwrap();
+        assert_eq!(library.note(sail).unwrap().action.unwrap().starred, starred);
+        let view = |library: &Library, view| titles(library.action_view(view, today()));
+        assert_eq!(
+            view(&library, ActionView::Starred),
+            [(0, "House".into()), (0, "Paint".into()), (0, "Sail".into())]
+        );
+        // The project's next step is starred, so it shows only under Starred.
+        assert!(view(&library, ActionView::Next).is_empty());
+        library.change_action(house, ActionChange::State(ActionState::Done)).unwrap();
+        assert_eq!(view(&library, ActionView::Starred), [(0, "Sail".into())]);
+        library.change_action(house, ActionChange::State(ActionState::Open)).unwrap();
+        library.change_action(paint, ActionChange::Starred(false)).unwrap();
+        assert_eq!(view(&library, ActionView::Next), [(0, "Paint".into())]);
+        library.set_archived(sail, true).unwrap();
+        assert_eq!(view(&library, ActionView::Starred), [(0, "House".into())]);
     }
 
     #[test]

@@ -441,6 +441,9 @@ internal fun ActionDetails(model: NotebookModel, note: MobileNote) {
   }
   Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
     // Match the field order and control column in the Linux details panel.
+    ActionField("Starred?", "detail-starred") {
+      StarButton(action.starred != null) { change(ActionChange.Starred(action.starred == null)) }
+    }
     ActionField("Done?", "detail-done") {
       Switch(action.state == ActionState.DONE, {
         change(ActionChange.State(if (it) ActionState.DONE else ActionState.OPEN))
