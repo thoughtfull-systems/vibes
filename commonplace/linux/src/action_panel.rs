@@ -11,7 +11,7 @@ use gtk::{gdk, glib};
 use crate::drag_scroll::DragScroll;
 use crate::libraries;
 use crate::link_picker::{Choice, LinkPicker, Purpose};
-use crate::rows::{connect_day_clicked, format_date, note_row, parent_labels, star_button, today};
+use crate::rows::{connect_day_clicked, format_date, note_row, parent_labels, today};
 use crate::state::State;
 
 const LISTS: [(&str, ActionList); 5] = [
@@ -611,11 +611,6 @@ impl ActionPanel {
         self.drop_line.set_visible(false);
         for step in &steps {
             let row = note_row(&self.state, step, false);
-            let starred = step.note.action.as_ref().is_some_and(|action| action.starred.is_some());
-            let star = star_button(&self.state, step.note.id, starred);
-            star.set_hexpand(true);
-            star.set_halign(gtk::Align::End);
-            row.append(&star);
             make_draggable(&row, step.note.id);
             self.steps.append(&row);
         }

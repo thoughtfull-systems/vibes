@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
@@ -29,6 +30,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -63,13 +65,19 @@ internal fun toggleStar(model: NotebookModel, note: MobileNote) {
 
 /** A toggle that stars an action, or takes its star away. Starred actions lead Execute. */
 @Composable
-internal fun StarButton(starred: Boolean, onClick: () -> Unit) {
-  IconButton(onClick, Modifier.testTag("star")) {
-    AppIcon(
-      R.drawable.starred,
-      if (starred) "Remove the star" else "Star",
-      Modifier.alpha(if (starred) 1f else 0.55f)
-    )
+internal fun StarButton(starred: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+  IconButton(onClick, modifier.testTag("star")) {
+    if (starred) {
+      // Adwaita's yellow_4, the color the Linux app gives a star.
+      Icon(
+        painterResource(R.drawable.starred),
+        "Remove the star",
+        Modifier.size(24.dp),
+        tint = Color(0xFFF5C211)
+      )
+    } else {
+      AppIcon(R.drawable.starred, "Star", Modifier.alpha(0.55f))
+    }
   }
 }
 
@@ -308,7 +316,9 @@ internal fun NoteRow(
         TextButton(onClick = plan) { Text("Plan") }
       }
     }
-    if (star != null && note.action != null) StarButton(note.action.starred != null, star)
+    if (star != null && note.action != null) {
+      StarButton(note.action.starred != null, Modifier.alignBy { it.measuredHeight / 2 }, star)
+    }
   }
   HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 }

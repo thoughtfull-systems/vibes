@@ -185,11 +185,6 @@ internal fun StepRows(
               dates = step.dates,
               showPath = false,
               stalled = step.stalled,
-              star = if (editable) {
-                { toggleStar(model, step.note) }
-              } else {
-                null
-              },
               complete = if (editable) {
                 { toggleAction(model, step.note) }
               } else {

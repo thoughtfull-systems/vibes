@@ -30,7 +30,8 @@ import systems.thoughtfull.commonplace.core.MobileAction
 internal data class ActionSection(
   val title: String,
   val entries: List<MobileAction>,
-  val plan: Boolean = false
+  val plan: Boolean = false,
+  val star: Boolean = false
 )
 
 internal fun actionSections(
@@ -87,7 +88,7 @@ internal fun actionSections(
     else -> {
       val next = view(ActionView.NEXT)
       listOf(
-        ActionSection("Starred", view(ActionView.STARRED)),
+        ActionSection("Starred", view(ActionView.STARRED), star = true),
         ActionSection("Overdue", next.filter { it.dates.status == ActionStatus.OVERDUE }),
         ActionSection("Due soon", next.filter { it.dates.status == ActionStatus.DUE_SOON }),
         ActionSection("Active", next.filter { it.dates.status == ActionStatus.NORMAL }),
@@ -145,7 +146,11 @@ internal fun ActionsScreen(
             dates = entry.dates,
             parents = entry.parents,
             stalled = entry.stalled,
-            star = { toggleStar(model, entry.note) },
+            star = if (section.star) {
+              { toggleStar(model, entry.note) }
+            } else {
+              null
+            },
             plan = if (section.plan) {
               {
                 model.perform {

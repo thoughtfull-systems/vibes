@@ -39,9 +39,9 @@ top, under a **Starred** heading, and the next tasks after them.
   without the ones that already show under **Starred**, so no action shows twice.
 - **Opening.** Selecting a starred row opens the action, as every list does. A starred project opens
   to its page, with its steps.
-- **Controls.** The details sidebar of every action has a star button. Each row in Execute, Plan,
-  Review, the actions search results, and a project's steps has a star button too, filled for a
-  starred action, that toggles the star.
+- **Controls.** The details sidebar of every action has a star button, gray without a star and
+  yellow with one, that toggles the star. Each row under **Starred** shows its yellow star too, as a
+  button that takes the star away. No other list shows stars.
 - **Closing.** Finishing, archiving, or trashing an action leaves `starred` in place. The action
   leaves **Starred** because it's no longer open, and reopening it brings it back.
 
@@ -52,8 +52,8 @@ Against the criteria:
 - **Any action:** the key lives in the action fields that projects and tasks share.
 - **Nothing pressing hides:** the next tasks keep their place below the starred actions, with the
   usual colors for tasks due soon or overdue.
-- **Low friction:** a single click of a star in any action list or sidebar adds or removes the
-  action.
+- **Low friction:** one click in an action's sidebar stars it, and clicking its star under
+  **Starred** takes the star away.
 - **Same on every device:** the key lives in the library and syncs with it.
 - **Merges well:** `starred` is one key in the action's map, so concurrent changes resolve by Loro's
   last write, and every outcome is a valid state.
@@ -82,6 +82,9 @@ Against the criteria:
 - **Remove the star when an action closes.** Clearing `starred` in the same commit as closing would
   keep the library tidy, but an action reopened by mistake would lose its star, and the key has no
   effect while the action stays closed anyway.
+- **A star on every row.** A star button on each row of every action list would let the owner star
+  an action without opening it. It adds a control to every row for a choice the owner makes for only
+  a few actions, and the sidebar already offers it one click after opening the action.
 - **Tags.** A tag such as `starred` could mark any kind of note. Decision 0004 leaves tags for a
   later decision that covers every kind of note, and a star needs no name, so it doesn't wait for
   one.

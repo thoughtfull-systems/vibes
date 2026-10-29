@@ -845,7 +845,7 @@ impl Window {
                     next.iter().filter(|entry| entry.dates.status == status).cloned().collect()
                 };
                 vec![
-                    section("Starred", view(ActionView::Starred), false),
+                    Section { star: true, ..section("Starred", view(ActionView::Starred), false) },
                     section("Overdue", status(ActionStatus::Overdue), false),
                     section("Due soon", status(ActionStatus::DueSoon), false),
                     section("Active", status(ActionStatus::Normal), false),
@@ -972,7 +972,7 @@ impl Window {
 }
 
 fn section(title: &'static str, entries: Vec<ActionEntry>, plan: bool) -> Section {
-    Section { entries, plan, stamp: None, star: true, title }
+    Section { entries, plan, stamp: None, star: false, title }
 }
 
 #[cfg(test)]
