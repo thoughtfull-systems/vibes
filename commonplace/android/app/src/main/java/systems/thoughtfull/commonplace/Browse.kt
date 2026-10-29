@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.dp
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
+import systems.thoughtfull.commonplace.core.ActionView
 import systems.thoughtfull.commonplace.core.MobileNote
 
 internal enum class BrowseOrder(val label: String, val stamp: Stamp?) {
@@ -95,6 +96,21 @@ internal fun browseNotes(
   }
 }
 
+/** The notes that lead the list under Starred, and the rest. The trash has no Starred section. */
+internal fun splitStarred(
+  notes: List<MobileNote>,
+  tab: String,
+  starredActions: Set<String>
+): Pair<List<MobileNote>, List<MobileNote>> = if (tab == "Trash") {
+  Pair(emptyList(), notes)
+} else {
+  // An action counts as starred only while it and the projects above it are open.
+  notes.partition { note ->
+    note.starred != null && note.archived == null &&
+      (note.action == null || note.id in starredActions)
+  }
+}
+
 @Composable
 internal fun BrowseScreen(
   model: NotebookModel,
@@ -126,6 +142,10 @@ internal fun BrowseScreen(
   val parsed = runCatching { LocalDate.parse(from) }.getOrNull()
   val notes = remember(state.notes, tab, query, order, ascending, from) {
     browseNotes(state.notes, tab, query, order, ascending, parsed)
+  }
+  val starredActions = state.actions[ActionView.STARRED].orEmpty().map { it.note.id }.toSet()
+  val (starred, others) = remember(notes, starredActions, tab) {
+    splitStarred(notes, tab, starredActions)
   }
   LaunchedEffect(order, ascending, from, tab) {
     preferences.edit().putString("order.$tab", order.label).putString("from.$tab", from)
@@ -205,18 +225,17 @@ internal fun BrowseScreen(
         BrowseEmpty(tab, query.isNotBlank() || parsed != null)
       }
     }
-    items(notes, key = { it.id }) { note ->
-      NoteRow(
-        note,
-        context,
-        open,
-        complete = if (note.action != null && !note.inTrash && !note.readOnly) {
-          { toggleAction(model, note) }
-        } else {
-          null
-        },
-        stamp = order.stamp
-      )
+    if (starred.isNotEmpty()) {
+      item { SectionHeading("Starred") }
+      items(starred, key = { "starred.${it.id}" }) { note ->
+        BrowseRow(model, note, context, open, order.stamp, starred = true)
+      }
+      if (others.isNotEmpty()) {
+        item { SectionHeading(if (tab == "Memos") "Other memos" else "Other notes") }
+      }
+    }
+    items(others, key = { it.id }) { note ->
+      BrowseRow(model, note, context, open, order.stamp, starred = false)
     }
   }
   if (calendar) {
@@ -225,6 +244,33 @@ internal fun BrowseScreen(
       calendar = false
     }
   }
+}
+
+@Composable
+private fun BrowseRow(
+  model: NotebookModel,
+  note: MobileNote,
+  context: RowContext,
+  open: (String) -> Unit,
+  stamp: Stamp?,
+  starred: Boolean
+) {
+  NoteRow(
+    note,
+    context,
+    open,
+    complete = if (note.action != null && !note.inTrash && !note.readOnly) {
+      { toggleAction(model, note) }
+    } else {
+      null
+    },
+    stamp = stamp,
+    star = if (starred) {
+      { toggleStar(model, note) }
+    } else {
+      null
+    }
+  )
 }
 
 @Composable

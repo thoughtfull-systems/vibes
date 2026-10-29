@@ -70,6 +70,7 @@ pub struct MobileNote {
     pub parent: Option<NoteId>,
     pub read_only: bool,
     pub space: String,
+    pub starred: Option<i64>,
     pub title: String,
     pub trashed: Option<i64>,
 }
@@ -761,6 +762,10 @@ impl MobileNotebook {
         self.write(|state| state.spaces.set_archived(id, archived))
     }
 
+    pub fn set_starred(&self, id: NoteId, starred: bool) -> Result<()> {
+        self.write(|state| state.spaces.set_starred(id, starred))
+    }
+
     pub fn trash(&self, id: NoteId) -> Result<()> {
         self.write(|state| state.spaces.trash(id))
     }
@@ -960,6 +965,7 @@ fn mobile_note(spaces: &Spaces, note: Note) -> MobileNote {
         parent: spaces.library(&space).and_then(|lib| lib.action_parent(note.id)),
         read_only: spaces.library(&space).is_some_and(|lib| lib.is_read_only()),
         space,
+        starred: note.starred,
         title: spaces.link_title(note.id).unwrap_or_default(),
         trashed: note.trashed,
     }

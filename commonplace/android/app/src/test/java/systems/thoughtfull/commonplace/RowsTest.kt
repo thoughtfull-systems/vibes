@@ -36,6 +36,7 @@ private fun note(id: String, title: String = id) = MobileNote(
   parent = null,
   readOnly = false,
   space = "library",
+  starred = null,
   title = title,
   trashed = null
 )

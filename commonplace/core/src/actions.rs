@@ -288,7 +288,8 @@ pub enum ActionView {
     /// Open actions on the maybe list, outside any put-off project.
     Maybe,
     /// Open tasks on the active list that start within a week and aren't in the planning queue,
-    /// with only the first in order of each top-level project's steps.
+    /// with only the first in order of each top-level project's steps, and without the starred
+    /// tasks, which `Starred` shows.
     Next,
     /// Open actions in the planning queue, the longest queued first.
     Planning,
@@ -298,6 +299,8 @@ pub enum ActionView {
     Scheduled,
     /// Open actions on the someday list, outside any put-off project.
     Someday,
+    /// Open starred actions, on any list, whatever their start date.
+    Starred,
     /// Open projects that have started, aren't put off to someday or maybe, sit outside any
     /// put-off project, and have no open task that isn't put off either.
     Stalled,
@@ -759,8 +762,9 @@ impl Library {
                 }
                 let keep: HashSet<NoteId> = chosen.into_values().map(|(_, id)| id).collect();
                 entries.retain(|entry| {
-                    keep.contains(&entry.note.id)
-                        || !hierarchy.ancestors(entry.note.id).any(|id| is_project(&id))
+                    entry.note.starred.is_none()
+                        && (keep.contains(&entry.note.id)
+                            || !hierarchy.ancestors(entry.note.id).any(|id| is_project(&id)))
                 });
                 flat(entries)
             }
@@ -776,6 +780,10 @@ impl Library {
                 entries.retain(|entry| entry.context.active() && entry.action.planning.is_some());
                 entries.sort_by_key(|entry| (entry.action.planning, outline[&entry.note.id]));
                 result(entries, false)
+            }
+            ActionView::Starred => {
+                entries.retain(|entry| entry.context.active() && entry.note.starred.is_some());
+                flat(entries)
             }
             ActionView::Stalled => {
                 entries.retain(|entry| stalled.contains(&entry.note.id));
@@ -1664,6 +1672,37 @@ mod tests {
         library.change_action(second, ActionChange::Planning(false)).unwrap();
         library.change_action(first, ActionChange::State(ActionState::Done)).unwrap();
         assert!(view(&library).is_empty());
+    }
+
+    #[test]
+    fn stars_actions() {
+        let mut library = Library::in_memory();
+        let house = library.create_task("House", None).unwrap();
+        let paint = library.create_task("Paint", Some(house)).unwrap();
+        library.create_task("Roof", Some(house)).unwrap();
+        let sail = library.create_task("Sail", None).unwrap();
+        library.change_action(sail, ActionChange::List(ActionList::Someday)).unwrap();
+        library.set_starred(house, true).unwrap();
+        library.set_starred(paint, true).unwrap();
+        library.set_starred(sail, true).unwrap();
+        let before = library.note(sail).unwrap();
+        library.set_starred(sail, true).unwrap();
+        let after = library.note(sail).unwrap();
+        assert_eq!((after.starred, after.modified), (before.starred, before.modified));
+        let view = |library: &Library, view| titles(library.action_view(view, today()));
+        assert_eq!(
+            view(&library, ActionView::Starred),
+            [(0, "House".into()), (0, "Paint".into()), (0, "Sail".into())]
+        );
+        // The project's next step is starred, so it shows only under Starred.
+        assert!(view(&library, ActionView::Next).is_empty());
+        library.change_action(house, ActionChange::State(ActionState::Done)).unwrap();
+        assert_eq!(view(&library, ActionView::Starred), [(0, "Sail".into())]);
+        library.change_action(house, ActionChange::State(ActionState::Open)).unwrap();
+        library.set_starred(paint, false).unwrap();
+        assert_eq!(view(&library, ActionView::Next), [(0, "Paint".into())]);
+        library.set_archived(sail, true).unwrap();
+        assert_eq!(view(&library, ActionView::Starred), [(0, "House".into())]);
     }
 
     #[test]

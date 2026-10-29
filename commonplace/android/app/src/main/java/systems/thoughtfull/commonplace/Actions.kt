@@ -30,7 +30,8 @@ import systems.thoughtfull.commonplace.core.MobileAction
 internal data class ActionSection(
   val title: String,
   val entries: List<MobileAction>,
-  val plan: Boolean = false
+  val plan: Boolean = false,
+  val star: Boolean = false
 )
 
 internal fun actionSections(
@@ -87,6 +88,7 @@ internal fun actionSections(
     else -> {
       val next = view(ActionView.NEXT)
       listOf(
+        ActionSection("Starred", view(ActionView.STARRED), star = true),
         ActionSection("Overdue", next.filter { it.dates.status == ActionStatus.OVERDUE }),
         ActionSection("Due soon", next.filter { it.dates.status == ActionStatus.DUE_SOON }),
         ActionSection("Active", next.filter { it.dates.status == ActionStatus.NORMAL }),
@@ -125,14 +127,7 @@ internal fun ActionsScreen(
     if (sections.all { it.entries.isEmpty() }) item { ActionsEmpty(mode, query) }
     sections.filter { it.entries.isNotEmpty() }.forEach { section ->
       if (section.title.isNotEmpty()) {
-        item {
-          Text(
-            section.title,
-            Modifier.fillMaxWidth().padding(start = 16.dp, top = 16.dp, bottom = 4.dp),
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            style = MaterialTheme.typography.titleSmall
-          )
-        }
+        item { SectionHeading(section.title) }
       }
       items(section.entries, key = { "${section.title}.${it.note.id}" }) { entry ->
         Column(Modifier.padding(start = (entry.depth.toInt().coerceAtMost(6) * 12).dp)) {
@@ -144,6 +139,11 @@ internal fun ActionsScreen(
             dates = entry.dates,
             parents = entry.parents,
             stalled = entry.stalled,
+            star = if (section.star) {
+              { toggleStar(model, entry.note) }
+            } else {
+              null
+            },
             plan = if (section.plan) {
               {
                 model.perform {
@@ -183,7 +183,7 @@ private fun ActionsEmpty(mode: String, query: String) {
     else -> EmptyNotes(
       R.drawable.execute,
       "Nothing to do next",
-      "Tasks on the active list show up here"
+      "Starred actions and tasks on the active list show up here"
     )
   }
 }

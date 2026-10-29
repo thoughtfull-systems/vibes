@@ -22,6 +22,8 @@ pub struct Section {
     pub plan: bool,
     /// A time to show in each row.
     pub stamp: Option<Stamp>,
+    /// Whether each action's row shows its star, as a button that takes the star away.
+    pub star: bool,
     pub title: &'static str,
 }
 
@@ -102,15 +104,24 @@ impl NoteList {
                 .selection_mode(gtk::SelectionMode::None)
                 .build();
             for entry in &section.entries {
-                let row = stamped_note_row(&self.state, entry, true, section.stamp);
+                let star = section.star.then(|| {
+                    star_button(&self.state, entry.note.id, entry.note.starred.is_some()).upcast()
+                });
+                let row = stamped_note_row(&self.state, entry, true, section.stamp, star);
                 row.set_margin_start(12);
                 row.set_margin_end(12);
+                let buttons =
+                    gtk::Box::builder().spacing(6).hexpand(true).halign(gtk::Align::End).build();
                 let open = entry.note.action.as_ref().filter(|action| action.is_open());
                 if let Some(action) = open.filter(|_| section.plan) {
-                    let button = plan_button(&self.state, entry.note.id, action.planning.is_some());
-                    button.set_hexpand(true);
-                    button.set_halign(gtk::Align::End);
-                    row.append(&button);
+                    buttons.append(&plan_button(
+                        &self.state,
+                        entry.note.id,
+                        action.planning.is_some(),
+                    ));
+                }
+                if buttons.first_child().is_some() {
+                    row.append(&buttons);
                 }
                 list.append(&row);
             }
@@ -155,18 +166,47 @@ fn plan_tooltip(queued: bool) -> &'static str {
     if queued { "Take out of the planning queue" } else { "Add to the planning queue" }
 }
 
+/// A toggle that stars a note, or takes its star away. Starred notes lead their tabs.
+pub fn star_button(state: &Rc<State>, id: NoteId, starred: bool) -> gtk::ToggleButton {
+    let button = gtk::ToggleButton::builder()
+        .icon_name("starred-symbolic")
+        .active(starred)
+        .valign(gtk::Align::Center)
+        .tooltip_text(star_tooltip(starred))
+        .css_classes(["star"])
+        .build();
+    button.connect_toggled(glib::clone!(
+        #[strong]
+        state,
+        move |button| {
+            let starred = button.is_active();
+            button.set_tooltip_text(Some(star_tooltip(starred)));
+            if let Err(error) = state.write(|library| library.set_starred(id, starred)) {
+                eprintln!("commonplace: {error}");
+            }
+        }
+    ));
+    button
+}
+
+fn star_tooltip(starred: bool) -> &'static str {
+    if starred { "Remove the star" } else { "Star" }
+}
+
 /// A row for a note in a list. An action's row has a checkbox that closes or reopens it, and a line
 /// naming the actions it belongs to if `show_path` is set.
 pub fn note_row(state: &Rc<State>, entry: &ActionEntry, show_path: bool) -> gtk::Box {
-    stamped_note_row(state, entry, show_path, None)
+    stamped_note_row(state, entry, show_path, None, None)
 }
 
-/// A row for a note, like `note_row`, that also shows the time `stamp` names.
+/// A row for a note, like `note_row`, that also shows the time `stamp` names, and `title_end` at
+/// the end of the title's line.
 fn stamped_note_row(
     state: &Rc<State>,
     entry: &ActionEntry,
     show_path: bool,
     stamp: Option<Stamp>,
+    title_end: Option<gtk::Widget>,
 ) -> gtk::Box {
     let note = &entry.note;
     let title = gtk::Label::builder()
@@ -241,6 +281,13 @@ fn stamped_note_row(
         text.attach(&kind_icon(note, journal.as_ref()), 0, 0, 1, 1);
     }
     text.attach(&title, column, 0, 1, 1);
+    if let Some(widget) = title_end {
+        text.set_hexpand(true);
+        widget.set_hexpand(true);
+        widget.set_halign(gtk::Align::End);
+        widget.set_valign(gtk::Align::Center);
+        text.attach(&widget, column + 1, 0, 1, 1);
+    }
     for (line, index) in [summary, path].into_iter().filter(|line| !line.is_empty()).zip(1..) {
         let label = gtk::Label::builder()
             .label(line)

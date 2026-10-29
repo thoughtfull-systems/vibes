@@ -57,6 +57,7 @@ pub struct ActionPanel {
     show_done_unsaved: RefCell<HashMap<NoteId, bool>>,
     /// Where the steps list shows a dragged step would go, if anywhere.
     shown_drop: Cell<Option<(i32, Place)>>,
+    star: gtk::ToggleButton,
     state: Rc<State>,
     step_entry: gtk::Entry,
     step_ids: RefCell<Vec<NoteId>>,
@@ -289,6 +290,14 @@ impl ActionPanel {
         };
         let waiting_label = labelled("Waiting for", waiting_for.upcast_ref());
         let fields = gtk::Grid::builder().column_spacing(12).row_spacing(6).build();
+        let star = gtk::ToggleButton::builder()
+            .icon_name("starred-symbolic")
+            .halign(gtk::Align::Start)
+            .valign(gtk::Align::Center)
+            .css_classes(["star"])
+            .build();
+        fields.attach(&labelled("Starred?", star.upcast_ref()), 0, -2, 1, 1);
+        fields.attach(&star, 1, -2, 1, 1);
         fields.attach(&labelled("Done?", done.upcast_ref()), 0, -1, 1, 1);
         fields.attach(&done, 1, -1, 1, 1);
         fields.attach(&labelled("List", list.upcast_ref()), 0, 0, 1, 1);
@@ -420,6 +429,7 @@ impl ActionPanel {
             show_done_label,
             show_done_unsaved: RefCell::default(),
             shown_drop: Cell::new(None),
+            star,
             state,
             step_entry,
             step_ids: RefCell::default(),
@@ -531,6 +541,7 @@ impl ActionPanel {
         let list = self.lists.borrow().iter().position(|list| *list == action.list).unwrap_or(0);
         self.list.set_selected(list as u32);
         self.project.set_active(action.project);
+        self.star.set_active(note.starred.is_some());
         self.planning.set_active(action.planning.is_some());
         self.planning.set_visible(action.is_open());
         self.planning_label.set_visible(action.is_open());
@@ -638,6 +649,18 @@ impl ActionPanel {
         self.path.set_markup(&markup);
     }
 
+    fn set_starred(&self, starred: bool) {
+        if self.loading.get() {
+            return;
+        }
+        let Some(id) = self.current.get() else {
+            return;
+        };
+        if let Err(error) = self.state.write(|library| library.set_starred(id, starred)) {
+            eprintln!("commonplace: {error}");
+        }
+    }
+
     fn change(&self, change: ActionChange) {
         if self.loading.get() {
             return;
@@ -736,6 +759,11 @@ impl ActionPanel {
             #[weak(rename_to = panel)]
             self,
             move |project| panel.change(ActionChange::Project(project.is_active()))
+        ));
+        self.star.connect_toggled(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |star| panel.set_starred(star.is_active())
         ));
         self.planning.connect_active_notify(glib::clone!(
             #[weak(rename_to = panel)]

@@ -328,6 +328,11 @@ internal fun NoteScreen(
           }
         }
         if (!current.inTrash && !current.readOnly) {
+          if (current.journal == null && current.entry == null) {
+            ActionField("Starred?", "detail-starred") {
+              StarButton(current.starred != null) { toggleStar(model, current) }
+            }
+          }
           current.action?.let { ActionDetails(model, current) }
           current.journal?.let { JournalDetails(model, current) }
           current.entry?.let {

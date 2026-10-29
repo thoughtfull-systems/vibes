@@ -9,12 +9,15 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -28,6 +31,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -54,6 +58,39 @@ internal fun toggleAction(model: NotebookModel, note: MobileNote) {
       )
     )
   }
+}
+
+internal fun toggleStar(model: NotebookModel, note: MobileNote) {
+  model.perform { it.setStarred(note.id, note.starred == null) }
+}
+
+/** A toggle that stars an action, or takes its star away. Starred actions lead Execute. */
+@Composable
+internal fun StarButton(starred: Boolean, onClick: () -> Unit) {
+  IconButton(onClick, Modifier.testTag("star")) {
+    if (starred) {
+      // Adwaita's yellow_4, the color the Linux app gives a star.
+      Icon(
+        painterResource(R.drawable.starred),
+        "Remove the star",
+        Modifier.size(24.dp),
+        tint = Color(0xFFF5C211)
+      )
+    } else {
+      AppIcon(R.drawable.starred, "Star", Modifier.alpha(0.55f))
+    }
+  }
+}
+
+/** A heading over one section of a list. */
+@Composable
+internal fun SectionHeading(title: String) {
+  Text(
+    title,
+    Modifier.fillMaxWidth().padding(start = 16.dp, top = 16.dp, bottom = 4.dp),
+    color = MaterialTheme.colorScheme.onSurfaceVariant,
+    style = MaterialTheme.typography.titleSmall
+  )
 }
 
 /** Which of a note's times a row shows. */
@@ -211,6 +248,7 @@ internal fun NoteRow(
   showPath: Boolean = true,
   stalled: Boolean = false,
   plan: (() -> Unit)? = null,
+  star: (() -> Unit)? = null,
   complete: (() -> Unit)? = null
 ) {
   val titleCenter = with(LocalDensity.current) {
@@ -288,6 +326,19 @@ internal fun NoteRow(
         FilledTonalButton(onClick = plan) { Text("Plan") }
       } else {
         TextButton(onClick = plan) { Text("Plan") }
+      }
+    }
+    if (star != null) {
+      // Aligning the IconButton itself left the star centered on the row, so it copies the
+      // checkbox's box instead. A star's points weigh it toward the bottom of its box, so the
+      // offset lifts it to look level with the checkbox.
+      Box(
+        Modifier.size(32.dp).alignBy { it.measuredHeight / 2 }.offset(y = (-2).dp),
+        contentAlignment = Alignment.Center
+      ) {
+        CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 32.dp) {
+          StarButton(note.starred != null, star)
+        }
       }
     }
   }

@@ -40,6 +40,10 @@ The Linux app covers memos, actions, and journals:
   dates, and work with them in four modes, Execute, Plan, Review, and Inbox.
   [Where actions show](#where-actions-show) describes what each mode lists.
 - Mark an action done.
+- Star a project, a task, or a memo in its details sidebar. Starred actions lead Execute, starred
+  memos lead the Memos tab, and All notes leads with every starred note. Click a star there, or in a
+  Starred section, to take it away. An archived note, or a done action, leaves its Starred section
+  until it comes back.
 - Archive any note with the button at the bottom of its details sidebar, to set it aside without
   changing it. Archived memos leave the Memos tab, and archived actions leave the four modes. All
   notes lists archived notes, and ordering it by archive date lists only them.
@@ -188,8 +192,9 @@ maybe, someday, waiting, active. A project counts as put off when its list is th
 maybe, or when it starts after today. It then stands for the actions inside it, and none of the
 modes below show those.
 
-- **Execute** lists open tasks on the active list that start within a week and aren't queued for
-  planning, with only the most pressing task from each top-level project.
+- **Execute** lists the starred actions, on any list, then the open tasks on the active list that
+  start within a week and aren't queued for planning, with only the most pressing task from each
+  top-level project.
 - **Plan** lists the planning queue, then the stalled projects: open projects that have started,
   aren't on someday or maybe, and have no open task that isn't put off either.
 - **Review** lists the open projects, then the open actions whose own list is waiting, someday, or

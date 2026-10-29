@@ -30,6 +30,7 @@ private fun note(id: String, created: Long = 1) = MobileNote(
   parent = null,
   readOnly = false,
   space = "library",
+  starred = null,
   title = id,
   trashed = null
 )
@@ -95,19 +96,40 @@ class BrowseTest {
   }
 }
 
+class StarredSplitTest {
+  @Test
+  fun starredNotesLeadEveryTabButTheTrash() {
+    val memo = note("memo").copy(starred = 1)
+    val archived = note("archived").copy(starred = 1, archived = 1)
+    val plain = note("plain")
+    val open = task("open").note.copy(starred = 1)
+    val closed = task("closed").note.copy(starred = 1)
+    val notes = listOf(memo, archived, plain, open, closed)
+    assertEquals(
+      Pair(listOf(memo, open), listOf(archived, plain, closed)),
+      splitStarred(notes, "All notes", setOf("open"))
+    )
+    assertEquals(Pair(emptyList<MobileNote>(), notes), splitStarred(notes, "Trash", setOf("open")))
+  }
+}
+
 class ActionSectionsTest {
   @Test
-  fun executeGroupsByUrgencyAndWaitingOnlyAppearsInReview() {
+  fun executeLeadsWithStarredThenGroupsByUrgencyAndWaitingOnlyAppearsInReview() {
     val active = task("active")
     val overdue = task("overdue", ActionStatus.OVERDUE)
+    val starred = task("starred")
     val waiting = task("waiting")
     val views = mapOf(
       ActionView.NEXT to listOf(active, overdue),
+      ActionView.STARRED to listOf(starred),
       ActionView.WAITING to listOf(waiting)
     )
     val execute = actionSections("Execute", views, "")
-    assertEquals(listOf("overdue"), execute.first().entries.map { it.note.id })
-    assertEquals(listOf("active"), execute[2].entries.map { it.note.id })
+    assertEquals(listOf("Starred", "Overdue"), execute.take(2).map { it.title })
+    assertEquals(listOf(starred), execute.first().entries)
+    assertEquals(listOf("overdue"), execute[1].entries.map { it.note.id })
+    assertEquals(listOf("active"), execute[3].entries.map { it.note.id })
     assertTrue(execute.flatMap { it.entries }.none { it.note.id == "waiting" })
     val review = actionSections("Review", views, "")
     assertEquals(listOf(waiting), review.first { it.title == "Waiting for" }.entries)

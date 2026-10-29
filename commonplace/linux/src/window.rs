@@ -838,13 +838,14 @@ impl Window {
                 self.actions.set_empty(
                     "media-playback-start-symbolic",
                     "Nothing to do next",
-                    "Tasks on the active list show up here",
+                    "Starred actions and tasks on the active list show up here",
                 );
                 let next = view(ActionView::Next);
                 let status = |status| {
                     next.iter().filter(|entry| entry.dates.status == status).cloned().collect()
                 };
                 vec![
+                    Section { star: true, ..section("Starred", view(ActionView::Starred), false) },
                     section("Overdue", status(ActionStatus::Overdue), false),
                     section("Due soon", status(ActionStatus::DueSoon), false),
                     section("Active", status(ActionStatus::Normal), false),
@@ -971,7 +972,7 @@ impl Window {
 }
 
 fn section(title: &'static str, entries: Vec<ActionEntry>, plan: bool) -> Section {
-    Section { entries, plan, stamp: None, title }
+    Section { entries, plan, stamp: None, star: false, title }
 }
 
 #[cfg(test)]

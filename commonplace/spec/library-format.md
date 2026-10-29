@@ -59,6 +59,7 @@ Each value is a map with these keys.
 | `archived` | Integer | When the note went to the [archive](#archive). Absent outside it.      |
 | `journal`  | Map     | The [journal fields](#journal-fields). Present for every journal.      |
 | `entry`    | Map     | The [entry fields](#entry-fields). Present for every entry.            |
+| `starred`  | Integer | When the note gained its [star](#stars). Absent without one.           |
 | `trashed`  | Integer | When the note moved to the trash. Absent for notes not in it.          |
 | `settings` | Map     | Preferences about this note alone, as [settings](#settings) describes. |
 
@@ -333,6 +334,14 @@ it moves any `archived` it finds there to the note, in one commit, keeping the n
 already has one. A device still on version 2 can archive an action offline and sync it after another
 device upgrades the library, so the move runs every time, not only once.
 [Decision 0009](../../decisions/0009-commonplace-archived-notes.md) explains the choice.
+
+## Stars
+
+A star marks a note its owner wants to find quickly. A note has a star if it has `starred`. Setting
+or removing `starred` doesn't change the note's `modified` time. Readers ignore `starred` on
+journals and entries. A note keeps its star when it goes to the archive or the trash, and an action
+keeps it when it closes, until its owner removes `starred`.
+[Decision 0014](../../decisions/0014-commonplace-starred-notes.md) explains the choice.
 
 ## Dates
 
