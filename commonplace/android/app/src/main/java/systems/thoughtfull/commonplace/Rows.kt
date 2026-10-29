@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -318,9 +319,10 @@ internal fun NoteRow(
     }
     if (star != null && note.action != null) {
       // Aligning the IconButton itself left the star centered on the row, so it copies the
-      // checkbox's box instead.
+      // checkbox's box instead. A star's points weigh it toward the bottom of its box, so the
+      // offset lifts it to look level with the checkbox.
       Box(
-        Modifier.size(32.dp).alignBy { it.measuredHeight / 2 },
+        Modifier.size(32.dp).alignBy { it.measuredHeight / 2 }.offset(y = (-1).dp),
         contentAlignment = Alignment.Center
       ) {
         CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 32.dp) {
