@@ -757,10 +757,20 @@ impl ActionPanel {
             #[weak]
             handle,
             move |gesture, presses, x, y| {
-                // Claiming a press on the handle would cancel its drag.
-                let picked = row.pick(x, y, gtk::PickFlags::DEFAULT);
-                if picked.is_some_and(|widget| widget == handle || widget.is_ancestor(&handle)) {
-                    return;
+                // The row's gesture runs before the list's but can still take a press from the
+                // controls inside it, which claim theirs only on release, and from the handle,
+                // whose drag it would cancel.
+                let mut picked = row.pick(x, y, gtk::PickFlags::DEFAULT);
+                while let Some(widget) =
+                    picked.filter(|widget| widget != row.upcast_ref::<gtk::Widget>())
+                {
+                    if widget == handle
+                        || widget.is::<gtk::Button>()
+                        || widget.is::<gtk::CheckButton>()
+                    {
+                        return;
+                    }
+                    picked = widget.parent();
                 }
                 gesture.set_state(gtk::EventSequenceState::Claimed);
                 if let Some(source) = pending.take() {
