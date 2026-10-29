@@ -13,6 +13,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onLast
@@ -128,7 +129,7 @@ class RefinementsTest {
     compose.onNodeWithText("Move…").assertExists()
   }
 
-  @Test fun stepRowsEditTitlesInPlaceAndCopyLinksFromTheirMenus() {
+  @Test fun longPressingAStepEditsItsTitleAndItsMenuCopiesItsLink() {
     val library = space()
     val (parent, step) = runBlocking {
       repository.use { core ->
@@ -146,12 +147,9 @@ class RefinementsTest {
       }
     }
     compose.waitUntil(10_000) {
-      runCatching { compose.onNodeWithTag("step-edit-$step").assertExists() }.isSuccess
+      runCatching { compose.onNodeWithTag("step-menu-$step").assertExists() }.isSuccess
     }
-    val title = compose.onNodeWithText("Old title").fetchSemanticsNode().boundsInRoot
-    val edit = compose.onNodeWithTag("step-edit-$step").fetchSemanticsNode().boundsInRoot
-    assertEquals(title.center.y, edit.center.y, 2f)
-    compose.onNodeWithTag("step-edit-$step").performClick()
+    compose.onNodeWithTag("note-row-$step").performTouchInput { longClick() }
     compose.onNodeWithTag("step-title-field").performTextReplacement("New title")
     compose.onNodeWithTag("step-title-field").performImeAction()
     compose.waitUntil(10_000) {

@@ -683,20 +683,15 @@ impl ActionPanel {
         }
     }
 
-    /// A row for `step`, with a handle to drag it by, a button to edit its title, and a menu that
-    /// copies its link, archives it, or moves it to the trash.
+    /// A row for `step`, with a handle to drag it by and a menu that copies its link, archives it,
+    /// or moves it to the trash. Clicking the row opens the step, and double-clicking it edits the
+    /// step's title.
     fn step_row(self: &Rc<Self>, step: &ActionEntry, editable: bool) -> gtk::Box {
         let id = step.note.id;
         let handle = gtk::Image::builder()
             .icon_name("list-drag-handle-symbolic")
             .tooltip_text("Drag to move")
             .cursor(&gdk::Cursor::from_name("grab", None).expect("grab is a standard cursor"))
-            .visible(editable)
-            .build();
-        let edit = gtk::Button::builder()
-            .icon_name("document-edit-symbolic")
-            .tooltip_text("Edit title")
-            .css_classes(["flat", "step-edit"])
             .visible(editable)
             .build();
         let menu = gio::Menu::new();
@@ -730,13 +725,7 @@ impl ActionPanel {
             .menu_model(&menu)
             .css_classes(["flat"])
             .build();
-        let row = step_row(
-            &self.state,
-            step,
-            handle.upcast_ref(),
-            edit.upcast_ref(),
-            menu_button.upcast_ref(),
-        );
+        let row = step_row(&self.state, step, handle.upcast_ref(), menu_button.upcast_ref());
         row.insert_action_group("step", Some(&actions));
         make_draggable(&handle, &row, id);
         copy_link.connect_activate(glib::clone!(
@@ -744,37 +733,81 @@ impl ActionPanel {
             row,
             move |_, _| row.clipboard().set_text(&note_uri(id))
         ));
-        edit.connect_clicked(glib::clone!(
+        self.connect_step_clicks(&row, &handle, id, editable);
+        row
+    }
+
+    /// Opens the step `id` when the user clicks its `row`, and edits its title when they
+    /// double-click it. The list's own activation would open the step on the first click of a
+    /// double-click, so the row claims its clicks and waits out the double-click time first.
+    fn connect_step_clicks(
+        self: &Rc<Self>,
+        row: &gtk::Box,
+        handle: &gtk::Image,
+        id: NoteId,
+        editable: bool,
+    ) {
+        let clicks = gtk::GestureClick::new();
+        let pending: Rc<RefCell<Option<glib::SourceId>>> = Rc::default();
+        clicks.connect_pressed(glib::clone!(
             #[weak(rename_to = panel)]
             self,
             #[weak]
             row,
-            move |_| panel.edit_title(&row, id)
+            #[weak]
+            handle,
+            move |gesture, presses, x, y| {
+                // Claiming a press on the handle would cancel its drag.
+                let picked = row.pick(x, y, gtk::PickFlags::DEFAULT);
+                if picked.is_some_and(|widget| widget == handle || widget.is_ancestor(&handle)) {
+                    return;
+                }
+                gesture.set_state(gtk::EventSequenceState::Claimed);
+                if let Some(source) = pending.take() {
+                    source.remove();
+                }
+                if presses == 2 && editable {
+                    panel.edit_title(&row, id);
+                } else if presses == 1 {
+                    let wait = row.settings().gtk_double_click_time();
+                    let delay = std::time::Duration::from_millis(wait.max(0) as u64);
+                    let panel = Rc::downgrade(&panel);
+                    let fired = pending.clone();
+                    let source = glib::timeout_add_local_once(delay, move || {
+                        fired.take();
+                        if let Some(panel) = panel.upgrade() {
+                            panel.open(id);
+                        }
+                    });
+                    pending.replace(Some(source));
+                }
+            }
         ));
-        row
+        row.add_controller(clicks);
     }
 
     /// Swaps the title in a step's `row` for an entry that edits it. Leaving the entry saves the
     /// title, unless the user pressed Escape or left it blank.
     fn edit_title(&self, row: &gtk::Box, id: NoteId) {
         let Some(grid) = row.first_child().and_downcast::<gtk::Grid>() else { return };
-        let line = grid.child_at(STEP_TITLE_COLUMN, 0).and_downcast::<gtk::Box>();
-        let (Some(line), Some(menu)) = (line, grid.child_at(STEP_MENU_COLUMN, 0)) else { return };
-        let Some(title) = line.first_child() else { return };
+        let (Some(title), Some(menu)) =
+            (grid.child_at(STEP_TITLE_COLUMN, 0), grid.child_at(STEP_MENU_COLUMN, 0))
+        else {
+            return;
+        };
         let Some(text) = self.state.read(|library| library.editable_label(id)) else { return };
         let entry = gtk::EditableLabel::builder().text(&text).hexpand(true).build();
-        title.set_visible(false);
-        line.prepend(&entry);
+        grid.remove(&title);
+        grid.attach(&entry, STEP_TITLE_COLUMN, 0, 1, 1);
         // The menu takes the row's spare width to sit at its end, which would leave the entry
         // no wider than the title.
-        line.set_hexpand(true);
         menu.set_hexpand(false);
         entry.start_editing();
         entry.grab_focus();
         let state = self.state.clone();
-        let line = line.downgrade();
+        let grid = grid.downgrade();
         entry.connect_editing_notify(move |entry| {
-            let Some(line) = line.upgrade().filter(|_| !entry.is_editing()) else { return };
+            let Some(grid) = grid.upgrade().filter(|_| !entry.is_editing()) else { return };
             let edited = entry.text();
             if !edited.trim().is_empty()
                 && edited != text
@@ -782,9 +815,8 @@ impl ActionPanel {
             {
                 eprintln!("commonplace: {error}");
             }
-            line.remove(entry);
-            title.set_visible(true);
-            line.set_hexpand(false);
+            grid.remove(entry);
+            grid.attach(&title, STEP_TITLE_COLUMN, 0, 1, 1);
             menu.set_hexpand(true);
         });
     }

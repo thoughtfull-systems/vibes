@@ -12,7 +12,6 @@ import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.relocation.BringIntoViewRequester
@@ -62,7 +61,6 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import systems.thoughtfull.commonplace.core.MobileAction
@@ -287,8 +285,8 @@ internal fun StepRows(
             } else {
               null
             },
-            titleAfter = if (editable) {
-              { EditTitleButton(id, ::startEditing) }
+            longPress = if (editable) {
+              { startEditing(id) }
             } else {
               null
             },
@@ -336,18 +334,6 @@ private fun StepTitleField(
 private fun DragHandle(id: String, gestures: Modifier) {
   Box(gestures.size(32.dp).testTag("step-drag-$id"), contentAlignment = Alignment.Center) {
     AppIcon(R.drawable.drag, "Drag step", Modifier.size(18.dp))
-  }
-}
-
-@Composable
-private fun EditTitleButton(id: String, edit: (String) -> Unit) {
-  // A button no taller than the title keeps the row's height, and the offset brings the pencil
-  // within 3dp of the title, past the button's padding.
-  CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
-    IconButton(
-      { edit(id) },
-      Modifier.size(width = 30.dp, height = 24.dp).offset(x = (-3).dp).testTag("step-edit-$id")
-    ) { AppIcon(R.drawable.edit, "Edit title", Modifier.size(18.dp)) }
   }
 }
 

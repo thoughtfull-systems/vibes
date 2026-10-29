@@ -2,7 +2,7 @@
 
 package systems.thoughtfull.commonplace
 
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -254,7 +254,7 @@ internal fun NoteRow(
   leading: (@Composable () -> Unit)? = null,
   indent: Dp = 0.dp,
   titleEditor: (@Composable () -> Unit)? = null,
-  titleAfter: (@Composable () -> Unit)? = null,
+  longPress: (() -> Unit)? = null,
   trailing: (@Composable () -> Unit)? = null
 ) {
   val titleCenter = with(LocalDensity.current) {
@@ -263,7 +263,8 @@ internal fun NoteRow(
   val urgency = dates?.status
   val dimmed = note.action?.state == ActionState.DONE || urgency == ActionStatus.UPCOMING
   Row(
-    Modifier.fillMaxWidth().testTag("note-row-${note.id}").clickable { open(note.id) }
+    Modifier.fillMaxWidth().testTag("note-row-${note.id}")
+      .combinedClickable(onLongClick = longPress) { open(note.id) }
       .alpha(if (dimmed) 0.55f else 1f)
       .padding(start = if (leading != null) 4.dp else 12.dp, end = 16.dp)
       .padding(vertical = 12.dp),
@@ -302,27 +303,23 @@ internal fun NoteRow(
       verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
       val pressing = urgency == ActionStatus.OVERDUE || urgency == ActionStatus.DUE_SOON
-      Row(verticalAlignment = Alignment.CenterVertically) {
-        if (titleEditor != null) {
-          Box(Modifier.weight(1f)) { titleEditor() }
-        } else {
-          Text(
-            formattedTitle(displayLabel(note)),
-            Modifier.weight(1f, fill = false),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            color = when (urgency) {
-              ActionStatus.OVERDUE -> MaterialTheme.colorScheme.error
-              ActionStatus.DUE_SOON -> Color(0xFFB26314)
-              else -> MaterialTheme.colorScheme.onSurface
-            },
-            style = MaterialTheme.typography.bodyLarge.copy(
-              fontStyle = if (note.action?.project == true) FontStyle.Italic else FontStyle.Normal,
-              fontWeight = if (pressing) FontWeight.Bold else FontWeight.Normal
-            )
+      if (titleEditor != null) {
+        titleEditor()
+      } else {
+        Text(
+          formattedTitle(displayLabel(note)),
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
+          color = when (urgency) {
+            ActionStatus.OVERDUE -> MaterialTheme.colorScheme.error
+            ActionStatus.DUE_SOON -> Color(0xFFB26314)
+            else -> MaterialTheme.colorScheme.onSurface
+          },
+          style = MaterialTheme.typography.bodyLarge.copy(
+            fontStyle = if (note.action?.project == true) FontStyle.Italic else FontStyle.Normal,
+            fontWeight = if (pressing) FontWeight.Bold else FontWeight.Normal
           )
-        }
-        titleAfter?.invoke()
+        )
       }
       val path = if (showPath) parents.mapNotNull(context::label).joinToString(" › ") else ""
       listOf(

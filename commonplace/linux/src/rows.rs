@@ -107,7 +107,7 @@ impl NoteList {
                 let star = section.star.then(|| {
                     star_button(&self.state, entry.note.id, entry.note.starred.is_some()).upcast()
                 });
-                let row = stamped_note_row(&self.state, entry, true, section.stamp, star, None);
+                let row = stamped_note_row(&self.state, entry, true, section.stamp, star);
                 row.set_margin_start(12);
                 row.set_margin_end(12);
                 let buttons =
@@ -196,7 +196,7 @@ fn star_tooltip(starred: bool) -> &'static str {
 /// A row for a note in a list. An action's row has a checkbox that closes or reopens it, and a line
 /// naming the actions it belongs to if `show_path` is set.
 pub fn note_row(state: &Rc<State>, entry: &ActionEntry, show_path: bool) -> gtk::Box {
-    stamped_note_row(state, entry, show_path, None, None, None)
+    stamped_note_row(state, entry, show_path, None, None)
 }
 
 /// The grid columns of a step's row, which `step_row` lays out.
@@ -205,17 +205,15 @@ pub const STEP_TITLE_COLUMN: i32 = 2;
 pub const STEP_MENU_COLUMN: i32 = 3;
 
 /// A row for a step in an action's steps list, like `note_row`, with `handle` before the
-/// indentation, `edit` right after the title, and `menu` at the end of the title's line. The row's
-/// grid holds them on its first row, in the columns the constants above name, with the title and
-/// `edit` in a box together.
+/// indentation and `menu` at the end of the title's line. The row's grid holds them on its first
+/// row, in the columns the constants above name.
 pub fn step_row(
     state: &Rc<State>,
     entry: &ActionEntry,
     handle: &gtk::Widget,
-    edit: &gtk::Widget,
     menu: &gtk::Widget,
 ) -> gtk::Box {
-    let row = stamped_note_row(state, entry, false, None, Some(menu.clone()), Some(edit.clone()));
+    let row = stamped_note_row(state, entry, false, None, Some(menu.clone()));
     let grid = row.first_child().and_downcast::<gtk::Grid>().expect("a note row holds a grid");
     grid.insert_column(0);
     grid.attach(handle, 0, 0, 1, 1);
@@ -226,15 +224,14 @@ pub fn step_row(
     row
 }
 
-/// A row for a note, like `note_row`, that also shows the time `stamp` names, `title_end` at the
-/// end of the title's line, and `title_after` right after the title.
+/// A row for a note, like `note_row`, that also shows the time `stamp` names, and `title_end` at
+/// the end of the title's line.
 fn stamped_note_row(
     state: &Rc<State>,
     entry: &ActionEntry,
     show_path: bool,
     stamp: Option<Stamp>,
     title_end: Option<gtk::Widget>,
-    title_after: Option<gtk::Widget>,
 ) -> gtk::Box {
     let note = &entry.note;
     let title = gtk::Label::builder()
@@ -308,17 +305,7 @@ fn stamped_note_row(
     } else {
         text.attach(&kind_icon(note, journal.as_ref()), 0, 0, 1, 1);
     }
-    match title_after {
-        Some(after) => {
-            // A box keeps `after` next to the title. In the grid, it would follow the widest line.
-            let line = gtk::Box::new(gtk::Orientation::Horizontal, 1);
-            line.append(&title);
-            after.set_valign(gtk::Align::Center);
-            line.append(&after);
-            text.attach(&line, column, 0, 1, 1);
-        }
-        None => text.attach(&title, column, 0, 1, 1),
-    }
+    text.attach(&title, column, 0, 1, 1);
     if let Some(widget) = title_end {
         text.set_hexpand(true);
         widget.set_hexpand(true);
