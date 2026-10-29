@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: MPL-2.0-no-copyleft-exception
 
 use std::cell::{Cell, RefCell};
+use std::collections::HashSet;
 use std::rc::Rc;
 
 use adw::prelude::*;
-use commonplace_core::{Date, Note, NoteId};
+use commonplace_core::{ActionEntry, ActionView, Date, Note, NoteId};
 use gtk::glib;
 
 use crate::rows::{
@@ -301,7 +302,7 @@ impl Browser {
 
         let query = self.query.borrow().clone();
         let scope = self.scope;
-        let (notes, dates, paths) = self.state.read(|library| {
+        let (notes, dates, paths, starred_actions) = self.state.read(|library| {
             let in_trash = library.notes_in_trash();
             let notes: Vec<Note> = library
                 .notes()
@@ -315,7 +316,12 @@ impl Browser {
                 })
                 .filter(|note| note.matches(&query))
                 .collect();
-            (notes, library.action_dates(today()), library.action_paths())
+            let starred_actions: HashSet<NoteId> = library
+                .action_view(ActionView::Starred, today())
+                .into_iter()
+                .map(|entry| entry.note.id)
+                .collect();
+            (notes, library.action_dates(today()), library.action_paths(), starred_actions)
         });
         // Notes without the order's date follow the rest, newest first, except in the archive.
         let (mut dated, undated): (Vec<_>, Vec<_>) = notes
@@ -334,8 +340,16 @@ impl Browser {
         let mut undated =
             if from.is_some() || order == Order::Archived { Vec::new() } else { undated };
         undated.sort_by_key(|(_, note)| std::cmp::Reverse(note.created));
-        let entries =
+        let entries: Vec<ActionEntry> =
             dated.into_iter().chain(undated).map(|(_, note)| entry(note, &dates, &paths)).collect();
+        // An action counts as starred only while it and the projects above it are open.
+        let (starred, others): (Vec<_>, Vec<_>) = entries.into_iter().partition(|entry| {
+            let note = &entry.note;
+            scope != Scope::Trash
+                && note.starred.is_some()
+                && note.archived.is_none()
+                && (note.action.is_none() || starred_actions.contains(&note.id))
+        });
 
         let filtered = !query.trim().is_empty() || from.is_some();
         let (icon, title, description) = match (scope, filtered) {
@@ -361,13 +375,16 @@ impl Browser {
             ),
         };
         self.list.set_empty(icon, title, description);
-        self.list.show(vec![Section {
-            entries,
-            plan: false,
-            stamp: order.stamp(),
-            star: false,
-            title: "",
-        }]);
+        let others_title = match (starred.is_empty(), scope) {
+            (true, _) => "",
+            (false, Scope::Memos) => "Other memos",
+            (false, _) => "Other notes",
+        };
+        let stamp = order.stamp();
+        self.list.show(vec![
+            Section { entries: starred, plan: false, stamp, star: true, title: "Starred" },
+            Section { entries: others, plan: false, stamp, star: false, title: others_title },
+        ]);
     }
 }
 

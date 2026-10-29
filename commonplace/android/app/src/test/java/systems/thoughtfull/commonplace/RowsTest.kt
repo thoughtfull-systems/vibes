@@ -36,6 +36,7 @@ private fun note(id: String, title: String = id) = MobileNote(
   parent = null,
   readOnly = false,
   space = "library",
+  starred = null,
   title = title,
   trashed = null
 )
@@ -46,7 +47,7 @@ private fun action(
   list: ActionList = ActionList.ACTIVE,
   state: ActionState = ActionState.OPEN
 ) = note(id).copy(
-  action = Action(null, null, null, list, null, project, null, state, null),
+  action = Action(null, null, null, list, null, project, state, null),
   kind = "action"
 )
 

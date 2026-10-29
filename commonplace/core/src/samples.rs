@@ -101,6 +101,7 @@ fn memos(library: &mut Library) -> Result<NoteId, Error> {
           - Alfama\n- Belém\n  - The tower\n  - The pastry shop\n\n## Porto\n\n\
           Ribeira and the bridge.\n\n# Food\n\nPastéis de nata, grilled sardines, vinho verde.\n",
     )?;
+    library.set_starred(trip, true)?;
     library.create_memo(&format!(
         "Packing list for {}\n\n- [x] Passport\n- [x] Adapter\n- [ ] Walking shoes\n- [ ] Rain \
           jacket\n",
@@ -206,8 +207,8 @@ fn actions(library: &mut Library, today: Date) -> Result<(), Error> {
     library.create_task("Find a plumber", Some(kitchen))?;
 
     // Starred actions: a project and a step deep inside it. A task put off to someday has one too.
-    library.change_action(house, ActionChange::Starred(true))?;
-    library.change_action(tiles, ActionChange::Starred(true))?;
+    library.set_starred(house, true)?;
+    library.set_starred(tiles, true)?;
 
     // Stalled projects: one with no steps, and one whose only step waits in the inbox.
     let empty = library.create_task("Learn Portuguese", None)?;
@@ -222,7 +223,7 @@ fn actions(library: &mut Library, today: Date) -> Result<(), Error> {
     library.change_action(waiting, ActionChange::WaitingFor(Some("the landlord".to_owned())))?;
     let someday = library.create_task("Learn to sail", None)?;
     list(library, someday, ActionList::Someday)?;
-    library.change_action(someday, ActionChange::Starred(true))?;
+    library.set_starred(someday, true)?;
     let maybe = library.create_task("Get a dog", None)?;
     list(library, maybe, ActionList::Maybe)?;
     let shelved = library.create_task("Build a cabin", None)?;
@@ -383,7 +384,7 @@ mod tests {
                 for time in [
                     note.action.as_ref().and_then(|action| action.closed),
                     note.action.as_ref().and_then(|action| action.planning),
-                    note.action.as_ref().and_then(|action| action.starred),
+                    note.starred,
                     note.archived,
                     note.trashed,
                 ]

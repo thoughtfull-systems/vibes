@@ -30,6 +30,7 @@ private fun note(id: String, created: Long = 1) = MobileNote(
   parent = null,
   readOnly = false,
   space = "library",
+  starred = null,
   title = id,
   trashed = null
 )
@@ -38,7 +39,7 @@ private fun task(id: String, status: ActionStatus = ActionStatus.NORMAL) = Mobil
   dates = ActionDates(null, null, status),
   depth = 0u,
   note = note(id).copy(
-    action = Action(null, null, null, ActionList.ACTIVE, null, false, null, ActionState.OPEN, null)
+    action = Action(null, null, null, ActionList.ACTIVE, null, false, ActionState.OPEN, null)
   ),
   parents = emptyList(),
   stalled = false
@@ -92,6 +93,23 @@ class BrowseTest {
       listOf(parent),
       browseNotes(listOf(parent, child), "Trash", "", BrowseOrder.TRASHED, false, null)
     )
+  }
+}
+
+class StarredSplitTest {
+  @Test
+  fun starredNotesLeadEveryTabButTheTrash() {
+    val memo = note("memo").copy(starred = 1)
+    val archived = note("archived").copy(starred = 1, archived = 1)
+    val plain = note("plain")
+    val open = task("open").note.copy(starred = 1)
+    val closed = task("closed").note.copy(starred = 1)
+    val notes = listOf(memo, archived, plain, open, closed)
+    assertEquals(
+      Pair(listOf(memo, open), listOf(archived, plain, closed)),
+      splitStarred(notes, "All notes", setOf("open"))
+    )
+    assertEquals(Pair(emptyList<MobileNote>(), notes), splitStarred(notes, "Trash", setOf("open")))
   }
 }
 

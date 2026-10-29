@@ -203,7 +203,7 @@ class DetailsTest {
     clickControl("detail-unclear", toggle = true)
     saved(action) { it.action?.planning != null }
     clickControl("detail-starred")
-    saved(action) { it.action?.starred != null }
+    saved(action) { it.starred != null }
     compose.onNodeWithTag("detail-archive").performScrollTo().performClick()
     saved(action) { it.archived != null }
     assertNotNull(runBlocking { repository.use { it.note(parent) } })

@@ -21,7 +21,6 @@ const LIST: &str = "list";
 const NOTE: &str = "note";
 const PLANNING: &str = "planning";
 const PROJECT: &str = "project";
-const STARRED: &str = "starred";
 const STATE: &str = "state";
 const WAITING_FOR: &str = "waiting_for";
 
@@ -225,8 +224,6 @@ pub struct Action {
     /// When the action joined the planning queue, if it's in it.
     pub planning: Option<i64>,
     pub project: bool,
-    /// When the action gained its star, if it has one.
-    pub starred: Option<i64>,
     pub state: ActionState,
     pub waiting_for: Option<String>,
 }
@@ -244,7 +241,6 @@ impl Action {
             list: text(LIST).map_or_else(ActionList::default, |t| ActionList::parse(&t)),
             planning: map.get(PLANNING).and_then(|v| integer(v.clone())),
             project: matches!(map.get(PROJECT), Some(LoroValue::Bool(true))),
-            starred: map.get(STARRED).and_then(|v| integer(v.clone())),
             state: text(STATE).map_or_else(ActionState::default, |t| ActionState::parse(&t)),
             waiting_for: text(WAITING_FOR).filter(|t| !t.trim().is_empty()),
         }
@@ -265,8 +261,6 @@ pub enum ActionChange {
     /// Adds the action to the planning queue, or takes it out.
     Planning(bool),
     Project(bool),
-    /// Stars the action, or takes its star away.
-    Starred(bool),
     State(ActionState),
     WaitingFor(Option<String>),
 }
@@ -457,9 +451,6 @@ impl Library {
             ActionChange::Planning(true) => action.insert(PLANNING, self.now()),
             ActionChange::Planning(false) => action.delete(PLANNING),
             ActionChange::Project(project) => action.insert(PROJECT, project),
-            ActionChange::Starred(true) if action.get(STARRED).is_some() => Ok(()),
-            ActionChange::Starred(true) => action.insert(STARRED, self.now()),
-            ActionChange::Starred(false) => action.delete(STARRED),
             ActionChange::State(state) => {
                 action.insert(STATE, state.as_str()).map_err(loro_error)?;
                 match state {
@@ -771,7 +762,7 @@ impl Library {
                 }
                 let keep: HashSet<NoteId> = chosen.into_values().map(|(_, id)| id).collect();
                 entries.retain(|entry| {
-                    entry.action.starred.is_none()
+                    entry.note.starred.is_none()
                         && (keep.contains(&entry.note.id)
                             || !hierarchy.ancestors(entry.note.id).any(|id| is_project(&id)))
                 });
@@ -791,7 +782,7 @@ impl Library {
                 result(entries, false)
             }
             ActionView::Starred => {
-                entries.retain(|entry| entry.context.active() && entry.action.starred.is_some());
+                entries.retain(|entry| entry.context.active() && entry.note.starred.is_some());
                 flat(entries)
             }
             ActionView::Stalled => {
@@ -1691,12 +1682,13 @@ mod tests {
         library.create_task("Roof", Some(house)).unwrap();
         let sail = library.create_task("Sail", None).unwrap();
         library.change_action(sail, ActionChange::List(ActionList::Someday)).unwrap();
-        library.change_action(house, ActionChange::Starred(true)).unwrap();
-        library.change_action(paint, ActionChange::Starred(true)).unwrap();
-        library.change_action(sail, ActionChange::Starred(true)).unwrap();
-        let starred = library.note(sail).unwrap().action.unwrap().starred;
-        library.change_action(sail, ActionChange::Starred(true)).unwrap();
-        assert_eq!(library.note(sail).unwrap().action.unwrap().starred, starred);
+        library.set_starred(house, true).unwrap();
+        library.set_starred(paint, true).unwrap();
+        library.set_starred(sail, true).unwrap();
+        let before = library.note(sail).unwrap();
+        library.set_starred(sail, true).unwrap();
+        let after = library.note(sail).unwrap();
+        assert_eq!((after.starred, after.modified), (before.starred, before.modified));
         let view = |library: &Library, view| titles(library.action_view(view, today()));
         assert_eq!(
             view(&library, ActionView::Starred),
@@ -1707,7 +1699,7 @@ mod tests {
         library.change_action(house, ActionChange::State(ActionState::Done)).unwrap();
         assert_eq!(view(&library, ActionView::Starred), [(0, "Sail".into())]);
         library.change_action(house, ActionChange::State(ActionState::Open)).unwrap();
-        library.change_action(paint, ActionChange::Starred(false)).unwrap();
+        library.set_starred(paint, false).unwrap();
         assert_eq!(view(&library, ActionView::Next), [(0, "Paint".into())]);
         library.set_archived(sail, true).unwrap();
         assert_eq!(view(&library, ActionView::Starred), [(0, "House".into())]);

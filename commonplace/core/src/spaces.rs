@@ -347,6 +347,10 @@ impl Spaces {
         self.owner_mut(id)?.set_archived(id, archived)
     }
 
+    pub fn set_starred(&mut self, id: NoteId, starred: bool) -> Result<(), Error> {
+        self.owner_mut(id)?.set_starred(id, starred)
+    }
+
     pub fn create_journal(&mut self, space: &str, name: &str) -> Result<NoteId, Error> {
         self.library_mut(space)?.create_journal(name)
     }

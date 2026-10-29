@@ -59,6 +59,7 @@ Each value is a map with these keys.
 | `archived` | Integer | When the note went to the [archive](#archive). Absent outside it.      |
 | `journal`  | Map     | The [journal fields](#journal-fields). Present for every journal.      |
 | `entry`    | Map     | The [entry fields](#entry-fields). Present for every entry.            |
+| `starred`  | Integer | When the note gained its [star](#stars). Absent without one.           |
 | `trashed`  | Integer | When the note moved to the trash. Absent for notes not in it.          |
 | `settings` | Map     | Preferences about this note alone, as [settings](#settings) describes. |
 
@@ -81,7 +82,6 @@ An action is a project if its `project` is `true`, and a task otherwise.
 | `list`        | String  | One of `inbox`, `active`, `waiting`, `someday`, or `maybe`.   |
 | `planning`    | Integer | When the action joined the planning queue, as a timestamp.    |
 | `project`     | Boolean | Whether the action is a project.                              |
-| `starred`     | Integer | When the action gained its star, as a timestamp.              |
 | `state`       | String  | `open` or `done`.                                             |
 | `waiting_for` | String  | Who or what the action waits for, in plain text.              |
 
@@ -90,11 +90,9 @@ someday and maybe list of GTD split in two. The next actions list is `active` he
 projects in progress as well as tasks to do now. An action on the someday list is one to do without
 a decided time, and an action on the maybe list is one that might not get done at all. A new action
 starts on the inbox list, and leaves it when its owner sorts it onto another. `closed` is absent
-while the action is open, and `defer`, `due`, `planning`, `starred`, and `waiting_for` are optional.
-The planning queue holds the actions their owner wants to plan next, and an action leaves it only
-when its owner removes `planning`, because planning can span more than one sitting. A star marks an
-action its owner wants to find quickly. An action keeps its star when it closes or goes to the
-archive or the trash, until its owner removes `starred`.
+while the action is open, and `defer`, `due`, `planning`, and `waiting_for` are optional. The
+planning queue holds the actions their owner wants to plan next, and an action leaves it only when
+its owner removes `planning`, because planning can span more than one sitting.
 
 A reader treats a missing or unknown `state` as `open`, a missing or unknown `list` as `active`, and
 a missing `project` as `false`.
@@ -336,6 +334,14 @@ it moves any `archived` it finds there to the note, in one commit, keeping the n
 already has one. A device still on version 2 can archive an action offline and sync it after another
 device upgrades the library, so the move runs every time, not only once.
 [Decision 0009](../../decisions/0009-commonplace-archived-notes.md) explains the choice.
+
+## Stars
+
+A star marks a note its owner wants to find quickly. A note has a star if it has `starred`. Setting
+or removing `starred` doesn't change the note's `modified` time. Readers ignore `starred` on
+journals and entries. A note keeps its star when it goes to the archive or the trash, and an action
+keeps it when it closes, until its owner removes `starred`.
+[Decision 0014](../../decisions/0014-commonplace-starred-notes.md) explains the choice.
 
 ## Dates
 

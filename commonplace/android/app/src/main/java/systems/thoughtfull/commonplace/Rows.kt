@@ -61,7 +61,7 @@ internal fun toggleAction(model: NotebookModel, note: MobileNote) {
 }
 
 internal fun toggleStar(model: NotebookModel, note: MobileNote) {
-  model.perform { it.changeAction(note.id, ActionChange.Starred(note.action?.starred == null)) }
+  model.perform { it.setStarred(note.id, note.starred == null) }
 }
 
 /** A toggle that stars an action, or takes its star away. Starred actions lead Execute. */
@@ -80,6 +80,17 @@ internal fun StarButton(starred: Boolean, onClick: () -> Unit) {
       AppIcon(R.drawable.starred, "Star", Modifier.alpha(0.55f))
     }
   }
+}
+
+/** A heading over one section of a list. */
+@Composable
+internal fun SectionHeading(title: String) {
+  Text(
+    title,
+    Modifier.fillMaxWidth().padding(start = 16.dp, top = 16.dp, bottom = 4.dp),
+    color = MaterialTheme.colorScheme.onSurfaceVariant,
+    style = MaterialTheme.typography.titleSmall
+  )
 }
 
 /** Which of a note's times a row shows. */
@@ -317,7 +328,7 @@ internal fun NoteRow(
         TextButton(onClick = plan) { Text("Plan") }
       }
     }
-    if (star != null && note.action != null) {
+    if (star != null) {
       // Aligning the IconButton itself left the star centered on the row, so it copies the
       // checkbox's box instead. A star's points weigh it toward the bottom of its box, so the
       // offset lifts it to look level with the checkbox.
@@ -326,7 +337,7 @@ internal fun NoteRow(
         contentAlignment = Alignment.Center
       ) {
         CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 32.dp) {
-          StarButton(note.action.starred != null, star)
+          StarButton(note.starred != null, star)
         }
       }
     }

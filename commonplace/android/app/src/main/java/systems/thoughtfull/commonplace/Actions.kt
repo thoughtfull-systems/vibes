@@ -127,14 +127,7 @@ internal fun ActionsScreen(
     if (sections.all { it.entries.isEmpty() }) item { ActionsEmpty(mode, query) }
     sections.filter { it.entries.isNotEmpty() }.forEach { section ->
       if (section.title.isNotEmpty()) {
-        item {
-          Text(
-            section.title,
-            Modifier.fillMaxWidth().padding(start = 16.dp, top = 16.dp, bottom = 4.dp),
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            style = MaterialTheme.typography.titleSmall
-          )
-        }
+        item { SectionHeading(section.title) }
       }
       items(section.entries, key = { "${section.title}.${it.note.id}" }) { entry ->
         Column(Modifier.padding(start = (entry.depth.toInt().coerceAtMost(6) * 12).dp)) {

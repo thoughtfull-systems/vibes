@@ -62,6 +62,9 @@ pub struct NotePage {
     link_titles: editor::LinkTitles,
     /// Set while the view changes widgets itself, so their change signals don't echo back.
     loading: Cell<bool>,
+    /// Stars a memo. An action's panel has a star of its own, among its other fields.
+    memo_star: gtk::ToggleButton,
+    memo_star_row: gtk::Grid,
     on_leave: RefCell<Option<Handler>>,
     note_menu: gio::Menu,
     note_menu_button: gtk::MenuButton,
@@ -236,6 +239,28 @@ impl NotePage {
         let details_content = gtk::Box::new(gtk::Orientation::Vertical, 6);
         details_content.append(&space_row);
         details_content.append(&action_panel.widget);
+        let memo_star = gtk::ToggleButton::builder()
+            .icon_name("starred-symbolic")
+            .halign(gtk::Align::Start)
+            .valign(gtk::Align::Center)
+            .css_classes(["star"])
+            .build();
+        let memo_star_label = gtk::Label::builder()
+            .label("Starred?")
+            .xalign(0.0)
+            .css_classes(["dimmed"])
+            .mnemonic_widget(&memo_star)
+            .build();
+        let memo_star_row = gtk::Grid::builder()
+            .column_spacing(12)
+            .margin_start(12)
+            .margin_end(12)
+            .margin_top(6)
+            .visible(false)
+            .build();
+        memo_star_row.attach(&memo_star_label, 0, 0, 1, 1);
+        memo_star_row.attach(&memo_star, 1, 0, 1, 1);
+        details_content.append(&memo_star_row);
         let journal_panel = JournalPanel::new(state.clone());
         details_content.append(&journal_panel.widget);
         let entry_panel = EntryPanel::new(state.clone());
@@ -410,6 +435,8 @@ impl NotePage {
             edit_base: RefCell::default(),
             link_titles: editor::LinkTitles::default(),
             loading: Cell::new(false),
+            memo_star,
+            memo_star_row,
             on_leave: RefCell::default(),
             note_menu,
             note_menu_button,
@@ -551,6 +578,20 @@ impl NotePage {
             #[weak(rename_to = this)]
             self,
             move |_| this.toggle_archived()
+        ));
+        self.memo_star.connect_toggled(glib::clone!(
+            #[weak(rename_to = this)]
+            self,
+            move |star| {
+                let Some(id) = this.current.get().filter(|_| !this.loading.get()) else {
+                    return;
+                };
+                if let Err(error) =
+                    this.state.write(|library| library.set_starred(id, star.is_active()))
+                {
+                    this.report_error(&error);
+                }
+            }
         ));
         self.trash_note.connect_activate(glib::clone!(
             #[weak(rename_to = this)]
@@ -779,6 +820,11 @@ impl NotePage {
         self.archive_button.set_label(label);
         self.archive_button.set_tooltip_text(Some(tooltip));
         self.archive_button.set_visible(writable);
+        let memo = note.as_ref().filter(|note| note.is_memo());
+        self.memo_star_row.set_visible(writable && memo.is_some());
+        let loading = self.loading.replace(true);
+        self.memo_star.set_active(memo.is_some_and(|note| note.starred.is_some()));
+        self.loading.set(loading);
         self.trash_note.set_enabled(writable);
         self.trash_bar.set_visible(in_trash && !read_only);
         self.trash_reason.set_label(if trashed {

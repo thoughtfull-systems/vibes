@@ -541,7 +541,7 @@ impl ActionPanel {
         let list = self.lists.borrow().iter().position(|list| *list == action.list).unwrap_or(0);
         self.list.set_selected(list as u32);
         self.project.set_active(action.project);
-        self.star.set_active(action.starred.is_some());
+        self.star.set_active(note.starred.is_some());
         self.planning.set_active(action.planning.is_some());
         self.planning.set_visible(action.is_open());
         self.planning_label.set_visible(action.is_open());
@@ -649,6 +649,18 @@ impl ActionPanel {
         self.path.set_markup(&markup);
     }
 
+    fn set_starred(&self, starred: bool) {
+        if self.loading.get() {
+            return;
+        }
+        let Some(id) = self.current.get() else {
+            return;
+        };
+        if let Err(error) = self.state.write(|library| library.set_starred(id, starred)) {
+            eprintln!("commonplace: {error}");
+        }
+    }
+
     fn change(&self, change: ActionChange) {
         if self.loading.get() {
             return;
@@ -751,7 +763,7 @@ impl ActionPanel {
         self.star.connect_toggled(glib::clone!(
             #[weak(rename_to = panel)]
             self,
-            move |star| panel.change(ActionChange::Starred(star.is_active()))
+            move |star| panel.set_starred(star.is_active())
         ));
         self.planning.connect_active_notify(glib::clone!(
             #[weak(rename_to = panel)]

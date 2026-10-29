@@ -104,8 +104,8 @@ impl NoteList {
                 .selection_mode(gtk::SelectionMode::None)
                 .build();
             for entry in &section.entries {
-                let star = entry.note.action.as_ref().filter(|_| section.star).map(|action| {
-                    star_button(&self.state, entry.note.id, action.starred.is_some()).upcast()
+                let star = section.star.then(|| {
+                    star_button(&self.state, entry.note.id, entry.note.starred.is_some()).upcast()
                 });
                 let row = stamped_note_row(&self.state, entry, true, section.stamp, star);
                 row.set_margin_start(12);
@@ -166,8 +166,8 @@ fn plan_tooltip(queued: bool) -> &'static str {
     if queued { "Take out of the planning queue" } else { "Add to the planning queue" }
 }
 
-/// A toggle that stars an action, or takes its star away. Starred actions lead Execute.
-fn star_button(state: &Rc<State>, id: NoteId, starred: bool) -> gtk::ToggleButton {
+/// A toggle that stars a note, or takes its star away. Starred notes lead their tabs.
+pub fn star_button(state: &Rc<State>, id: NoteId, starred: bool) -> gtk::ToggleButton {
     let button = gtk::ToggleButton::builder()
         .icon_name("starred-symbolic")
         .active(starred)
@@ -181,9 +181,7 @@ fn star_button(state: &Rc<State>, id: NoteId, starred: bool) -> gtk::ToggleButto
         move |button| {
             let starred = button.is_active();
             button.set_tooltip_text(Some(star_tooltip(starred)));
-            if let Err(error) =
-                state.write(|library| library.change_action(id, ActionChange::Starred(starred)))
-            {
+            if let Err(error) = state.write(|library| library.set_starred(id, starred)) {
                 eprintln!("commonplace: {error}");
             }
         }

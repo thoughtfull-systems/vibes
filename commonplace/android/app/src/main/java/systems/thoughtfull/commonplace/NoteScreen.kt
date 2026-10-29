@@ -328,6 +328,11 @@ internal fun NoteScreen(
           }
         }
         if (!current.inTrash && !current.readOnly) {
+          if (current.journal == null && current.entry == null) {
+            ActionField("Starred?", "detail-starred") {
+              StarButton(current.starred != null) { toggleStar(model, current) }
+            }
+          }
           current.action?.let { ActionDetails(model, current) }
           current.journal?.let { JournalDetails(model, current) }
           current.entry?.let {
@@ -441,9 +446,6 @@ internal fun ActionDetails(model: NotebookModel, note: MobileNote) {
   }
   Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
     // Match the field order and control column in the Linux details panel.
-    ActionField("Starred?", "detail-starred") {
-      StarButton(action.starred != null) { change(ActionChange.Starred(action.starred == null)) }
-    }
     ActionField("Done?", "detail-done") {
       Switch(action.state == ActionState.DONE, {
         change(ActionChange.State(if (it) ActionState.DONE else ActionState.OPEN))

@@ -40,8 +40,10 @@ The Linux app covers memos, actions, and journals:
   dates, and work with them in four modes, Execute, Plan, Review, and Inbox.
   [Where actions show](#where-actions-show) describes what each mode lists.
 - Mark an action done.
-- Star a project or a task in its details sidebar, to keep it at the top of Execute. Click its star
-  there, or under Starred in Execute, to take the star away.
+- Star a project, a task, or a memo in its details sidebar. Starred actions lead Execute, starred
+  memos lead the Memos tab, and All notes leads with every starred note. Click a star there, or in a
+  Starred section, to take it away. An archived note, or a done action, leaves its Starred section
+  until it comes back.
 - Archive any note with the button at the bottom of its details sidebar, to set it aside without
   changing it. Archived memos leave the Memos tab, and archived actions leave the four modes. All
   notes lists archived notes, and ordering it by archive date lists only them.

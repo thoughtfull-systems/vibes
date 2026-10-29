@@ -40,10 +40,10 @@ while the item scrolls. Due and Project precede the parent name and its Move but
 - Edit Markdown with formatting, checklists, list continuation and indentation, links, backlinks,
   and automatic saving.
 - Handle actions through Execute, Inbox, Plan, and Review, with projects, steps, lists, dates,
-  waiting reasons, stars, and the planning queue. Starred actions lead Execute. Add steps inline
-  without leaving the parent, and move actions between parents. Drag a step's handle to reorder it;
-  drop on another step's title to nest it there. The parent and Move row stay fixed while the steps
-  scroll.
+  waiting reasons, stars, and the planning queue. Starred actions lead Execute, starred memos lead
+  Memos, and every starred note leads All notes. Add steps inline without leaving the parent, and
+  move actions between parents. Drag a step's handle to reorder it; drop on another step's title to
+  nest it there. The parent and Move row stay fixed while the steps scroll.
 - Keep multiple libraries, name and hide them on this device, move notes, and merge libraries.
 - Keep journals with all eight question types, fixed or random schedules, entry timestamps,
   structured answers, a timeline, numeric charts, and daily answer counts.

@@ -26,6 +26,7 @@ const DELETED: &str = "deleted";
 const KIND: &str = "kind";
 const LABEL: &str = "label";
 pub(crate) const MODIFIED: &str = "modified";
+const STARRED: &str = "starred";
 const TRASHED: &str = "trashed";
 
 pub const MEMO: &str = "memo";
@@ -52,6 +53,8 @@ pub struct Note {
     pub journal: Option<Journal>,
     /// The entry's fields, for a note whose kind is entry.
     pub entry: Option<Entry>,
+    /// When the owner starred the note. Journals and entries ignore it.
+    pub starred: Option<i64>,
     pub trashed: Option<i64>,
 }
 
@@ -284,6 +287,19 @@ impl Library {
             true if note.get(ARCHIVED).is_some() => return Ok(()),
             true => note.insert(ARCHIVED, self.now()),
             false => note.delete(ARCHIVED),
+        }
+        .map_err(loro_error)?;
+        self.commit()
+    }
+
+    /// Stars the note, or takes its star away, without changing it.
+    pub fn set_starred(&mut self, id: NoteId, starred: bool) -> Result<(), Error> {
+        self.check_writable()?;
+        let note = self.note_map(id)?;
+        match starred {
+            true if note.get(STARRED).is_some() => return Ok(()),
+            true => note.insert(STARRED, self.now()),
+            false => note.delete(STARRED),
         }
         .map_err(loro_error)?;
         self.commit()
@@ -688,6 +704,9 @@ fn note_from_value(id: NoteId, value: &LoroValue) -> Option<Note> {
         } else {
             None
         },
+        starred: (kind != JOURNAL_KIND && kind != ENTRY_KIND)
+            .then(|| map.get(STARRED).and_then(|v| integer(v.clone())))
+            .flatten(),
         trashed: map.get(TRASHED).and_then(|v| integer(v.clone())),
         kind,
     })
@@ -821,6 +840,21 @@ mod tests {
         library.set_archived(id, false).unwrap();
         assert_eq!(library.note(id).unwrap().archived, None);
         assert_eq!(library.note(id).unwrap().modified, modified);
+    }
+
+    #[test]
+    fn stars_memos_without_modifying_them_and_ignores_journal_stars() {
+        let mut library = Library::in_memory();
+        let id = library.create_memo("x").unwrap();
+        let modified = library.note(id).unwrap().modified;
+        library.set_starred(id, true).unwrap();
+        assert!(library.note(id).unwrap().starred.is_some());
+        assert_eq!(library.note(id).unwrap().modified, modified);
+        library.set_starred(id, false).unwrap();
+        assert_eq!(library.note(id).unwrap().starred, None);
+        let journal = library.create_journal("Health").unwrap();
+        library.set_starred(journal, true).unwrap();
+        assert_eq!(library.note(journal).unwrap().starred, None);
     }
 
     #[test]
