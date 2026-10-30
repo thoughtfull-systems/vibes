@@ -138,7 +138,9 @@ fn check(app: &adw::Application, state: &State, shown: &Shown, cache: &Journals)
         let Some(fields) = &journal.journal else {
             continue;
         };
-        if let Some(prompt) = fields.due_prompt(journal.id, today, minute, now, local_millis) {
+        let prompt =
+            state.read(|spaces| spaces.due_prompt(journal.id, today, minute, now, local_millis));
+        if let Some(prompt) = prompt {
             let at = due_at(fields, &prompt);
             due.insert(journal.id, (prompt, at));
         }

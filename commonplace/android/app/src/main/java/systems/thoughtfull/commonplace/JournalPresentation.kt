@@ -87,14 +87,6 @@ internal fun JournalColorPicker(color: String, selected: (String) -> Unit) {
   }
 }
 
-internal fun describeDays(rule: String): String {
-  val days = ruleWeekdays(rule)
-  if (days.size == 7) return "Every day"
-  if (days == ruleWeekdays(WORKDAYS)) return "Workdays"
-  return scheduleWeekdays.filter { it.first in days }.joinToString(", ") { it.second }
-    .ifBlank { "Custom days" }
-}
-
 internal fun describeTimes(times: Times): String = when (times) {
   is Times.Fixed -> "At " + times.v1.joinToString(", ") { minuteLabel(it.toInt()) }
 
@@ -166,39 +158,5 @@ internal fun describeQuestion(question: Question): String {
     }
 
     else -> name
-  }
-}
-
-internal const val WORKDAYS = "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR"
-
-// In calendar order, which the recurrence rule uses for its days.
-private val ruleOrder = listOf("MO", "TU", "WE", "TH", "FR", "SA", "SU")
-
-/** The days of the week as the Linux schedule editor shows them, starting on Sunday. */
-internal val scheduleWeekdays = listOf(
-  "SU" to "Su",
-  "MO" to "Mo",
-  "TU" to "Tu",
-  "WE" to "We",
-  "TH" to "Th",
-  "FR" to "Fr",
-  "SA" to "Sa"
-)
-
-internal fun ruleWeekdays(rule: String): Set<String> = if (rule == "FREQ=DAILY") {
-  ruleOrder.toSet()
-} else {
-  rule.split(';').find { it.startsWith("BYDAY=") }?.substringAfter('=')?.split(',')
-    ?.toSet().orEmpty()
-}
-
-/** The rule with `day` turned on or off, writing every day as the core does. */
-internal fun toggleWeekday(rule: String, day: String): String {
-  val current = ruleWeekdays(rule)
-  val next = if (day in current) current - day else current + day
-  return when {
-    next.isEmpty() -> rule
-    next.size == ruleOrder.size -> "FREQ=DAILY"
-    else -> "FREQ=WEEKLY;BYDAY=" + ruleOrder.filter { it in next }.joinToString(",")
   }
 }

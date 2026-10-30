@@ -1,0 +1,389 @@
+// SPDX-License-Identifier: MPL-2.0-no-copyleft-exception
+
+//! Days off: holidays and vacations, which recurring actions and journal schedules can skip or move
+//! past, as the library format spec defines them.
+
+use loro::{LoroMap, LoroValue, ValueOrContainer};
+
+use crate::actions::Date;
+use crate::library::{loro_error, string};
+use crate::recur::{MONTH_NAMES, Rule, describe_rule};
+use crate::{Error, Library, NoteId};
+
+const DAYS_OFF: &str = "days_off";
+const ARCHIVED: &str = "archived";
+const FIRST: &str = "first";
+const LAST: &str = "last";
+const NAME: &str = "name";
+const RULE: &str = "rule";
+
+/// How many days after its last day a schedule of days off drops out of the lists.
+const HIDE_AFTER: i32 = 7;
+
+/// The kinds of days off, each a category of schedules.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[cfg_attr(feature = "mobile", derive(uniffi::Enum))]
+pub enum DaysOffKind {
+    Holidays,
+    Vacations,
+}
+
+impl DaysOffKind {
+    pub const ALL: [Self; 2] = [Self::Holidays, Self::Vacations];
+
+    pub(crate) fn key(self) -> &'static str {
+        match self {
+            Self::Holidays => "holidays",
+            Self::Vacations => "vacations",
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Holidays => "Holidays",
+            Self::Vacations => "Vacations",
+        }
+    }
+}
+
+/// What a recurring action or journal schedule does with a date that falls on a day off.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+#[cfg_attr(feature = "mobile", derive(uniffi::Enum))]
+pub enum DayOffEffect {
+    #[default]
+    Ignore,
+    /// Drops the date.
+    Skip,
+    /// Moves the date to the next day that isn't a day off.
+    Move,
+}
+
+impl DayOffEffect {
+    pub(crate) fn parse(text: Option<String>) -> Self {
+        match text.as_deref() {
+            Some("skip") => Self::Skip,
+            Some("move") => Self::Move,
+            _ => Self::Ignore,
+        }
+    }
+
+    pub(crate) fn as_str(self) -> Option<&'static str> {
+        match self {
+            Self::Ignore => None,
+            Self::Skip => Some("skip"),
+            Self::Move => Some("move"),
+        }
+    }
+}
+
+/// What a recurring action or journal schedule does on holidays and on vacations.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+#[cfg_attr(feature = "mobile", derive(uniffi::Record))]
+pub struct DaysOffUse {
+    pub holidays: DayOffEffect,
+    pub vacations: DayOffEffect,
+}
+
+impl DaysOffUse {
+    pub fn effect(&self, kind: DaysOffKind) -> DayOffEffect {
+        match kind {
+            DaysOffKind::Holidays => self.holidays,
+            DaysOffKind::Vacations => self.vacations,
+        }
+    }
+
+    pub(crate) fn from_map(map: &loro::LoroMapValue) -> Self {
+        let effect = |kind: DaysOffKind| {
+            DayOffEffect::parse(map.get(kind.key()).and_then(|v| string(v.clone())))
+        };
+        Self { holidays: effect(DaysOffKind::Holidays), vacations: effect(DaysOffKind::Vacations) }
+    }
+
+    pub(crate) fn write(&self, map: &LoroMap) -> Result<(), Error> {
+        for kind in DaysOffKind::ALL {
+            match self.effect(kind).as_str() {
+                Some(effect) => map.insert(kind.key(), effect),
+                None => map.delete(kind.key()),
+            }
+            .map_err(loro_error)?;
+        }
+        Ok(())
+    }
+}
+
+/// One schedule of days off, such as Christmas or a trip: a span of days from `first` to `last`,
+/// which comes back on each date `rule` produces from `first`, if it has one.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "mobile", derive(uniffi::Record))]
+pub struct DaysOff {
+    pub id: String,
+    pub kind: DaysOffKind,
+    pub name: String,
+    pub first: Date,
+    pub last: Date,
+    pub rule: Option<Rule>,
+    /// The day its owner archived it, from which it no longer applies.
+    pub archived: Option<Date>,
+}
+
+impl DaysOff {
+    pub fn new(kind: DaysOffKind, name: &str, first: Date) -> Self {
+        let id = NoteId::generate().to_string();
+        Self {
+            id,
+            kind,
+            name: name.trim().to_owned(),
+            first,
+            last: first,
+            rule: None,
+            archived: None,
+        }
+    }
+
+    fn from_value(kind: DaysOffKind, id: &str, value: &LoroValue) -> Option<Self> {
+        let LoroValue::Map(map) = value else {
+            return None;
+        };
+        let text = |key: &str| map.get(key).and_then(|v| string(v.clone()));
+        let date = |key: &str| text(key).and_then(|t| t.parse::<Date>().ok());
+        let first = date(FIRST)?;
+        let last = date(LAST).filter(|last| *last >= first).unwrap_or(first);
+        let rule = match text(RULE) {
+            Some(rule) => Some(Rule::parse(&rule)?),
+            None => None,
+        };
+        Some(Self {
+            id: id.to_owned(),
+            kind,
+            name: text(NAME).unwrap_or_default(),
+            first,
+            last,
+            rule,
+            archived: date(ARCHIVED),
+        })
+    }
+
+    fn to_value(&self) -> LoroValue {
+        let mut fields: Vec<(String, LoroValue)> = vec![
+            (NAME.into(), self.name.trim().into()),
+            (FIRST.into(), self.first.to_string().into()),
+            (LAST.into(), self.last.max(self.first).to_string().into()),
+        ];
+        if let Some(rule) = &self.rule {
+            fields.push((RULE.into(), rule.to_string().into()));
+        }
+        if let Some(archived) = self.archived {
+            fields.push((ARCHIVED.into(), archived.to_string().into()));
+        }
+        LoroValue::Map(fields.into())
+    }
+
+    fn span(&self) -> i32 {
+        (self.last.days() - self.first.days()).clamp(0, 366) as i32
+    }
+
+    /// Whether `date` is one of these days off.
+    pub fn covers(&self, date: Date) -> bool {
+        if self.archived.is_some_and(|archived| date >= archived) || date < self.first {
+            return false;
+        }
+        match &self.rule {
+            None => date <= self.last,
+            Some(rule) => rule
+                .dates(self.first, date.add_days(-self.span()), |_| false)
+                .next()
+                .is_some_and(|start| start <= date),
+        }
+    }
+
+    /// The last day off, or nothing if the schedule comes back forever.
+    pub fn end(&self) -> Option<Date> {
+        match &self.rule {
+            None => Some(self.last),
+            Some(rule) if rule.until.is_none() && rule.count.is_none() => None,
+            Some(rule) => {
+                let last = rule.dates(self.first, self.first, |_| false).last()?;
+                Some(last.add_days(self.span()))
+            }
+        }
+    }
+
+    /// Whether the lists leave the schedule out, because its owner archived it or its last day
+    /// passed a week ago. It still applies to the days it covers.
+    pub fn is_hidden(&self, today: Date) -> bool {
+        self.archived.is_some() || self.end().is_some_and(|end| end.add_days(HIDE_AFTER) <= today)
+    }
+
+    /// When the days off fall, such as "Dec 21, 2026 – Jan 2, 2027" or "Yearly on December 25".
+    pub fn describe(&self) -> String {
+        match &self.rule {
+            Some(rule) => describe_rule(rule, self.first),
+            None if self.first == self.last => format_long_date(self.first),
+            None => format!("{} – {}", format_long_date(self.first), format_long_date(self.last)),
+        }
+    }
+}
+
+/// A date as "Dec 21, 2026".
+fn format_long_date(date: Date) -> String {
+    let month = &MONTH_NAMES[usize::from(date.month() - 1)][..3];
+    format!("{month} {}, {}", date.day(), date.year())
+}
+
+/// Every schedule of days off in a library, to test dates against.
+#[derive(Default)]
+pub(crate) struct DaysOffSet {
+    schedules: Vec<DaysOff>,
+}
+
+impl DaysOffSet {
+    fn is_off(&self, kind: DaysOffKind, date: Date) -> bool {
+        self.schedules.iter().any(|days| days.kind == kind && days.covers(date))
+    }
+
+    /// Whether a rule that uses days off as `uses` says drops `date`.
+    pub(crate) fn skips(&self, uses: &DaysOffUse, date: Date) -> bool {
+        DaysOffKind::ALL
+            .into_iter()
+            .any(|kind| uses.effect(kind) == DayOffEffect::Skip && self.is_off(kind, date))
+    }
+
+    /// The date that `date` moves to under `uses`: the next day that isn't a day off of a kind the
+    /// rule moves past or skips, if `date` falls on a day off it moves past, and `date` otherwise.
+    pub(crate) fn moved(&self, uses: &DaysOffUse, date: Date) -> Date {
+        let moves = DaysOffKind::ALL
+            .into_iter()
+            .any(|kind| uses.effect(kind) == DayOffEffect::Move && self.is_off(kind, date));
+        if !moves {
+            return date;
+        }
+        let off = |day: Date| {
+            DaysOffKind::ALL
+                .into_iter()
+                .any(|kind| uses.effect(kind) != DayOffEffect::Ignore && self.is_off(kind, day))
+        };
+        (1..=366).map(|n| date.add_days(n)).find(|&day| !off(day)).unwrap_or(date)
+    }
+
+    pub(crate) fn applies(uses: &DaysOffUse) -> bool {
+        *uses != DaysOffUse::default()
+    }
+}
+
+impl Library {
+    /// Every schedule of days off, hidden or not, holidays first, each kind in order of first day.
+    pub fn days_off(&self) -> Vec<DaysOff> {
+        let mut all = Vec::new();
+        let root = self.doc.get_map(DAYS_OFF);
+        for kind in DaysOffKind::ALL {
+            if let Some(ValueOrContainer::Container(container)) = root.get(kind.key())
+                && let Ok(map) = container.into_map()
+                && let LoroValue::Map(entries) = map.get_value()
+            {
+                let mut schedules: Vec<DaysOff> = entries
+                    .iter()
+                    .filter_map(|(id, value)| DaysOff::from_value(kind, id, value))
+                    .collect();
+                schedules.sort_by(|a, b| a.first.cmp(&b.first).then(a.id.cmp(&b.id)));
+                all.extend(schedules);
+            }
+        }
+        all
+    }
+
+    pub(crate) fn days_off_set(&self) -> DaysOffSet {
+        DaysOffSet { schedules: self.days_off() }
+    }
+
+    /// Adds a schedule of days off, or replaces the one with the same identifier and kind.
+    pub fn set_days_off(&mut self, days: &DaysOff) -> Result<(), Error> {
+        self.check_writable()?;
+        let root = self.doc.get_map(DAYS_OFF);
+        let kind = match root.get(days.kind.key()) {
+            Some(ValueOrContainer::Container(container)) => {
+                container.into_map().map_err(|_| Error::Loro("days off isn't a map".into()))?
+            }
+            _ => root.insert_container(days.kind.key(), LoroMap::new()).map_err(loro_error)?,
+        };
+        kind.insert(&days.id, days.to_value()).map_err(loro_error)?;
+        self.commit()
+    }
+
+    /// Archives a schedule of days off as of `today`, or takes it out of the archive. Schedules
+    /// are never deleted, so the days off that shaped past dates keep shaping them.
+    pub fn archive_days_off(
+        &mut self,
+        kind: DaysOffKind,
+        id: &str,
+        archived: bool,
+        today: Date,
+    ) -> Result<(), Error> {
+        let Some(mut days) = self.days_off().into_iter().find(|d| d.kind == kind && d.id == id)
+        else {
+            return Ok(());
+        };
+        days.archived = archived.then_some(today);
+        self.set_days_off(&days)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn date(text: &str) -> Date {
+        text.parse().unwrap()
+    }
+
+    #[test]
+    fn covers_spans_that_come_back() {
+        let mut trip = DaysOff::new(DaysOffKind::Vacations, "Beach trip", date("2026-12-21"));
+        trip.last = date("2027-01-02");
+        assert!(trip.covers(date("2026-12-21")));
+        assert!(trip.covers(date("2027-01-02")));
+        assert!(!trip.covers(date("2027-01-03")));
+        assert_eq!(trip.describe(), "Dec 21, 2026 – Jan 2, 2027");
+        assert!(!trip.is_hidden(date("2027-01-08")));
+        assert!(trip.is_hidden(date("2027-01-09")));
+
+        let mut thanksgiving =
+            DaysOff::new(DaysOffKind::Holidays, "Thanksgiving", date("2026-11-26"));
+        thanksgiving.last = date("2026-11-27");
+        thanksgiving.rule = Rule::parse("FREQ=YEARLY;BYMONTH=11;BYDAY=4TH");
+        assert!(thanksgiving.covers(date("2027-11-25")));
+        assert!(thanksgiving.covers(date("2027-11-26")));
+        assert!(!thanksgiving.covers(date("2027-11-27")));
+        assert_eq!(thanksgiving.end(), None);
+        assert!(!thanksgiving.is_hidden(date("2040-01-01")));
+        thanksgiving.archived = Some(date("2027-01-01"));
+        assert!(thanksgiving.covers(date("2026-11-26")));
+        assert!(!thanksgiving.covers(date("2027-11-25")));
+        assert!(thanksgiving.is_hidden(date("2027-01-01")));
+    }
+
+    #[test]
+    fn skips_and_moves_past_days_off() {
+        let mut library = Library::in_memory();
+        let mut christmas = DaysOff::new(DaysOffKind::Holidays, "Christmas", date("2026-12-25"));
+        christmas.rule = Rule::parse("FREQ=YEARLY");
+        library.set_days_off(&christmas).unwrap();
+        let mut trip = DaysOff::new(DaysOffKind::Vacations, "Trip", date("2026-12-26"));
+        trip.last = date("2026-12-27");
+        library.set_days_off(&trip).unwrap();
+        assert_eq!(library.days_off().len(), 2);
+        let set = library.days_off_set();
+        let both = DaysOffUse { holidays: DayOffEffect::Move, vacations: DayOffEffect::Skip };
+        assert!(set.skips(&both, date("2026-12-26")));
+        assert!(!set.skips(&both, date("2026-12-25")));
+        assert_eq!(set.moved(&both, date("2026-12-25")), date("2026-12-28"));
+        let holidays = DaysOffUse { holidays: DayOffEffect::Move, ..DaysOffUse::default() };
+        assert_eq!(set.moved(&holidays, date("2026-12-25")), date("2026-12-26"));
+        assert_eq!(set.moved(&DaysOffUse::default(), date("2026-12-25")), date("2026-12-25"));
+        library
+            .archive_days_off(DaysOffKind::Holidays, &christmas.id, true, date("2027-01-01"))
+            .unwrap();
+        let set = library.days_off_set();
+        assert_eq!(set.moved(&holidays, date("2027-12-25")), date("2027-12-25"));
+        assert_eq!(set.moved(&holidays, date("2026-12-25")), date("2026-12-26"));
+    }
+}

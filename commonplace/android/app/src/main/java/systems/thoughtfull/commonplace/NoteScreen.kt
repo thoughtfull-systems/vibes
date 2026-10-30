@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
@@ -34,6 +35,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
@@ -62,14 +64,27 @@ import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import java.time.LocalDate
+import java.time.temporal.ChronoUnit
 import kotlinx.coroutines.launch
+import systems.thoughtfull.commonplace.core.Action
 import systems.thoughtfull.commonplace.core.ActionChange
 import systems.thoughtfull.commonplace.core.ActionDates
 import systems.thoughtfull.commonplace.core.ActionList
 import systems.thoughtfull.commonplace.core.ActionState
+import systems.thoughtfull.commonplace.core.DayOffEffect
+import systems.thoughtfull.commonplace.core.DaysOffUse
+import systems.thoughtfull.commonplace.core.Missed
 import systems.thoughtfull.commonplace.core.MobileLink
 import systems.thoughtfull.commonplace.core.MobileNote
+import systems.thoughtfull.commonplace.core.Occurrence
+import systems.thoughtfull.commonplace.core.OccurrenceState
+import systems.thoughtfull.commonplace.core.OccurrenceStatus
+import systems.thoughtfull.commonplace.core.RecurrenceSettings
+import systems.thoughtfull.commonplace.core.Rule
+import systems.thoughtfull.commonplace.core.newRepeatForm
 import systems.thoughtfull.commonplace.core.noteUri
+import systems.thoughtfull.commonplace.core.repeatFormRule
+import systems.thoughtfull.commonplace.core.repeatPresets
 import systems.thoughtfull.commonplace.core.wordCount
 
 @Composable
@@ -349,7 +364,7 @@ internal fun NoteScreen(
               StarButton(current.starred != null) { toggleStar(model, current) }
             }
           }
-          current.action?.let { ActionDetails(model, current) }
+          current.action?.let { ActionDetails(model, current, open) }
           current.journal?.let { JournalDetails(model, current) }
           current.entry?.let {
             EntryDetails(model, current) { journal ->
@@ -450,24 +465,43 @@ internal fun NoteScreen(
 }
 
 @Composable
-internal fun ActionDetails(model: NotebookModel, note: MobileNote) {
+internal fun ActionDetails(model: NotebookModel, note: MobileNote, open: (String) -> Unit) {
   val state by model.state.collectAsState()
-  val action = note.action!!
   val today = LocalDate.now().toString()
   var dates by remember(note.id) { mutableStateOf<ActionDates?>(null) }
+  var resolved by remember(note.id) { mutableStateOf<Action?>(null) }
+  var current by remember(note.id) { mutableStateOf<Occurrence?>(null) }
+  var history by remember(note.id) { mutableStateOf<List<Occurrence>>(emptyList()) }
   LaunchedEffect(note.id, state.revision, today) {
     dates = model.read { it.actionDates(note.id, today) }
+    resolved = model.read { it.noteOn(note.id, today) }?.action
+    current = model.read { it.currentOccurrence(note.id, today) }
+    history = model.read { it.occurrences(note.id, today, 50u, 99u) }.orEmpty()
   }
+  val own = note.action!!
+  val action = resolved ?: own
+  val recur = action.recur
   var dateField by remember(note.id) { mutableStateOf<String?>(null) }
   var waitingText by remember(note.id) { mutableStateOf(action.waitingFor.orEmpty()) }
+  var custom by remember(note.id) { mutableStateOf(false) }
+  var showHistory by remember(note.id) { mutableStateOf(false) }
   fun change(value: ActionChange) {
     model.perform { it.changeAction(note.id, value) }
+  }
+  fun setRecurrence(settings: RecurrenceSettings?) {
+    model.perform { it.setRecurrence(note.id, settings, today) }
   }
   Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
     // Match the field order and control column in the Linux details panel.
     ActionField("Done?", "detail-done") {
-      Switch(action.state == ActionState.DONE, {
-        change(ActionChange.State(if (it) ActionState.DONE else ActionState.OPEN))
+      Switch(action.state == ActionState.DONE, { done ->
+        // A recurring action's switch stops it. Any other action's ticks it, which for a step of
+        // a recurring action ticks it in the current occurrence only.
+        if (recur != null) {
+          change(ActionChange.State(if (done) ActionState.DONE else ActionState.OPEN))
+        } else {
+          model.perform { it.checkAction(note.id, done, today) }
+        }
       })
     }
     ActionField("List", "detail-list") {
@@ -502,21 +536,94 @@ internal fun ActionDetails(model: NotebookModel, note: MobileNote) {
     ActionField("Project?", "detail-project") {
       Switch(action.project, { change(ActionChange.Project(it)) })
     }
-    ActionField("Starts", "detail-starts") {
-      TextButton(onClick = { dateField = "Starts" }) {
-        Text(action.defer?.let { formatDate(it) } ?: "None")
+    ActionField("Repeats", "detail-repeats") {
+      val start = recur?.settings?.start ?: newSettings(own, defaultRule()).start
+      RepeatMenu(
+        recur?.settings?.rule,
+        start,
+        allowNone = true,
+        day = current?.date ?: start
+      ) { choice ->
+        when (choice) {
+          RepeatChoice.None -> setRecurrence(null)
+
+          is RepeatChoice.Preset ->
+            setRecurrence(
+              recur?.settings?.copy(rule = choice.rule) ?: newSettings(own, choice.rule)
+            )
+
+          RepeatChoice.Custom -> custom = true
+        }
       }
     }
-    ActionField("Due", "detail-due") {
-      TextButton(onClick = { dateField = "Due" }) {
-        Text(action.due?.let { formatDate(it) } ?: "None")
+    if (recur == null) {
+      ActionField("Starts", "detail-starts") {
+        TextButton(onClick = { dateField = "Starts" }) {
+          Text(action.defer?.let { formatDate(it) } ?: "None")
+        }
       }
+      ActionField("Due", "detail-due") {
+        TextButton(onClick = { dateField = "Due" }) {
+          Text(action.due?.let { formatDate(it) } ?: "None")
+        }
+      }
+    } else {
+      val settings = recur.settings
+      ActionField("Starts", "detail-starts") {
+        OffsetRow(note.id, settings.defer, -1, "days before", optional = false) {
+          setRecurrence(settings.copy(defer = it))
+        }
+      }
+      ActionField("Due", "detail-due") {
+        OffsetRow(note.id, settings.due, 1, "days after", optional = true) {
+          setRecurrence(settings.copy(due = it))
+        }
+      }
+      ActionField("If missed", "detail-missed") {
+        MenuControl(settings.missed, missedChoices.map { it.second }, { choice ->
+          missedChoices.first { it.second == choice }.first
+        }) { setRecurrence(settings.copy(missed = it)) }
+      }
+      DaysOffRows(
+        settings.daysOff.holidays,
+        settings.daysOff.vacations,
+        { setRecurrence(settings.copy(daysOff = settings.daysOff.copy(holidays = it))) },
+        { setRecurrence(settings.copy(daysOff = settings.daysOff.copy(vacations = it))) }
+      )
     }
     val context = rememberRowContext(state)
     val inherited = dates?.let { inheritedDates(note.id, it, context::label) }.orEmpty()
     if (inherited.isNotEmpty()) {
       Text(
         inherited,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        style = MaterialTheme.typography.bodySmall
+      )
+    }
+    current?.let { occurrence ->
+      ActionField("This time", "detail-this-time") {
+        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+          listOf("Done" to OccurrenceState.DONE, "Skip" to OccurrenceState.SKIPPED)
+            .forEach { (label, handled) ->
+              OutlinedButton(
+                onClick = {
+                  model.perform { it.handleOccurrence(note.id, occurrence.date, handled, today) }
+                },
+                colors = neutralButtonColors(),
+                contentPadding = PaddingValues(horizontal = 12.dp)
+              ) { Text(label) }
+            }
+          OutlinedButton(
+            onClick = { showHistory = true },
+            colors = neutralButtonColors(),
+            contentPadding = PaddingValues(horizontal = 12.dp)
+          ) { Text("History") }
+        }
+      }
+    }
+    if (recur != null) {
+      Text(
+        occurrenceSummary(current, history, today),
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         style = MaterialTheme.typography.bodySmall
       )
@@ -528,15 +635,101 @@ internal fun ActionDetails(model: NotebookModel, note: MobileNote) {
     }
   }
   dateField?.let { field ->
+    val due = field == "Due"
     CalendarDialog(
-      (if (field == "Due") action.due else action.defer)?.let(LocalDate::parse),
-      { dateField = null }
+      (if (due) action.due else action.defer)?.let(LocalDate::parse),
+      { dateField = null },
+      clearLabel = "Clear date"
     ) {
       val date = it?.toString()
-      change(if (field == "Due") ActionChange.Due(date) else ActionChange.Defer(date))
+      change(if (due) ActionChange.Due(date) else ActionChange.Defer(date))
       dateField = null
     }
   }
+  if (custom) {
+    val settings = recur?.settings ?: newSettings(own, newRepeatFormRule(own))
+    RepeatEditorDialog(
+      model,
+      note.id,
+      recur?.settings?.rule,
+      settings.start,
+      showStart = true,
+      daysOff = settings.daysOff,
+      dismiss = { custom = false }
+    ) { values ->
+      setRecurrence(settings.copy(rule = values.rule, start = values.start))
+      custom = false
+    }
+  }
+  if (showHistory) HistoryDialog(model, note.id, { showHistory = false }, open)
+}
+
+/**
+ * Gives a recurring action's current occurrence's dates, and says whether it moved, how many it
+ * missed since the last one its owner handled, and how many more wait, as the Linux details panel
+ * does.
+ */
+internal fun occurrenceSummary(
+  current: Occurrence?,
+  history: List<Occurrence>,
+  today: String
+): String {
+  val latest = history.filter { it.handled != null }.maxOfOrNull { it.date }
+  val missed = history.count {
+    it.status == OccurrenceStatus.MISSED && (latest == null || it.date > latest)
+  }
+  val waiting = history.count { it.status == OccurrenceStatus.UPCOMING && it.on <= today }
+  val about = if (current == null) {
+    listOf("Finished repeating")
+  } else {
+    val dates = listOfNotNull(
+      current.defer?.let { "Starts ${formatDate(it)}" },
+      current.due?.let { "Due ${formatDate(it)}" }
+    )
+    dates.ifEmpty { listOf("On ${formatDate(current.on)}") } +
+      listOfNotNull("Moved from ${formatDate(current.date)}".takeIf { current.on != current.date })
+  }
+  return (
+    about +
+      listOfNotNull(
+        "$missed missed".takeIf { missed > 0 },
+        "$waiting more waiting".takeIf {
+          waiting >
+            0
+        }
+      )
+    ).joinToString(" · ")
+}
+
+private fun defaultRule() = repeatPresets(LocalDate.now().toString())[0]
+
+/** A weekly rule on the day of the week the action would start repeating from. */
+private fun newRepeatFormRule(action: Action) =
+  repeatFormRule(newRepeatForm(newSettings(action, defaultRule()).start))
+
+/**
+ * Settings that make `action` repeat by `rule`, from its due date, or else its start date, or else
+ * today, keeping the gap between its start and due dates, as the Linux app does.
+ */
+internal fun newSettings(action: Action, rule: Rule): RecurrenceSettings {
+  val start = action.due ?: action.defer ?: LocalDate.now().toString()
+  val (due, defer) = when {
+    action.defer != null && action.due != null ->
+      0 to
+        ChronoUnit.DAYS.between(LocalDate.parse(action.due), LocalDate.parse(action.defer)).toInt()
+
+    action.defer != null -> null to 0
+
+    else -> 0 to null
+  }
+  return RecurrenceSettings(
+    rule,
+    start,
+    Missed.LATEST,
+    due,
+    defer,
+    DaysOffUse(DayOffEffect.IGNORE, DayOffEffect.IGNORE)
+  )
 }
 
 @Composable

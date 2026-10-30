@@ -35,8 +35,9 @@ sync with calendar apps through iCalendar.
   schedules that count from the last completion.
 - **One occurrence can change.** Moving a single occurrence, such as paying this month's bill on
   Monday, leaves the rest of the schedule alone.
-- **Exclusions stay live.** Holidays and vacations remove or move occurrences, and taking an
-  exclusion away brings its occurrences back.
+- **Exclusions stay live.** Holidays and vacations remove or move occurrences, and ending a vacation
+  early brings its later occurrences back. No change to days off or to a rule makes a past
+  occurrence overdue.
 - **Fits Getting Things Done (GTD).** The current occurrence behaves like any other action in the
   lists and reviews, with a start date that brings it into view before it's due.
 - **Low friction.** A plain repeat, such as every week, takes a keystroke or two, and the details
@@ -73,8 +74,9 @@ format adds them.
 - **Handled occurrences.** A map keyed by occurrence date records each occurrence its owner closed
   or skipped, when, and the day it happened. Closing the current occurrence adds an entry and leaves
   the action's `state` open. Two devices that close the same occurrence write the same key, so the
-  merge keeps one entry. An entry can link to a note written for that occurrence, such as the notes
-  from one week's review, so an occurrence gets a note only when it needs one.
+  merge keeps one entry. Another map keyed by occurrence date links an occurrence to a note written
+  for it, such as the notes from one week's review, so an occurrence gets a note only when it needs
+  one.
 - **Overrides.** A map keyed by occurrence date moves single occurrences to other dates, and the
   offsets give a moved occurrence's due and start dates from its new date. The key stays the date
   the rule produced, so a moved occurrence keeps its handled entry and its steps, and two devices
@@ -85,14 +87,19 @@ format adds them.
 - **Missed occurrences.** The rule names one of three behaviors. `all` makes every occurrence count,
   so missed ones pile up, as bills do. `latest` shows only the latest occurrence that has come into
   view, and counts earlier unhandled ones as missed, as a weekly review does. `after` starts the
-  rule again from the day its owner handled the last occurrence, as watering plants does.
-- **Exclusions.** A library holds named calendars of excluded days: single days, date ranges, and
-  rules for days that come back, such as a holiday each year. A recurring action refers to the
-  calendars that apply to it, and each reference says whether an excluded day removes an occurrence
-  or moves it to the next day that isn't excluded. Exclusions filter the candidate days before
-  `BYSETPOS` picks among them, so "the last weekday of the month" with a holiday calendar means the
-  last workday. Every reader computes occurrences from the calendars as they stand, so removing an
-  exclusion brings its occurrences back.
+  rule again from the day its owner handled the last occurrence, as watering plants does. Under
+  every behavior, unhandled occurrences before the latest handled one count as missed, so editing a
+  rule or its days off never brings old occurrences back as overdue.
+- **Days off.** A library holds two kinds of days off: holidays, and vacations. Each holds named
+  schedules, such as Christmas or a trip: a span of days that a rule can bring back, such as every
+  year. A recurring action says, for each kind, whether a day off removes an occurrence, moves it to
+  the next day that isn't a day off, or doesn't affect it, which is the default. Days off that
+  remove occurrences filter the candidate days before `BYSETPOS` picks among them, so "the last
+  weekday of the month" with holidays removed means the last workday. Every reader computes
+  occurrences from the days off as they stand, so archiving a schedule early brings its later
+  occurrences back. Schedules are never deleted, only archived, and an archived schedule keeps
+  applying to the days before its owner archived it, so the past doesn't change. The apps hide a
+  schedule once it's archived or a week after its last day.
 - **Steps.** The steps of a recurring action record their completion in the same way, keyed by the
   occurrence of the recurring action they belong to, so each occurrence starts with every step open
   and nothing resets them. Readers ignore `recur` on an action inside the subtree of another
@@ -108,23 +115,25 @@ Against the criteria:
   holds the next date for two devices to overwrite.
 - **An action is a note:** the recurring action is one note for its whole life, and notes for single
   occurrences link to it without replacing it.
-- **Expressive:** `RRULE` covers each calendar schedule in the criterion. Exclusion calendars add
-  workdays, and the `after` behavior adds schedules that count from the last completion, which
-  `RRULE` can't express.
+- **Expressive:** `RRULE` covers each calendar schedule in the criterion. Holidays add workdays, and
+  the `after` behavior adds schedules that count from the last completion, which `RRULE` can't
+  express.
 - **One occurrence can change:** an override moves one occurrence and leaves the rule, and every
   other occurrence, as they were.
-- **Exclusions stay live:** readers compute occurrences from the calendars on every read, so an
-  exclusion's effect lasts only as long as the exclusion.
+- **Exclusions stay live:** readers compute occurrences from the days off on every read, so a
+  vacation ended early stops shaping the dates after it. Archived schedules keep shaping the dates
+  before, and unhandled occurrences before the latest handled one count as missed, so the past
+  doesn't change.
 - **Fits GTD:** the current occurrence has a due date, a start date, and open steps like any other
   action, so the list order, the next tasks, and the review questions in decision 0004 apply
   unchanged.
 - **Low friction:** a new recurring action needs only a frequency. The start date, interval, missed
-  behavior, offsets, and calendars all have defaults.
+  behavior, offsets, and days off all have defaults.
 - **Interoperable:** a rule is `RRULE` text already, and an override is an iCalendar override keyed
-  by the occurrence it replaces. Only the `after` behavior and exclusion calendars need translating,
-  into a fixed rule and `EXDATE` lists. Exclusions that move occurrences add `RDATE` lists too.
-  Dates excluded in an imported event become skipped occurrences, so rules never hold `EXDATE` lists
-  of their own.
+  by the occurrence it replaces. Only the `after` behavior and days off need translating, into a
+  fixed rule and `EXDATE` lists. Exclusions that move occurrences add `RDATE` lists too. Dates
+  excluded in an imported event become skipped occurrences, so rules never hold `EXDATE` lists of
+  their own.
 - **Room for spaced repetition:** the next occurrence is a function of the rule and the handled
   occurrences. A spaced repetition schedule is another such function, with a rating in each entry.
 - **Shared with other notes:** rules hold dates only, and each kind of note adds its times on top,
@@ -164,6 +173,15 @@ Against the criteria:
 - **A rule syntax of Commonplace's own.** A smaller syntax, like Org's repeaters, would be quicker
   to parse, but each schedule it lacks needs a new design, and every calendar app would need a
   translation. It fails the expressive and interoperable criteria.
+- **Calendars of excluded days of the owner's own.** Any number of named calendars, each with its
+  own choice on every recurring action and journal schedule, would cover more kinds of days off, but
+  each new calendar would add a choice to every rule. Two fixed kinds cover holidays and vacations,
+  and a later version can add more. It fails the low friction criterion.
+- **A choice on each rule for each holiday.** Choosing per schedule of days off would mean marking
+  every recurring action for Christmas, Thanksgiving, and every other holiday, and again for each
+  new one. It fails the low friction criterion.
+- **Deleting days off.** Deleting a past vacation would bring back the occurrences it removed, as
+  missed or overdue. It fails the exclusions stay live criterion.
 - **Exclusions as `EXDATE` lists in each rule.** The iCalendar standard's own exclusions list fixed
   dates that each rule keeps a copy of. A vacation would mean editing every rule it touches, and
   ending it early would mean finding them all again. It fails the exclusions stay live and low
@@ -173,12 +191,12 @@ Against the criteria:
 
 - The library format becomes version 4. Older versions of Commonplace open a version 4 library
   read-only.
-- Every implementation needs an `RRULE` evaluator for dates, extended with exclusion calendars,
-  overrides, and the `after` behavior.
-- Journal schedules, which accept only daily and weekly rules today, can accept any rule this
-  decision supports.
-- The apps need ways to edit rules and exclusion calendars, to see upcoming and past occurrences,
-  and to skip or move one.
+- Every implementation needs an `RRULE` evaluator for dates, extended with days off, overrides, and
+  the `after` behavior.
+- Journal schedules accept any rule this decision supports, and skip or move past days off as
+  recurring actions do.
+- The apps need ways to edit rules and days off, to see upcoming and past occurrences, and to skip
+  or move one.
 - A calendar of events needs a later decision on time zones, durations, keys for occurrences at
   times of day, and translating its events to and from iCalendar.
 - Subscribing to iCalendar feeds, as a source of exclusions such as holidays and time off, needs a

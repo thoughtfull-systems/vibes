@@ -42,23 +42,18 @@ import androidx.compose.ui.unit.dp
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.Locale
-import systems.thoughtfull.commonplace.core.ActionChange
 import systems.thoughtfull.commonplace.core.ActionDates
 import systems.thoughtfull.commonplace.core.ActionList
 import systems.thoughtfull.commonplace.core.ActionState
 import systems.thoughtfull.commonplace.core.ActionStatus
 import systems.thoughtfull.commonplace.core.Dated
 import systems.thoughtfull.commonplace.core.MobileNote
+import systems.thoughtfull.commonplace.core.describeRule
 
+/** Ticks or unticks an action, which for a recurring action closes its current occurrence. */
 internal fun toggleAction(model: NotebookModel, note: MobileNote) {
-  model.perform {
-    it.changeAction(
-      note.id,
-      ActionChange.State(
-        if (note.action?.state == ActionState.DONE) ActionState.OPEN else ActionState.DONE
-      )
-    )
-  }
+  val done = note.action?.state != ActionState.DONE
+  model.perform { it.checkAction(note.id, done, LocalDate.now().toString()) }
 }
 
 internal fun toggleStar(model: NotebookModel, note: MobileNote) {
@@ -191,12 +186,14 @@ internal fun actionSummary(
   dates: ActionDates?,
   stalled: Boolean,
   label: (String) -> String?,
-  today: LocalDate = LocalDate.now()
+  today: LocalDate = LocalDate.now(),
+  waiting: UInt = 0u
 ): String {
   val action = note.action ?: return ""
   val open = action.state == ActionState.OPEN
   return listOfNotNull(
     "Archived".takeIf { note.archived != null },
+    action.recur?.let { describeRule(it.settings.rule, it.settings.start) },
     (if (stalled) "Stalled project" else "Project").takeIf { action.project },
     when (action.list) {
       ActionList.ACTIVE -> null
@@ -211,7 +208,8 @@ internal fun actionSummary(
     },
     dates?.start?.takeIf { LocalDate.parse(it.date) > today }?.let {
       describeDate("Starts", it, note.id, label, today)
-    }
+    },
+    "$waiting more waiting".takeIf { waiting > 0u }
   ).joinToString(" · ")
 }
 
@@ -222,11 +220,12 @@ internal fun rowSummary(
   dates: ActionDates?,
   stalled: Boolean,
   context: RowContext,
-  today: LocalDate = LocalDate.now()
+  today: LocalDate = LocalDate.now(),
+  waiting: UInt = 0u
 ): String {
   val stampText = stamp?.let { "${it.word} ${listTimestamp(it.time(note))}" }
   var summary = if (note.action != null) {
-    listOfNotNull(actionSummary(note, dates, stalled, context::label, today), stampText)
+    listOfNotNull(actionSummary(note, dates, stalled, context::label, today, waiting), stampText)
       .filter { it.isNotEmpty() }.joinToString(" · ")
   } else {
     stampText ?: listTimestamp(note.modified)
@@ -248,6 +247,7 @@ internal fun NoteRow(
   parents: List<String> = context.parents(note.id),
   showPath: Boolean = true,
   stalled: Boolean = false,
+  waiting: UInt = 0u,
   plan: (() -> Unit)? = null,
   star: (() -> Unit)? = null,
   complete: (() -> Unit)? = null,
@@ -322,17 +322,24 @@ internal fun NoteRow(
         )
       }
       val path = if (showPath) parents.mapNotNull(context::label).joinToString(" › ") else ""
-      listOf(
-        AnnotatedString(rowSummary(note, stamp, dates, stalled, context)),
-        formattedTitle(path)
-      ).filter { it.isNotEmpty() }.forEach { line ->
-        Text(
-          line,
-          maxLines = 1,
-          overflow = TextOverflow.Ellipsis,
-          color = MaterialTheme.colorScheme.onSurfaceVariant,
-          style = MaterialTheme.typography.bodySmall
-        )
+      val summary =
+        AnnotatedString(rowSummary(note, stamp, dates, stalled, context, waiting = waiting))
+      listOf(summary, formattedTitle(path)).filter { it.isNotEmpty() }.forEach { line ->
+        Row(verticalAlignment = Alignment.CenterVertically) {
+          if (line === summary && note.action?.recur != null) {
+            AppIcon(
+              R.drawable.repeat,
+              modifier = Modifier.padding(end = 4.dp).size(12.dp)
+            )
+          }
+          Text(
+            line,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.bodySmall
+          )
+        }
       }
     }
     if (plan != null && note.action?.state == ActionState.OPEN) {

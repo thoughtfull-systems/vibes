@@ -10,6 +10,7 @@ use loro::{LoroMap, LoroTree, LoroValue, TreeID, TreeParentId, ValueOrContainer}
 
 use crate::library::{ACTION_KIND, MODIFIED, integer, loro_error, string, value};
 use crate::markup::open_fence;
+use crate::recurring::{OCCURRENCES, RECUR, Recurrence, StepOccurrence, step_occurrences};
 use crate::{Error, Library, Note, NoteId};
 
 pub(crate) const ACTION: &str = "action";
@@ -33,6 +34,8 @@ pub struct Date {
 }
 
 impl Date {
+    pub const EPOCH: Self = Self { year: 1970, month: 1, day: 1 };
+
     pub fn new(year: u16, month: u8, day: u8) -> Option<Self> {
         let leap =
             year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400));
@@ -58,6 +61,11 @@ impl Date {
         self.day
     }
 
+    /// How many days `month` of `year` has, or 0 if `month` isn't a month.
+    pub fn days_in_month(year: u16, month: u8) -> u8 {
+        (28..=31).rev().find(|&day| Self::new(year, month, day).is_some()).unwrap_or(0)
+    }
+
     /// The day of the week, from 0 for Monday to 6 for Sunday.
     pub fn weekday(self) -> u8 {
         // 1970-01-01 was a Thursday.
@@ -66,6 +74,11 @@ impl Date {
 }
 
 impl Date {
+    /// How many days after `earlier` this date is, or before it if negative.
+    pub fn days_since(self, earlier: Self) -> i32 {
+        (self.days() - earlier.days()) as i32
+    }
+
     /// The date `days` days later, or earlier if `days` is negative.
     pub fn add_days(self, days: i32) -> Self {
         Self::from_days(self.days() + i64::from(days))
@@ -83,7 +96,7 @@ impl Date {
         era * 146_097 + day_of_era - 719_468
     }
 
-    fn from_days(days: i64) -> Self {
+    pub(crate) fn from_days(days: i64) -> Self {
         let days = days + 719_468;
         let era = days.div_euclid(146_097);
         let day_of_era = days - era * 146_097;
@@ -226,6 +239,10 @@ pub struct Action {
     pub project: bool,
     pub state: ActionState,
     pub waiting_for: Option<String>,
+    /// The rule and record of a recurring action.
+    pub recur: Option<Recurrence>,
+    /// For a step of a recurring action, the occurrences in which it's done.
+    pub occurrences: Vec<StepOccurrence>,
 }
 
 impl Action {
@@ -243,6 +260,8 @@ impl Action {
             project: matches!(map.get(PROJECT), Some(LoroValue::Bool(true))),
             state: text(STATE).map_or_else(ActionState::default, |t| ActionState::parse(&t)),
             waiting_for: text(WAITING_FOR).filter(|t| !t.trim().is_empty()),
+            recur: Recurrence::from_value(map.get(RECUR)),
+            occurrences: step_occurrences(map.get(OCCURRENCES)),
         }
     }
 
@@ -358,6 +377,9 @@ pub struct ActionEntry {
     pub parents: Vec<NoteId>,
     /// For a project, whether it has no open tasks.
     pub stalled: bool,
+    /// For a recurring action that keeps every occurrence, how many more occurrences have fallen
+    /// due behind the current one.
+    pub waiting: u32,
 }
 
 /// The hierarchy of actions, after resolving the cases the spec describes.
@@ -558,14 +580,19 @@ impl Library {
     /// The steps under an action, each followed by its own steps, in outline order, so the order
     /// the owner arranges them in is the order they show. Steps in the trash are left out.
     pub fn action_subtree(&self, id: NoteId, today: Date) -> Vec<ActionEntry> {
-        let all_dates = self.action_dates(today);
+        let mut notes = self.action_notes();
+        let standings = self.resolve_recurrence(&mut notes, today);
         let hierarchy = self.hierarchy();
+        let all_dates: HashMap<NoteId, ActionDates> = walk(&hierarchy, &notes, today)
+            .into_iter()
+            .map(|entry| (entry.note.id, entry.dates))
+            .collect();
         let mut entries = Vec::new();
         let mut seen = HashSet::from([id]);
         let mut stack: Vec<(NoteId, usize)> =
             hierarchy.children(Some(id)).iter().rev().map(|&child| (child, 0)).collect();
         while let Some((child, depth)) = stack.pop() {
-            let Some(note) = self.note(child).filter(|note| !note.is_trashed()) else {
+            let Some(note) = notes.get(&child).filter(|note| !note.is_trashed()).cloned() else {
                 continue;
             };
             if !seen.insert(child) {
@@ -573,7 +600,8 @@ impl Library {
             }
             let dates = all_dates.get(&child).copied().unwrap_or_default();
             let parents = hierarchy.path(child);
-            entries.push(ActionEntry { dates, depth, note, parents, stalled: false });
+            let waiting = standings.get(&child).map_or(0, |standing| standing.waiting);
+            entries.push(ActionEntry { dates, depth, note, parents, stalled: false, waiting });
             stack.extend(
                 hierarchy.children(Some(child)).iter().rev().map(|&step| (step, depth + 1)),
             );
@@ -603,12 +631,8 @@ impl Library {
 
     /// The dates that apply to each action, by its identifier.
     pub fn action_dates(&self, today: Date) -> HashMap<NoteId, ActionDates> {
-        let notes: HashMap<NoteId, Note> = self
-            .notes()
-            .into_iter()
-            .filter(|note| note.action.is_some())
-            .map(|note| (note.id, note))
-            .collect();
+        let mut notes = self.action_notes();
+        self.resolve_recurrence(&mut notes, today);
         walk(&self.hierarchy(), &notes, today)
             .into_iter()
             .map(|entry| (entry.note.id, entry.dates))
@@ -655,12 +679,8 @@ impl Library {
     /// The actions a view shows, in its order. `today` decides which actions have started and which
     /// are due soon.
     pub fn action_view(&self, view: ActionView, today: Date) -> Vec<ActionEntry> {
-        let notes: HashMap<NoteId, Note> = self
-            .notes()
-            .into_iter()
-            .filter(|note| note.action.is_some())
-            .map(|note| (note.id, note))
-            .collect();
+        let mut notes = self.action_notes();
+        let standings = self.resolve_recurrence(&mut notes, today);
         let hierarchy = self.hierarchy();
         let mut entries = walk(&hierarchy, &notes, today);
         // Tasks that keep a project moving: open, and not put off to someday or maybe.
@@ -693,6 +713,7 @@ impl Library {
                     depth: if depths { entry.depth } else { 0 },
                     parents: hierarchy.path(entry.note.id),
                     stalled: stalled.contains(&entry.note.id),
+                    waiting: standings.get(&entry.note.id).map_or(0, |standing| standing.waiting),
                     note: entry.note,
                 })
                 .collect()
@@ -810,6 +831,15 @@ impl Library {
                 flat(entries)
             }
         }
+    }
+
+    /// Every action, by its identifier.
+    fn action_notes(&self) -> HashMap<NoteId, Note> {
+        self.notes()
+            .into_iter()
+            .filter(|note| note.action.is_some())
+            .map(|note| (note.id, note))
+            .collect()
     }
 
     /// Deletes the nodes and notes of actions and their subtrees.

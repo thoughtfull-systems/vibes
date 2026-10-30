@@ -26,6 +26,15 @@ class NavigationTest {
   }
 
   @Test
+  fun aNoteOpensUnderItsOwnTabUnlessTheCurrentOneListsIt() {
+    assertEquals("Memos", tabFor("Memos", "Actions"))
+    assertEquals("Actions", tabFor("Actions", "Actions"))
+    assertEquals("All notes", tabFor("Memos", "All notes"))
+    assertEquals("Trash", tabFor("Trash", "All notes"))
+    assertEquals("Journals", tabFor("Journals", "Memos"))
+  }
+
+  @Test
   fun aRestoredNoteWithoutHistoryReturnsToItsListing() {
     assertEquals(
       Navigation(Location("Trash")),

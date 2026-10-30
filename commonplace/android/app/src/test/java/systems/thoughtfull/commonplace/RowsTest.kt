@@ -14,9 +14,13 @@ import systems.thoughtfull.commonplace.core.ActionState
 import systems.thoughtfull.commonplace.core.ActionStatus
 import systems.thoughtfull.commonplace.core.ChoiceOption
 import systems.thoughtfull.commonplace.core.Dated
+import systems.thoughtfull.commonplace.core.HandledOccurrence
 import systems.thoughtfull.commonplace.core.Journal
 import systems.thoughtfull.commonplace.core.MobileEntry
 import systems.thoughtfull.commonplace.core.MobileNote
+import systems.thoughtfull.commonplace.core.Occurrence
+import systems.thoughtfull.commonplace.core.OccurrenceState
+import systems.thoughtfull.commonplace.core.OccurrenceStatus
 import systems.thoughtfull.commonplace.core.Question
 import systems.thoughtfull.commonplace.core.QuestionKind
 
@@ -47,7 +51,7 @@ private fun action(
   list: ActionList = ActionList.ACTIVE,
   state: ActionState = ActionState.OPEN
 ) = note(id).copy(
-  action = Action(null, null, null, list, null, project, state, null),
+  action = Action(null, null, null, list, null, project, state, null, null, emptyList()),
   kind = "action"
 )
 
@@ -121,15 +125,37 @@ class RowsTest {
   }
 
   @Test
-  fun scheduleDaysStartOnSundayAndWriteEveryDayAsTheCoreDoes() {
-    assertEquals(
-      listOf("Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"),
-      scheduleWeekdays.map { it.second }
+  fun occurrenceSummariesMatchLinux() {
+    fun occurrence(date: String, on: String, status: OccurrenceStatus, done: Boolean = false) =
+      Occurrence(
+        date,
+        on,
+        null,
+        on,
+        status,
+        if (done) HandledOccurrence(date, OccurrenceState.DONE, 0, date) else null,
+        on != date,
+        null
+      )
+    val current = occurrence("2026-10-26", "2026-10-27", OccurrenceStatus.CURRENT)
+    val history = listOf(
+      occurrence("2026-11-02", "2026-11-02", OccurrenceStatus.UPCOMING),
+      current,
+      occurrence("2026-10-19", "2026-10-19", OccurrenceStatus.MISSED),
+      occurrence("2026-10-12", "2026-10-12", OccurrenceStatus.DONE, done = true),
+      occurrence("2026-10-05", "2026-10-05", OccurrenceStatus.MISSED)
     )
-    assertEquals("FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR,SA", toggleWeekday(WORKDAYS, "SA"))
-    assertEquals("FREQ=DAILY", toggleWeekday("FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR,SA", "SU"))
-    assertEquals("FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR,SA", toggleWeekday("FREQ=DAILY", "SU"))
-    assertEquals("FREQ=WEEKLY;BYDAY=MO", toggleWeekday("FREQ=WEEKLY;BYDAY=MO", "MO"))
+    assertEquals(
+      "Due ${formatDate("2026-10-27")} · Moved from ${formatDate("2026-10-26")} · 1 missed",
+      occurrenceSummary(current, history, "2026-10-30")
+    )
+    val waiting = history + occurrence("2026-10-28", "2026-10-28", OccurrenceStatus.UPCOMING)
+    assertEquals(
+      "Due ${formatDate("2026-10-27")} · Moved from ${formatDate("2026-10-26")} · 1 missed · " +
+        "1 more waiting",
+      occurrenceSummary(current, waiting, "2026-10-30")
+    )
+    assertEquals("Finished repeating", occurrenceSummary(null, emptyList(), "2026-10-30"))
   }
 
   @Test

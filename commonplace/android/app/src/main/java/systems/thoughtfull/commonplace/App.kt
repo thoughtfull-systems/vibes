@@ -74,16 +74,23 @@ fun CommonplaceApp(model: NotebookModel, incoming: Intent?, consumed: () -> Unit
   var capture by rememberSaveable(stateSaver = captureSaver) {
     mutableStateOf<CaptureRequest?>(null)
   }
+  var daysOff by remember { mutableStateOf(false) }
   var libraries by remember { mutableStateOf(false) }
   var syncing by remember { mutableStateOf(false) }
   var invite by remember { mutableStateOf<String?>(null) }
   var inboxEditing by remember { mutableStateOf(false) }
   val focusManager = LocalFocusManager.current
   val keyboard = LocalSoftwareKeyboardController.current
-  val open: (String) -> Unit = {
+  val open: (String) -> Unit = { id ->
     focusManager.clearFocus()
     keyboard?.hide()
-    navigation = navigation.go(Location(tab, it))
+    val from = navigation
+    scope.launch {
+      val own = model.read { it.note(id) }?.let(::ownTab)
+      if (navigation == from) {
+        navigation = from.go(Location(tabFor(own ?: from.current.tab, from.current.tab), id))
+      }
+    }
   }
 
   fun goBack() {
@@ -160,8 +167,9 @@ fun CommonplaceApp(model: NotebookModel, incoming: Intent?, consumed: () -> Unit
       modifier = Modifier.imePadding(),
       topBar = {
         TopAppBar(title = { Text(tab) }, expandedHeight = BAR_HEIGHT, actions = {
-          TextButton(onClick = { syncing = true }) { Text("Sync") }
+          TextButton(onClick = { daysOff = true }) { Text("Days off") }
           TextButton(onClick = { libraries = true }) { Text("Libraries") }
+          TextButton(onClick = { syncing = true }) { Text("Sync") }
         })
       },
       bottomBar = {
@@ -215,6 +223,7 @@ fun CommonplaceApp(model: NotebookModel, incoming: Intent?, consumed: () -> Unit
   capture?.let { request ->
     CaptureDialog(model, state, request, { capture = null }) { capture = null }
   }
+  if (daysOff) DaysOffDialog(model) { daysOff = false }
   if (libraries) LibrariesDialog(model, state) { libraries = false }
   if (syncing) SyncScreen(model, state, invite, { invite = null }) { syncing = false }
   NameUnnamedLibrary(model, state)

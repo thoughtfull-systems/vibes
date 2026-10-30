@@ -139,6 +139,7 @@ internal fun ActionsScreen(
             dates = entry.dates,
             parents = entry.parents,
             stalled = entry.stalled,
+            waiting = entry.waiting,
             star = if (section.star) {
               { toggleStar(model, entry.note) }
             } else {

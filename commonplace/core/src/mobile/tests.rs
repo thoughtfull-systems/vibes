@@ -85,7 +85,7 @@ fn journal_capture_keeps_structured_answers_and_prompt_state() {
         QuestionKind::Choice { multiple: false, options: vec![ChoiceOption::new("Writing")] },
     );
     mobile.set_question(journal, question.clone(), true).unwrap();
-    let schedule = Schedule::new(Days::EVERY_DAY, Times::Fixed(vec![600]));
+    let schedule = Schedule::new(Rule::default(), Date::EPOCH, Times::Fixed(vec![600]));
     mobile.set_schedule(journal, schedule).unwrap();
     let today = "2026-10-25".parse().unwrap();
     let prompt = mobile

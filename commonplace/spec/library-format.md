@@ -1,12 +1,15 @@
 # Library format
 
-Version 3. This spec defines how a Commonplace library stores its notes, so that every
+Version 4. This spec defines how a Commonplace library stores its notes, so that every
 implementation can read and write the same data.
 [Decision 0002](../../decisions/0002-commonplace-library-storage.md) explains the choice of format,
-and [decision 0004](../../decisions/0004-commonplace-actions.md) explains actions.
+[decision 0004](../../decisions/0004-commonplace-actions.md) explains actions, and
+[decision 0006](../../decisions/0006-commonplace-recurring-actions.md) explains recurring actions
+and days off.
 
 Version 1 covered memos. Version 2 adds actions. Version 3 lets every note go to the archive, and
-adds journals. Later versions add curios, zettels, attachments, and spaced repetition.
+adds journals. Version 4 adds recurring actions and days off, and lets journal schedules use any
+[rule](#rules). Later versions add curios, zettels, attachments, and spaced repetition.
 
 ## Document
 
@@ -20,7 +23,7 @@ its own, and syncs on its own.
 Each running instance of an implementation uses a fresh, random Loro peer identifier, as Loro does
 by default. Two instances that write at the same time must never share one.
 
-The document has five root containers.
+The document has six root containers.
 
 | Name       | Type | Contents                                                   |
 | ---------- | ---- | ---------------------------------------------------------- |
@@ -28,6 +31,7 @@ The document has five root containers.
 | `notes`    | Map  | Every note, keyed by its identifier.                       |
 | `actions`  | Tree | The hierarchy of actions, as the [tree](#actions) defines. |
 | `settings` | Map  | Preferences that follow the owner across devices.          |
+| `days_off` | Map  | Holidays and vacations, as [days off](#days_off) defines.  |
 | `deleted`  | Map  | A [tombstone](#deleted) for each note deleted for good.    |
 
 ### `meta`
@@ -84,6 +88,8 @@ An action is a project if its `project` is `true`, and a task otherwise.
 | `project`     | Boolean | Whether the action is a project.                              |
 | `state`       | String  | `open` or `done`.                                             |
 | `waiting_for` | String  | Who or what the action waits for, in plain text.              |
+| `recur`       | Map     | For a [recurring action](#recurring-actions), its fields.     |
+| `occurrences` | Map     | For a step of a recurring action, when it's done in each one. |
 
 The lists come from Getting Things Done (GTD): inbox, next actions, and waiting for, with the
 someday and maybe list of GTD split in two. The next actions list is `active` here, because it holds
@@ -100,6 +106,54 @@ a missing `project` as `false`.
 A project's list and dates apply to its subtree too. An action counts as deferred if it or any
 ancestor has a `defer` date after today. The list that applies to an action is the latest, among its
 own list and its ancestors' lists, in the order `active`, `waiting`, `someday`, `maybe`, `inbox`.
+
+### Recurring actions
+
+An action with a `recur` map recurs. Its [rule](#rules) produces occurrences, each named by the date
+the rule gives it, and the map records what its owner did with them. Readers ignore `recur` on an
+action inside the subtree of another recurring action, and on one whose `rule` or `start` they can't
+read.
+
+| Key         | Type    | Value                                                                   |
+| ----------- | ------- | ----------------------------------------------------------------------- |
+| `rule`      | String  | The rule.                                                               |
+| `start`     | String  | The date the rule counts from.                                          |
+| `missed`    | String  | `all`, `latest`, or `after`. A missing or unknown value means `latest`. |
+| `due`       | Integer | The due date's offset in days from each occurrence's date.              |
+| `defer`     | Integer | The start date's offset in days from each occurrence's date.            |
+| `holidays`  | String  | What occurrences do on [holidays](#days_off): `skip` or `move`.         |
+| `vacations` | String  | What occurrences do on vacations: `skip` or `move`.                     |
+| `handled`   | Map     | The occurrences its owner closed or skipped, by occurrence date.        |
+| `moved`     | Map     | The date each occurrence its owner moved now falls on, by its date.     |
+| `notes`     | Map     | The identifier of a note written for an occurrence, by its date.        |
+
+Without `due` or `defer`, occurrences have no due or start date. Without `holidays` or `vacations`,
+occurrences ignore those days off. With `skip`, the rule drops a day off before `BYSETPOS` picks
+among a period's dates. With `move`, an occurrence on a day off falls on the next day that isn't a
+day off of a kind the action skips or moves past. An occurrence its owner moved falls on the date in
+`moved`, whatever the days off.
+
+Each value in `handled` is a map value with a `state` of `done` or `skipped`, the timestamp of the
+write in `at`, and in `day` the local date on which its owner handled it.
+
+The current occurrence comes from the rule and `handled`, and nothing writes it. Unhandled
+occurrences before the latest handled occurrence count as missed. After that:
+
+- **`all`:** the current occurrence is the first unhandled one, and later ones that have fallen due
+  wait behind it.
+- **`latest`:** the current occurrence is the latest unhandled one whose start date, or date without
+  one, has come, or else the first unhandled one. Earlier ones count as missed.
+- **`after`:** the rule counts again from the `day` of the latest handled occurrence, and the
+  current occurrence is its first date after that day. Without a handled occurrence, it's the rule's
+  first date. A `COUNT` counts handled occurrences.
+
+While an action recurs, its current occurrence's due and start dates replace its own `due` and
+`defer`. An action whose rule has no current occurrence counts as done, closed at the latest `at` in
+`handled`. Marking it `done` stops it early.
+
+A step of a recurring action counts as done if its own `state` is `done`, or if its `occurrences`
+map holds the date of the current occurrence. Each value is the timestamp of the write that ticked
+it.
 
 ### Journal fields
 
@@ -144,9 +198,12 @@ question's `type` never changes, since its answers depend on it.
 
 #### Schedules
 
-Each schedule is a map value. Its `rule` is an `RRULE` of dates: `FREQ=DAILY`, or `FREQ=WEEKLY` with
-a `BYDAY` that names days without ordinals. Its `kind` is `fixed` or `random`. Times are local to
-the device that reads them, written `HH:MM`.
+Each schedule is a map value. Its `rule` is a [rule](#rules), and its optional `from` is the date
+the rule counts from. Without `from`, the rule counts from the start of 1970. Its optional
+`holidays` and `vacations` say what it does on [days off](#days_off), as for a recurring action:
+`skip` drops the day, and `move` prompts on the next day that isn't a day off instead. Its `kind` is
+`fixed` or `random`. Times are local to the device that reads them, written `HH:MM`. Version 3
+allowed only `FREQ=DAILY`, or `FREQ=WEEKLY` with a `BYDAY` that names days without ordinals.
 
 - **Fixed:** `times` is a list of times.
 - **Random:** `start` and `end` bound a window, `mean` is a whole number of minutes, at least 1, and
@@ -251,6 +308,28 @@ action's list of steps shows its done steps under `steps.show_done`: 1 to show t
 them. Without it, apps read `linux.steps.show_done`, where the Linux app kept the choice before, and
 without either, the list hides them. Writing `steps.show_done` removes `linux.steps.show_done`.
 
+### `days_off`
+
+Days off are holidays and vacations, which recurring actions and journal schedules can skip or move
+past. The map holds two maps, `holidays` and `vacations`. Each holds schedules of days off, each a
+map value keyed by an identifier in the form of a note identifier.
+
+| Key        | Type   | Value                                                              |
+| ---------- | ------ | ------------------------------------------------------------------ |
+| `name`     | String | The name its owner gives the days off, such as "Christmas."        |
+| `first`    | String | The first day off.                                                 |
+| `last`     | String | The last day off in each span. Absent for a span of one day.       |
+| `rule`     | String | A [rule](#rules) that brings the span back, counting from `first`. |
+| `archived` | String | The date its owner archived it, from which it no longer applies.   |
+
+Without `rule`, the schedule is one span, from `first` to `last`. With one, each date the rule
+produces starts a span as long as the one from `first` to `last`. Readers skip a schedule whose
+`first` or `rule` they can't read, and treat a `last` before `first` as absent.
+
+Days off shape past dates as well as future ones, so writers never delete a schedule. Archiving it
+keeps it applying to the days before `archived`. Apps leave out of their lists a schedule that's
+archived or whose last day off passed 7 days ago or more.
+
 ### `deleted`
 
 Each key in `deleted` is the identifier of a note deleted for good, and each value is a map with
@@ -298,6 +377,12 @@ Readers ignore a tombstone for a note that `notes` still holds.
   and an entry never moves on its own.
 - **Close and reopen.** Set `closed` when `state` becomes `done`, and remove it when `state` becomes
   `open`.
+- **Close an occurrence, not the action.** To close or skip a recurring action's current occurrence,
+  add its entry to `handled` and leave `state` open. To tick a step of a recurring action, add the
+  current occurrence's date to the step's `occurrences`.
+- **Stop recurring with the current dates.** When an owner stops an action recurring, set its `due`
+  and `defer` to its current occurrence's in the commit that removes `recur`.
+- **Archive days off.** Never delete a schedule of days off. Set its `archived` instead.
 - **Preserve what you don't understand.** Never remove or overwrite a key or a root container that
   this spec doesn't define. A later version may define it.
 
@@ -349,6 +434,23 @@ keeps it when it closes, until its owner removes `starred`.
 A date is a calendar day, written `YYYY-MM-DD` as in `2026-10-24`. It has no time of day or time
 zone. An implementation compares dates with the current date where it runs.
 
+## Rules
+
+A rule is an iCalendar `RRULE`, as [Request for Comments (RFC) 5545][rfc5545] defines it, with no
+time parts. It produces dates, counting from a start date that its owner stores beside it. Rules use
+these parts, and readers treat a rule with any other part as one they can't read:
+
+- `FREQ`: `DAILY`, `WEEKLY`, `MONTHLY`, or `YEARLY`.
+- `INTERVAL`, `COUNT`, and `UNTIL`, with `UNTIL` written as eight digits, `YYYYMMDD`.
+- `BYDAY`, with ordinals such as `2MO` or `-1FR` only in monthly and yearly rules.
+- `BYMONTHDAY`, from 1 to 31 or -1 to -31, which counts from the end of the month.
+- `BYMONTH`, `BYSETPOS`, and `WKST`.
+
+A rule produces the dates that RFC 5545 gives, with three differences. The start date counts only if
+the rule produces it. A date that doesn't exist, such as February 30, produces nothing. Days off
+that the rule skips drop out before `BYSETPOS` picks among a period's dates, so the last weekday of
+the month with holidays skipped means the last workday.
+
 ## Timestamps
 
 A timestamp is an integer count of milliseconds since 1970-01-01 00:00:00 Coordinated Universal
@@ -384,3 +486,4 @@ An implementation may shorten a long label for display.
 [commonmark]: https://spec.commonmark.org/
 [gfm]: https://github.github.com/gfm/
 [loro]: https://loro.dev/
+[rfc5545]: https://www.rfc-editor.org/rfc/rfc5545

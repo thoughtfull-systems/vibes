@@ -4,7 +4,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use adw::prelude::*;
-use commonplace_core::{ActionEntry, ActionStatus, ActionView, NoteId};
+use commonplace_core::{ActionEntry, ActionStatus, ActionView, Note, NoteId};
 use gtk::{gdk, gio, glib};
 
 use crate::browse::{Browser, Scope};
@@ -100,6 +100,31 @@ impl Location {
             None => Self::List(listing),
         })
     }
+}
+
+/// The listing that `note` belongs to, with actions in `mode`. `in_trash` says whether it, or a
+/// note it belongs to, is in the trash.
+fn own_listing(note: &Note, in_trash: bool, mode: Mode) -> Listing {
+    if in_trash {
+        Listing::Trash
+    } else if note.action.is_some() {
+        Listing::Actions(mode)
+    } else if note.is_memo() {
+        Listing::Memos
+    } else {
+        Listing::Journals
+    }
+}
+
+/// The listing to open a note under from `from`: `from` if it lists notes like it, and otherwise
+/// `own`, the note's own, so the tabs say what's open.
+fn listing_for(own: Listing, from: Listing) -> Listing {
+    let fits = match (from, own) {
+        (Listing::Actions(_), Listing::Actions(_)) => true,
+        (Listing::AllNotes, own) => own != Listing::Trash,
+        (from, own) => from == own,
+    };
+    if fits { from } else { own }
 }
 
 fn remove_missing_notes(
@@ -238,6 +263,7 @@ impl Window {
         header.pack_start(&back_button);
         header.pack_start(&spaces_bar);
         let menu = gio::Menu::new();
+        menu.append(Some("_Days off"), Some("win.days-off"));
         menu.append(Some("_Libraries"), Some("win.libraries"));
         menu.append(Some("_Sync"), Some("win.sync"));
         header.pack_end(
@@ -351,13 +377,17 @@ impl Window {
         self.window.connect_destroy(move |_| f());
     }
 
-    /// Opens a note in place of the listing it's opened from.
+    /// Opens a note in place of the listing it's opened from, or of its own listing if that one
+    /// doesn't list notes like it.
     pub fn open(&self, id: NoteId) {
-        if self.state.read(|library| library.note(id)).is_none() {
+        let Some(note) = self.state.read(|library| library.note(id)) else {
             self.toast("That note doesn’t exist");
             return;
-        }
-        self.go(Location::Note(id, self.location.get().listing()));
+        };
+        let in_trash = self.state.read(|spaces| spaces.is_in_trash(id));
+        let own = own_listing(&note, in_trash, self.mode());
+        let listing = listing_for(own, self.location.get().listing());
+        self.go(Location::Note(id, listing));
         self.note.focus_editor();
     }
 
@@ -751,15 +781,29 @@ impl Window {
             self,
             move |_, _| libraries::present_dialog(&this.state, &this.window)
         ));
+        let days_off = gio::SimpleAction::new("days-off", None);
+        days_off.connect_activate(glib::clone!(
+            #[weak(rename_to = this)]
+            self,
+            move |_, _| crate::days_off::present(&this.state, &this.window)
+        ));
         let sync = gio::SimpleAction::new("sync", None);
         sync.connect_activate(glib::clone!(
             #[weak(rename_to = this)]
             self,
             move |_, _| this.open_sync(None)
         ));
-        for action in
-            [follow_link, insert_link, libraries, save, search, sync, toggle_checkbox, toggle_space]
-        {
+        for action in [
+            days_off,
+            follow_link,
+            insert_link,
+            libraries,
+            save,
+            search,
+            sync,
+            toggle_checkbox,
+            toggle_space,
+        ] {
             self.window.add_action(&action);
         }
     }
@@ -1105,5 +1149,16 @@ mod tests {
         assert_eq!(destination, None);
         assert_eq!(back, vec![list, current]);
         assert_eq!(forward, vec![list]);
+    }
+
+    #[test]
+    fn a_note_opens_under_its_own_listing_unless_the_current_one_lists_it() {
+        let actions = Listing::Actions(Mode::Plan);
+        assert_eq!(listing_for(Listing::Memos, actions), Listing::Memos);
+        assert_eq!(listing_for(Listing::Actions(Mode::Execute), actions), actions);
+        assert_eq!(listing_for(Listing::Memos, Listing::AllNotes), Listing::AllNotes);
+        assert_eq!(listing_for(Listing::Trash, Listing::AllNotes), Listing::Trash);
+        assert_eq!(listing_for(Listing::Journals, Listing::Memos), Listing::Journals);
+        assert_eq!(listing_for(Listing::Trash, Listing::Trash), Listing::Trash);
     }
 }

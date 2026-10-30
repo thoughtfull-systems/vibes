@@ -9,6 +9,7 @@ mod mobile;
 uniffi::setup_scaffolding!();
 
 mod actions;
+mod days_off;
 mod id;
 mod journals;
 mod label;
@@ -16,6 +17,8 @@ mod library;
 mod links;
 mod lists;
 mod markup;
+mod recur;
+mod recurring;
 pub mod samples;
 mod spaces;
 mod store;
@@ -27,9 +30,10 @@ pub use actions::{
     Action, ActionChange, ActionDates, ActionEntry, ActionList, ActionState, ActionStatus,
     ActionView, Date, Dated, ParseDateError,
 };
+pub use days_off::{DayOffEffect, DaysOff, DaysOffKind, DaysOffUse};
 pub use id::{NoteId, ParseNoteIdError};
 pub use journals::{
-    Answer, COLORS, ChoiceOption, Days, ENTRY_KIND, Entry, Handled, JOURNAL_KIND, Journal, Prompt,
+    Answer, COLORS, ChoiceOption, ENTRY_KIND, Entry, Handled, JOURNAL_KIND, Journal, Prompt,
     Question, QuestionKind, Schedule, Times, format_time, parse_loose_time, parse_time, prompt_key,
 };
 pub use label::{label, relabel};
@@ -42,6 +46,14 @@ pub use lists::{Edit, ListKey, list_edit};
 pub use markup::{
     CodeBlock, Heading, Piece, Span, Style, code_blocks, inline_pieces, outline, spans,
     spans_and_links, toggle_checkbox,
+};
+pub use recur::{
+    DayKind, Ends, Frequency, MONTH_NAMES, MonthlyOn, RepeatForm, Rule, WEEK, WeekdayNum,
+    describe_rule, ordinal_word, repeat_presets,
+};
+pub use recurring::{
+    HandledOccurrence, Missed, MovedOccurrence, Occurrence, OccurrenceNote, OccurrenceState,
+    OccurrenceStatus, Recurrence, RecurrenceSettings, StepOccurrence,
 };
 pub use spaces::Spaces;
 #[cfg(feature = "sync")]
@@ -62,6 +74,8 @@ pub enum Error {
     InvalidInvite(String),
     #[error("{0:?} isn't a relay address")]
     InvalidRelay(String),
+    #[error("the repeat rule isn't one Commonplace can follow")]
+    InvalidRule,
     #[error("a schedule needs times within the day, and a random one needs a window")]
     InvalidSchedule,
     #[error(transparent)]
@@ -88,6 +102,8 @@ pub enum Error {
     NotAnAction(NoteId),
     #[error("note {0} doesn't exist")]
     NotFound(NoteId),
+    #[error("note {0} doesn't repeat")]
+    NotRecurring(NoteId),
     #[error("note {0} isn't in the trash")]
     NotTrashed(NoteId),
     #[error("a question keeps its type; add a new question instead")]
