@@ -102,7 +102,7 @@ in
     };
     license-header = {
       enable = true;
-      excludes = [ "^commonplace/android/vendor/" ];
+      excludes = [ "^commonplace/vendor/" ];
       entry = lib.getExe (
         pkgs.writeShellApplication {
           name = "license-header";

@@ -186,12 +186,12 @@ impl JournalPanel {
                 .title(glib::markup_escape_text(question.prompt.trim()))
                 .subtitle(describe_question(question))
                 .build();
-            let up = icon_button("go-up-symbolic", "Move up");
+            let up = icon_button(icon!("up"), "Move up");
             up.set_sensitive(index > 0);
-            let down = icon_button("go-down-symbolic", "Move down");
+            let down = icon_button(icon!("down"), "Move down");
             down.set_sensitive(index + 1 < current.len());
-            let edit = icon_button("document-edit-symbolic", "Edit");
-            let remove = icon_button("user-trash-symbolic", "Remove");
+            let edit = icon_button(icon!("edit"), "Edit");
+            let remove = icon_button(icon!("trash"), "Remove");
             for button in [&up, &down, &edit, &remove] {
                 row.add_suffix(button);
             }
@@ -243,8 +243,8 @@ impl JournalPanel {
                 .title(describe_days(&schedule.days))
                 .subtitle(describe_times(&schedule.times))
                 .build();
-            let edit = icon_button("document-edit-symbolic", "Edit");
-            let remove = icon_button("user-trash-symbolic", "Remove");
+            let edit = icon_button(icon!("edit"), "Edit");
+            let remove = icon_button(icon!("trash"), "Remove");
             row.add_suffix(&edit);
             row.add_suffix(&remove);
             let editing = schedule.clone();
@@ -527,7 +527,7 @@ impl QuestionEditor {
 
 fn add_option(holder: &gtk::Box, options: &Options, id: Option<String>, label: &str) {
     let entry = gtk::Entry::builder().text(label).placeholder_text("Option").hexpand(true).build();
-    let remove = icon_button("list-remove-symbolic", "Remove option");
+    let remove = icon_button(icon!("remove"), "Remove option");
     let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     row.append(&entry);
     row.append(&remove);

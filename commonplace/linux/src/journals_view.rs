@@ -312,7 +312,7 @@ impl JournalsView {
         let (icon, title, description) = if journals.is_empty() {
             (crate::rows::JOURNAL_ICON, "No journals", "Start one with New journal")
         } else if !query.trim().is_empty() {
-            ("system-search-symbolic", "No entries found", "Try other words or a longer range")
+            (icon!("search"), "No entries found", "Try other words or a longer range")
         } else {
             (crate::rows::JOURNAL_ICON, "No entries", "Write one with commonplace capture journal")
         };

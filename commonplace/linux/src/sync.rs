@@ -225,7 +225,7 @@ pub fn present_dialog(state: &Rc<State>, parent: &impl IsA<gtk::Widget>, invite:
         .css_classes(["property"])
         .build();
     let copy = gtk::Button::builder()
-        .icon_name("edit-copy-symbolic")
+        .icon_name(icon!("copy"))
         .tooltip_text("Copy address")
         .valign(gtk::Align::Center)
         .css_classes(["flat"])

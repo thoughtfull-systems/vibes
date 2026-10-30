@@ -166,15 +166,28 @@ fn plan_tooltip(queued: bool) -> &'static str {
     if queued { "Take out of the planning queue" } else { "Add to the planning queue" }
 }
 
-/// A toggle that stars a note, or takes its star away. Starred notes lead their tabs.
-pub fn star_button(state: &Rc<State>, id: NoteId, starred: bool) -> gtk::ToggleButton {
+/// A toggle that shows a star, filled while it's on.
+pub fn star_toggle() -> gtk::ToggleButton {
     let button = gtk::ToggleButton::builder()
-        .icon_name("starred-symbolic")
-        .active(starred)
+        .icon_name(icon!("starred"))
         .valign(gtk::Align::Center)
-        .tooltip_text(star_tooltip(starred))
         .css_classes(["star"])
         .build();
+    button.connect_active_notify(|button| {
+        button.set_icon_name(if button.is_active() {
+            icon!("starred-filled")
+        } else {
+            icon!("starred")
+        });
+    });
+    button
+}
+
+/// A toggle that stars a note, or takes its star away. Starred notes lead their tabs.
+pub fn star_button(state: &Rc<State>, id: NoteId, starred: bool) -> gtk::ToggleButton {
+    let button = star_toggle();
+    button.set_active(starred);
+    button.set_tooltip_text(Some(star_tooltip(starred)));
     button.connect_toggled(glib::clone!(
         #[strong]
         state,
@@ -339,8 +352,8 @@ fn stamped_note_row(
 }
 
 /// The app's own icons for memos and journals, which the tabs and the note rows share.
-pub const MEMO_ICON: &str = "systems.thoughtfull.Commonplace-memo-symbolic";
-pub const JOURNAL_ICON: &str = "systems.thoughtfull.Commonplace-journal-symbolic";
+pub const MEMO_ICON: &str = icon!("memo");
+pub const JOURNAL_ICON: &str = icon!("journal");
 
 /// The icon that tells a memo, a journal, and an entry apart: the Memos and Journals tabs' icons,
 /// and a dot in an entry's journal's color.

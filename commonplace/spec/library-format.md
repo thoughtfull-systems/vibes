@@ -242,8 +242,9 @@ longer exists, the app opens the Memos tab.
 A note's own `settings` map follows the same rules, for preferences that belong to that note alone
 and go with it when it's deleted. Changing one doesn't change the note's `modified` time. The Linux
 app keeps the height, in pixels, that the owner dragged the panel below the note's text to under
-`linux.bottom.height`, and removes it when the owner fits the panel to what it shows again. Without
-it, the panel fits what it shows.
+`linux.bottom.height`, and the Android app keeps the same height, in density-independent pixels,
+under `android.bottom.height`. Each app removes its key when the owner fits the panel to what it
+shows again. Without it, the panel fits what it shows.
 
 A key without an implementation's prefix belongs to every implementation. Every app keeps whether an
 action's list of steps shows its done steps under `steps.show_done`: 1 to show them, or 0 to hide

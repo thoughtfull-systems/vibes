@@ -102,7 +102,7 @@ pub fn present_dialog(state: &Rc<State>, parent: &impl IsA<gtk::Widget>) {
         )
         .build();
     let add = gtk::Button::builder()
-        .icon_name("list-add-symbolic")
+        .icon_name(icon!("add"))
         .tooltip_text("Add library")
         .css_classes(["flat"])
         .build();
@@ -174,7 +174,7 @@ pub fn present_dialog(state: &Rc<State>, parent: &impl IsA<gtk::Widget>) {
                     menu.append_item(&item);
                 }
                 let button = gtk::MenuButton::builder()
-                    .icon_name("view-more-symbolic")
+                    .icon_name(icon!("more"))
                     .tooltip_text("Library menu")
                     .menu_model(&menu)
                     .valign(gtk::Align::Center)

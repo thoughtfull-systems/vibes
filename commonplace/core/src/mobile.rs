@@ -942,6 +942,10 @@ impl MobileNotebook {
         Ok(self.state()?.spaces.note_setting(id, &key))
     }
 
+    pub fn remove_note_setting(&self, id: NoteId, key: String) -> Result<()> {
+        self.write(|state| state.spaces.remove_note_setting(id, &key))
+    }
+
     pub fn shows_done_steps(&self, id: NoteId) -> Result<bool> {
         Ok(self.state()?.spaces.shows_done_steps(id))
     }

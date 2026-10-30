@@ -9,7 +9,7 @@ plugins {
 val icons = tasks.register<Exec>("generateIcons") {
   commandLine("sh", "$rootDir/build-icons.sh")
   inputs.dir("../../linux/data/icons")
-  inputs.dir("$rootDir/vendor/adwaita")
+  inputs.dir("../../vendor/lucide")
   inputs.file("$rootDir/build-icons.sh")
   outputs.dir(layout.buildDirectory.dir("generated/icons/res"))
 }

@@ -1,5 +1,12 @@
 // SPDX-License-Identifier: MPL-2.0-no-copyleft-exception
 
+/// The name of one of the app's own symbolic icons, which `vendor/lucide` and `data/icons` hold.
+macro_rules! icon {
+    ($name:literal) => {
+        concat!("systems.thoughtfull.Commonplace-", $name, "-symbolic")
+    };
+}
+
 mod action_panel;
 mod answers;
 mod bottom_pane;
@@ -58,6 +65,7 @@ pub fn window_title(part: &str) -> String {
 }
 
 const SOURCE_ICONS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/data/icons");
+const SOURCE_LUCIDE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../vendor/lucide");
 
 const CSS: &str = "
 textview.note-editor, .word-count { font-size: 1.25em; }
@@ -143,7 +151,9 @@ fn main() -> glib::ExitCode {
                 );
                 // A debug build runs from the source tree, where the icon theme doesn't look.
                 if cfg!(debug_assertions) {
-                    gtk::IconTheme::for_display(&display).add_search_path(SOURCE_ICONS);
+                    let theme = gtk::IconTheme::for_display(&display);
+                    theme.add_search_path(SOURCE_ICONS);
+                    theme.add_search_path(SOURCE_LUCIDE);
                 }
             }
             // A copy under another app ID is a test copy, which mustn't touch the everyday library.

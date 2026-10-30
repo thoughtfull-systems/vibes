@@ -30,6 +30,7 @@ Jetpack
 libnotify
 Logseq
 Loro('s)?
+Lucide
 markdownlint
 mdformat
 MIT

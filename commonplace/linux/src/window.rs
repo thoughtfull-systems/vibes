@@ -30,10 +30,10 @@ enum Mode {
 
 // In the order the action mode menu lists them.
 const MODES: [(&str, &str, Mode); 4] = [
-    ("Execute", "media-playback-start-symbolic", Mode::Execute),
-    ("Plan", "document-edit-symbolic", Mode::Plan),
-    ("Review", "view-reveal-symbolic", Mode::Review),
-    ("Inbox", "mail-unread-symbolic", Mode::Inbox),
+    ("Execute", icon!("execute"), Mode::Execute),
+    ("Plan", icon!("edit"), Mode::Plan),
+    ("Review", icon!("review"), Mode::Review),
+    ("Inbox", icon!("inbox"), Mode::Inbox),
 ];
 
 /// A listing the window can show: the memos, the actions in a mode, every note, or the trash.
@@ -198,7 +198,7 @@ impl Window {
         actions_content.set_vexpand(true);
         actions_page.append(&actions_content);
         let actions_results = NoteList::new(state.clone());
-        actions_results.set_empty("system-search-symbolic", "No actions found", "Try other words");
+        actions_results.set_empty(icon!("search"), "No actions found", "Try other words");
         let actions_stack = gtk::Stack::new();
         actions_stack.add_named(&actions_page, Some("list"));
         actions_stack.add_named(&actions_results.widget, Some("results"));
@@ -208,17 +208,17 @@ impl Window {
         // The order of the tabs.
         for (page, name, title, icon) in [
             (memos.widget.upcast_ref::<gtk::Widget>(), "memos", "Memos", crate::rows::MEMO_ICON),
-            (actions_stack.upcast_ref(), "actions", "Actions", "object-select-symbolic"),
+            (actions_stack.upcast_ref(), "actions", "Actions", icon!("actions")),
             (journals.widget.upcast_ref(), "journals", "Journals", crate::rows::JOURNAL_ICON),
-            (all_notes.widget.upcast_ref(), "all", "All notes", "view-list-bullet-symbolic"),
-            (trash.widget.upcast_ref(), "trash", "Trash", "user-trash-symbolic"),
+            (all_notes.widget.upcast_ref(), "all", "All notes", icon!("all-notes")),
+            (trash.widget.upcast_ref(), "trash", "Trash", icon!("trash")),
         ] {
             tabs.add_titled_with_icon(page, Some(name), title, icon);
         }
 
         // Hiding the button would shift the space buttons beside it, so it only fades.
         let back_button = gtk::Button::builder()
-            .icon_name("go-previous-symbolic")
+            .icon_name(icon!("back"))
             .tooltip_text("Back")
             .opacity(0.0)
             .sensitive(false)
@@ -242,7 +242,7 @@ impl Window {
         menu.append(Some("_Sync"), Some("win.sync"));
         header.pack_end(
             &gtk::MenuButton::builder()
-                .icon_name("open-menu-symbolic")
+                .icon_name(icon!("menu"))
                 .tooltip_text("Main menu")
                 .menu_model(&menu)
                 .primary(true)
@@ -836,7 +836,7 @@ impl Window {
         let sections = match self.mode() {
             Mode::Execute => {
                 self.actions.set_empty(
-                    "media-playback-start-symbolic",
+                    icon!("execute"),
                     "Nothing to do next",
                     "Starred actions and tasks on the active list show up here",
                 );
@@ -854,7 +854,7 @@ impl Window {
             }
             Mode::Plan => {
                 self.actions.set_empty(
-                    "document-edit-symbolic",
+                    icon!("edit"),
                     "Nothing to plan",
                     "Actions queued for planning and stalled projects show up here",
                 );
@@ -870,7 +870,7 @@ impl Window {
             Mode::Inbox => unreachable!("the inbox has its own view"),
             Mode::Review => {
                 self.actions.set_empty(
-                    "view-reveal-symbolic",
+                    icon!("review"),
                     "Nothing to review",
                     "Projects, and waiting, scheduled, someday, and maybe actions show up here",
                 );

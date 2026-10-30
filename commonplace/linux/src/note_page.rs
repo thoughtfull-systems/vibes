@@ -15,7 +15,7 @@ use crate::entry_panel::EntryPanel;
 use crate::journal_panel::JournalPanel;
 use crate::libraries;
 use crate::link_picker::{Choice, LinkPicker, Purpose};
-use crate::rows::{display_label, entry, note_row, today};
+use crate::rows::{display_label, entry, note_row, star_toggle, today};
 use crate::state::{Space, State};
 
 const BOTTOM_HEIGHT: &str = "linux.bottom.height";
@@ -155,7 +155,7 @@ impl NotePage {
         note_menu.append(Some("_Copy link"), Some("win.copy-link"));
         note_menu.append(Some("_Move to trash"), Some("win.trash-note"));
         let note_menu_button = gtk::MenuButton::builder()
-            .icon_name("view-more-symbolic")
+            .icon_name(icon!("more"))
             .tooltip_text("Note menu")
             .menu_model(&note_menu)
             .halign(gtk::Align::End)
@@ -190,7 +190,7 @@ impl NotePage {
         let bottom_pane = BottomPane::new(&text_box, &bottom);
         editor_box.append(&bottom_pane.widget);
 
-        let hide_details = flat_button("sidebar-show-right-symbolic", "Hide details");
+        let hide_details = flat_button(icon!("sidebar"), "Hide details");
         let details_bar = gtk::Box::builder().margin_top(6).margin_start(6).margin_end(6).build();
         details_bar.append(&hide_details);
         let details_scrolled = gtk::ScrolledWindow::builder()
@@ -204,7 +204,7 @@ impl NotePage {
             .build();
         details.append(&details_bar);
         details.append(&details_scrolled);
-        let show_details = flat_button("sidebar-show-right-symbolic", "Show details");
+        let show_details = flat_button(icon!("sidebar"), "Show details");
         let details_hidden_bar =
             gtk::Box::builder().valign(gtk::Align::Start).margin_top(6).margin_end(6).build();
         details_hidden_bar.append(&show_details);
@@ -239,12 +239,8 @@ impl NotePage {
         let details_content = gtk::Box::new(gtk::Orientation::Vertical, 6);
         details_content.append(&space_row);
         details_content.append(&action_panel.widget);
-        let memo_star = gtk::ToggleButton::builder()
-            .icon_name("starred-symbolic")
-            .halign(gtk::Align::Start)
-            .valign(gtk::Align::Center)
-            .css_classes(["star"])
-            .build();
+        let memo_star = star_toggle();
+        memo_star.set_halign(gtk::Align::Start);
         let memo_star_label = gtk::Label::builder()
             .label("Starred?")
             .xalign(0.0)

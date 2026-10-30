@@ -290,9 +290,9 @@ impl Browser {
         let order = self.selected_order();
         let newest_first = self.newest_first.is_active();
         let (icon, tooltip) = if newest_first {
-            ("view-sort-descending-symbolic", "Latest first")
+            (icon!("sort-descending"), "Latest first")
         } else {
-            ("view-sort-ascending-symbolic", "Earliest first")
+            (icon!("sort-ascending"), "Earliest first")
         };
         self.newest_first.set_icon_name(icon);
         self.newest_first.set_tooltip_text(Some(tooltip));
@@ -354,25 +354,23 @@ impl Browser {
         let filtered = !query.trim().is_empty() || from.is_some();
         let (icon, title, description) = match (scope, filtered) {
             (Scope::All, false) => {
-                ("document-edit-symbolic", "No notes", "Capture a memo or an action to start")
+                (icon!("edit"), "No notes", "Capture a memo or an action to start")
             }
             (Scope::Memos, false) => {
                 (crate::rows::MEMO_ICON, "No memos", "Capture one with commonplace capture memo")
             }
             (Scope::Trash, false) => {
-                ("user-trash-symbolic", "Trash is empty", "Notes you trash wait here")
+                (icon!("trash"), "Trash is empty", "Notes you trash wait here")
             }
             (Scope::All, true) => {
-                ("system-search-symbolic", "No notes found", "Try other words or another day")
+                (icon!("search"), "No notes found", "Try other words or another day")
             }
             (Scope::Memos, true) => {
-                ("system-search-symbolic", "No memos found", "Try other words or another day")
+                (icon!("search"), "No memos found", "Try other words or another day")
             }
-            (Scope::Trash, true) => (
-                "system-search-symbolic",
-                "Nothing found in the trash",
-                "Try other words or another day",
-            ),
+            (Scope::Trash, true) => {
+                (icon!("search"), "Nothing found in the trash", "Try other words or another day")
+            }
         };
         self.list.set_empty(icon, title, description);
         let others_title = match (starred.is_empty(), scope) {

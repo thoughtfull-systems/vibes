@@ -3,6 +3,7 @@
 set -eu
 android_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 linux_icons=$android_dir/../linux/data/icons/hicolor
+lucide=$android_dir/../vendor/lucide
 output=$android_dir/app/build/generated/icons/res
 for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
   case "$density" in
@@ -15,11 +16,12 @@ for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
   drawables=$output/drawable-$density
   mipmaps=$output/mipmap-$density
   mkdir -p "$drawables" "$mipmaps"
-  for icon in actions add all_notes back bold bullets clear_search code down drag dropdown \
-    edit execute inbox indent italic link more numbers outdent plan review search sort_ascending \
-    sort_descending starred strike trash up; do
-    rsvg-convert --width "$size" --height "$size" \
-      --output "$drawables/$icon.png" "$android_dir/vendor/adwaita/$icon.svg"
+  for icon in actions add all_notes back bold bullets checklist clear_search code down drag \
+    dropdown edit execute heading_one heading_two highlight inbox indent italic link more numbers \
+    outdent pin plan quote review search sort_ascending sort_descending starred starred_filled \
+    strike trash up; do
+    rsvg-convert --width "$size" --height "$size" --output "$drawables/$icon.png" \
+      "$lucide/systems.thoughtfull.Commonplace-$(echo "$icon" | tr _ -)-symbolic.svg"
   done
   for icon in journal memo; do
     rsvg-convert --width "$size" --height "$size" --output "$drawables/$icon.png" \

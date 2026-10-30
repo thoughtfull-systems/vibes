@@ -36,6 +36,25 @@ class EditorTest {
 
 class MarkdownPresentationTest {
   @Test
+  fun headingsTakeTheLinuxColorForTheirLevel() {
+    val colors = MarkdownColors()
+    val body = "# One\n#### Four\n###### Six"
+    val spans = listOf(0 to 5, 6 to 15, 16 to 26).mapIndexed { index, (start, end) ->
+      systems.thoughtfull.commonplace.core.MobileSpan(
+        end.toUInt(),
+        start.toUInt(),
+        systems.thoughtfull.commonplace.core.Style.Heading(listOf(1, 4, 6)[index].toUByte()),
+        emptyList()
+      )
+    }
+    val styles = markdownPresentation(body, spans, TextRange(0)).text.spanStyles
+    assertEquals(
+      listOf(colors.headings[0], colors.headings[3], colors.headings[3]),
+      styles.map { it.item.color }
+    )
+  }
+
+  @Test
   fun hiddenLinkTargetsOccupyNoSpaceAndKeepCursorOffsets() {
     val body = "🦀 [café](https://example.com/a/long/address) end"
     val start = body.indexOf('[')

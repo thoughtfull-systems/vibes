@@ -6,6 +6,7 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
@@ -13,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
@@ -22,6 +24,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -29,6 +32,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.FocusRequester
@@ -77,20 +81,29 @@ import systems.thoughtfull.commonplace.core.toggleCheckbox
 
 internal data class MarkdownColors(
   val code: Color = Color(0xFFF0F0F0),
+  val headings: List<Color> = LIGHT_HEADINGS,
   val highlight: Color = Color(0x70F5D42E),
   val link: Color = Color(0xFF3584E4),
   val muted: Color = Color(0xFF777777)
 )
 
+// Match heading_color in linux/src/editor.rs.
+private val LIGHT_HEADINGS =
+  listOf(Color(0xFF813D9C), Color(0xFF1A5FB4), Color(0xFF26A269), Color(0xFFC64600))
+private val DARK_HEADINGS =
+  listOf(Color(0xFFDC8ADD), Color(0xFF99C1F1), Color(0xFF8FF0A4), Color(0xFFFFBE6F))
+
 @Composable
 private fun markdownColors() = MarkdownColors(
   code = MaterialTheme.colorScheme.surfaceContainer,
+  headings = if (isSystemInDarkTheme()) DARK_HEADINGS else LIGHT_HEADINGS,
   link = MaterialTheme.colorScheme.primary,
   muted = MaterialTheme.colorScheme.onSurfaceVariant
 )
 
 private fun Style.appearance(colors: MarkdownColors): SpanStyle = when (this) {
   is Style.Heading -> SpanStyle(
+    color = colors.headings[v1.toInt().coerceIn(1, colors.headings.size) - 1],
     fontSize = (28 - v1.toInt() * 2).coerceAtLeast(18).sp,
     fontWeight = FontWeight.Bold
   )
@@ -453,33 +466,39 @@ internal fun EditorToolbar(
   ) {
     Row(Modifier.fillMaxWidth().height(48.dp).testTag("editor-toolbar")) {
       if (enabled) {
-        // Indentation leads the row so list editing doesn't require scrolling.
-        Row(Modifier.weight(1f).horizontalScroll(rememberScrollState())) {
+        // Indentation leads the row so list editing doesn't require scrolling. The inline and line
+        // styles follow the order of Obsidian's mobile toolbar.
+        Row(
+          Modifier.weight(1f).horizontalScroll(rememberScrollState()),
+          verticalAlignment = Alignment.CenterVertically
+        ) {
           IconButton(enabled = outdent != null, onClick = { outdent?.let(changed) }) {
             AppIcon(R.drawable.outdent, "Outdent")
           }
           IconButton(enabled = indent != null, onClick = { indent?.let(changed) }) {
             AppIcon(R.drawable.indent, "Indent")
           }
-          IconButton(onClick = link) { AppIcon(R.drawable.link, "Link") }
+          ToolbarSeparator()
           listOf(
             Triple("Bold", "**", R.drawable.bold),
             Triple("Italic", "*", R.drawable.italic),
-            Triple("Code", "`", R.drawable.code),
+            Triple("Strike", "~~", R.drawable.strike),
             Triple("Highlight", "==", R.drawable.highlight),
-            Triple("Strike", "~~", R.drawable.strike)
+            Triple("Code", "`", R.drawable.code)
           ).forEach { (label, delimiter, icon) ->
             IconButton(onClick = { changed(wrapSelection(value, delimiter)) }) {
               AppIcon(icon, label)
             }
           }
+          IconButton(onClick = link) { AppIcon(R.drawable.link, "Link") }
+          ToolbarSeparator()
           listOf(
             Triple("Heading 1", "# ", R.drawable.heading_one),
             Triple("Heading 2", "## ", R.drawable.heading_two),
-            Triple("Quote", "> ", R.drawable.quote),
             Triple("Bullets", "- ", R.drawable.bullets),
             Triple("Numbers", "1. ", R.drawable.numbers),
-            Triple("Checklist", "- [ ] ", R.drawable.checklist)
+            Triple("Checklist", "- [ ] ", R.drawable.checklist),
+            Triple("Quote", "> ", R.drawable.quote)
           ).forEach { (label, prefix, icon) ->
             IconButton(onClick = { changed(prefixSelection(value, prefix)) }) {
               AppIcon(icon, label)
@@ -489,4 +508,9 @@ internal fun EditorToolbar(
       }
     }
   }
+}
+
+@Composable
+private fun ToolbarSeparator() {
+  VerticalDivider(Modifier.height(22.dp).padding(horizontal = 2.dp))
 }

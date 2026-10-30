@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -167,13 +168,16 @@ internal fun BrowseScreen(
   }
   Surface(color = MaterialTheme.colorScheme.surfaceContainerLow) {
     FlowRow(
-      Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)
-        .testTag("browse-controls"),
+      Modifier.fillMaxWidth().padding(horizontal = 8.dp).testTag("browse-controls"),
       horizontalArrangement = Arrangement.spacedBy(4.dp),
       verticalArrangement = Arrangement.spacedBy(0.dp)
     ) {
       Row(verticalAlignment = Alignment.CenterVertically) {
-        Text("Order by", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(
+          "Order by",
+          Modifier.padding(end = 4.dp),
+          color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
         MenuControl(
           order,
           orders,
@@ -183,7 +187,7 @@ internal fun BrowseScreen(
         ) { order = it }
         IconButton(
           onClick = { ascending = !ascending },
-          modifier = Modifier.testTag("sort-direction")
+          modifier = Modifier.size(40.dp).testTag("sort-direction")
         ) {
           AppIcon(
             if (ascending) R.drawable.sort_ascending else R.drawable.sort_descending,

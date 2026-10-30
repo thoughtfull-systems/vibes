@@ -18,7 +18,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
@@ -78,7 +77,8 @@ internal fun NoteScreen(
   model: NotebookModel,
   id: String,
   back: () -> Unit,
-  open: (String) -> Unit
+  open: (String) -> Unit,
+  tabs: @Composable () -> Unit = {}
 ) {
   val state by model.state.collectAsState()
   val scope = rememberCoroutineScope()
@@ -99,6 +99,7 @@ internal fun NoteScreen(
   var deleting by remember { mutableStateOf(false) }
   var moving by remember { mutableStateOf<String?>(null) }
   var details by rememberSaveable(id) { mutableStateOf(false) }
+  var parentPicker by rememberSaveable(id) { mutableStateOf(false) }
   var menu by remember { mutableStateOf(false) }
   var editorActive by remember { mutableStateOf(false) }
   LaunchedEffect(id, state.revision) {
@@ -186,6 +187,7 @@ internal fun NoteScreen(
             style = MaterialTheme.typography.titleMedium
           )
         },
+        expandedHeight = BAR_HEIGHT,
         navigationIcon = {
           IconButton(onClick = ::leave) { AppIcon(R.drawable.back, "Back") }
         },
@@ -231,6 +233,8 @@ internal fun NoteScreen(
           linkStart = null
           picker = true
         }
+      } else if (!keyboardVisible) {
+        tabs()
       }
     }
   ) { padding ->
@@ -260,8 +264,10 @@ internal fun NoteScreen(
           }
         }
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
-          val panelLimit = maxHeight * 0.4f
-          Column(Modifier.fillMaxSize()) {
+          val automaticLimit = maxHeight * 0.4f
+          val panelLimit = maxHeight - 120.dp
+          val divider = remember(id) { PanelDivider() }
+          Column(Modifier.fillMaxSize().panelDividerDrag(divider)) {
             MarkdownEditor(
               value,
               editable,
@@ -292,10 +298,20 @@ internal fun NoteScreen(
                 current,
                 backlinks,
                 open,
-                Modifier.fillMaxWidth().heightIn(max = panelLimit)
+                automaticLimit,
+                panelLimit,
+                {
+                  focusManager.clearFocus()
+                  keyboard?.hide()
+                  editorActive = false
+                  parentPicker = true
+                },
+                Modifier.fillMaxWidth(),
+                divider
               )
             }
           }
+          PanelUnpin(divider)
         }
       }
     }
@@ -396,6 +412,9 @@ internal fun NoteScreen(
         }
       }
     }, pick = ::insertLink)
+  }
+  if (parentPicker && current != null) {
+    MoveActionPicker(model, current, state.notes) { parentPicker = false }
   }
   if (deleting) {
     ConfirmDialog(
