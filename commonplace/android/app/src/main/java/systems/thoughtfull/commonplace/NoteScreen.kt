@@ -579,12 +579,12 @@ internal fun ActionDetails(model: NotebookModel, note: MobileNote, open: (String
     } else {
       val settings = recur.settings
       ActionField("Starts", "detail-starts") {
-        OffsetRow(note.id, settings.defer, -1, "days before") {
+        OffsetRow(note.id, settings.defer, -1, "days before", optional = false) {
           updateRecurrence { settings -> settings.copy(defer = it) }
         }
       }
       ActionField("Due", "detail-due") {
-        OffsetRow(note.id, settings.due, 1, "days after") {
+        OffsetRow(note.id, settings.due, 1, "days after", optional = true) {
           updateRecurrence { settings -> settings.copy(due = it) }
         }
       }
@@ -723,7 +723,7 @@ internal fun newSettings(action: Action, rule: Rule): RecurrenceSettings {
 
     action.defer != null -> null to 0
 
-    else -> 0 to null
+    else -> 0 to 0
   }
   return RecurrenceSettings(
     rule,

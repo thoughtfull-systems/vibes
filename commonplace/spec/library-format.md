@@ -127,7 +127,8 @@ read.
 | `moved`     | Map     | The date each occurrence its owner moved now falls on, by its date.     |
 | `notes`     | Map     | The identifier of a note written for an occurrence, by its date.        |
 
-Without `due` or `defer`, occurrences have no due or start date. Without `holidays` or `vacations`,
+Without `due`, occurrences have no due date. Without `defer`, each occurrence starts on its date, so
+an action never shows before its current occurrence's date. Without `holidays` or `vacations`,
 occurrences ignore those days off. With `skip`, the rule drops a day off before `BYSETPOS` picks
 among a period's dates. With `move`, an occurrence on a day off falls on the next day that isn't a
 day off of a kind the action skips or moves past. An occurrence its owner moved falls on the date in
@@ -141,8 +142,8 @@ occurrences before the latest handled occurrence count as missed. After that:
 
 - **`all`:** the current occurrence is the first unhandled one, and later ones that have fallen due
   wait behind it.
-- **`latest`:** the current occurrence is the latest unhandled one whose start date, or date without
-  one, has come, or else the first unhandled one. Earlier ones count as missed.
+- **`latest`:** the current occurrence is the latest unhandled one whose start date has come, or
+  else the first unhandled one. Earlier ones count as missed.
 - **`after`:** the rule counts again from the `day` of the latest handled occurrence, and the
   current occurrence is its first date after that day. Without a handled occurrence, it's the rule's
   first date. A `COUNT` counts handled occurrences.

@@ -67,7 +67,8 @@ format adds them.
   change which days a rule produces. Journals, and later a calendar, evaluate their rules with the
   same evaluator as recurring actions, exclusions included.
 - **Occurrence dates.** Each occurrence has a date, and the rule gives the action's due and start
-  dates as offsets in days from it. Either offset can be absent, so an action can be due on the
+  dates as offsets in days from it. The due offset can be absent, and without a start offset an
+  occurrence starts on its date, so an action never shows before it. An action can be due on the
   date, start on it with no deadline, or start three days before it's due. One rule drives both
   dates, so they can't drift apart. While an action recurs, its occurrence's dates replace its own
   `due` and `defer`.

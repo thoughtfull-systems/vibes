@@ -115,21 +115,22 @@ pub struct RecurrenceSettings {
     pub missed: Missed,
     /// The due date's offset in days from each occurrence's date, if occurrences have one.
     pub due: Option<i32>,
-    /// The start date's offset in days from each occurrence's date, if occurrences have one.
+    /// The start date's offset in days from each occurrence's date. Without one, each occurrence
+    /// starts on its date, so it never shows before its date.
     pub defer: Option<i32>,
     pub days_off: DaysOffUse,
 }
 
 impl RecurrenceSettings {
-    /// Settings for `rule` from `start`, due on each occurrence's date, keeping only the latest
-    /// missed occurrence, and ignoring days off.
+    /// Settings for `rule` from `start`, starting and due on each occurrence's date, keeping only
+    /// the latest missed occurrence, and ignoring days off.
     pub fn new(rule: Rule, start: Date) -> Self {
         Self {
             rule,
             start,
             missed: Missed::default(),
             due: Some(0),
-            defer: None,
+            defer: Some(0),
             days_off: DaysOffUse::default(),
         }
     }
@@ -309,7 +310,7 @@ impl<'a> Occurrences<'a> {
         Occurrence {
             date,
             on,
-            defer: settings.defer.map(|days| on.add_days(days)),
+            defer: Some(on.add_days(settings.defer.unwrap_or(0))),
             due: settings.due.map(|days| on.add_days(days)),
             status,
             handled,
@@ -1073,5 +1074,22 @@ mod tests {
         let notes = library.notes_on(vec![raw.clone(), raw], today);
         assert_eq!(notes.len(), 2);
         assert!(notes.iter().all(|note| note.action.as_ref().unwrap().state == ActionState::Done));
+    }
+
+    #[test]
+    fn occurrences_wait_for_their_date_without_a_start_offset() {
+        let mut library = Library::in_memory();
+        let id = library.create_task("Weekly review", None).unwrap();
+        let mut settings = RecurrenceSettings::new(
+            Rule::parse("FREQ=WEEKLY;BYDAY=MO").unwrap(),
+            date("2026-10-05"),
+        );
+        settings.defer = None;
+        library.set_recurrence(id, Some(settings), date("2026-10-05")).unwrap();
+        library.check_action(id, true, date("2026-10-05")).unwrap();
+        let next = library.current_occurrence(id, date("2026-10-06")).unwrap();
+        assert_eq!(next.defer, Some(date("2026-10-12")));
+        let scheduled = library.action_view(ActionView::Scheduled, date("2026-10-06"));
+        assert!(scheduled.iter().any(|entry| entry.note.id == id));
     }
 }
