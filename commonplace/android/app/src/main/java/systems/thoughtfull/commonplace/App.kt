@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -21,7 +22,6 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -143,46 +143,29 @@ fun CommonplaceApp(model: NotebookModel, incoming: Intent?, consumed: () -> Unit
     if (capture != null) capture = null else goBack()
   }
 
+  val tabs = @Composable {
+    TabBar(tab) {
+      focusManager.clearFocus()
+      keyboard?.hide()
+      if (selected != null) model.refresh()
+      navigation = navigation.go(Location(it))
+    }
+  }
   if (selected != null) {
     screens.SaveableStateProvider("note:$selected") {
-      NoteScreen(model, selected, ::goBack, open)
+      NoteScreen(model, selected, ::goBack, open, tabs)
     }
   } else {
     Scaffold(
       modifier = Modifier.imePadding(),
       topBar = {
-        TopAppBar(title = { Text(tab) }, actions = {
+        TopAppBar(title = { Text(tab) }, expandedHeight = BAR_HEIGHT, actions = {
           TextButton(onClick = { syncing = true }) { Text("Sync") }
           TextButton(onClick = { libraries = true }) { Text("Libraries") }
         })
       },
       bottomBar = {
-        if (!inboxEditing) {
-          NavigationBar {
-            destinations.forEach { destination ->
-              NavigationBarItem(
-                icon = {
-                  AppIcon(
-                    when (destination) {
-                      "Actions" -> R.drawable.actions
-                      "All notes" -> R.drawable.all_notes
-                      "Journals" -> R.drawable.journal
-                      "Trash" -> R.drawable.trash
-                      else -> R.drawable.memo
-                    }
-                  )
-                },
-                label = { Text(destination, maxLines = 1) },
-                onClick = {
-                  focusManager.clearFocus()
-                  keyboard?.hide()
-                  navigation = navigation.go(Location(destination))
-                },
-                selected = tab == destination
-              )
-            }
-          }
-        }
+        if (!inboxEditing) tabs()
       }
     ) { padding ->
       Column(Modifier.padding(padding).fillMaxSize()) {
@@ -201,19 +184,20 @@ fun CommonplaceApp(model: NotebookModel, incoming: Intent?, consumed: () -> Unit
           }
         }
         if (!inboxEditing) {
-          OutlinedTextField(
-            value = query,
-            onValueChange = { query = it },
-            placeholder = { Text("Search notes") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)
+          CompactTextField(
+            query,
+            { query = it },
+            "Search notes",
+            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)
               .testTag("search"),
-            trailingIcon = {
-              if (query.isNotEmpty()) {
-                IconButton(onClick = { query = "" }) {
+            trailingIcon = if (query.isNotEmpty()) {
+              {
+                IconButton(onClick = { query = "" }, Modifier.size(40.dp)) {
                   AppIcon(R.drawable.clear_search, "Clear search")
                 }
               }
+            } else {
+              null
             }
           )
         }
@@ -247,6 +231,32 @@ fun CommonplaceApp(model: NotebookModel, incoming: Intent?, consumed: () -> Unit
       text = { Text(error) },
       title = { Text("Commonplace couldn't save or load") }
     )
+  }
+}
+
+internal val BAR_HEIGHT = 48.dp
+
+@Composable
+internal fun TabBar(tab: String, select: (String) -> Unit) {
+  NavigationBar {
+    destinations.forEach { destination ->
+      NavigationBarItem(
+        icon = {
+          AppIcon(
+            when (destination) {
+              "Actions" -> R.drawable.actions
+              "All notes" -> R.drawable.all_notes
+              "Journals" -> R.drawable.journal
+              "Trash" -> R.drawable.trash
+              else -> R.drawable.memo
+            }
+          )
+        },
+        label = { Text(destination, maxLines = 1) },
+        onClick = { select(destination) },
+        selected = tab == destination
+      )
+    }
   }
 }
 

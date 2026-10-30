@@ -81,7 +81,18 @@ class RefinementsTest {
         density = LocalDensity.current.density
         val state by model.state.collectAsState()
         state.notes.find { it.id == parent }?.let { note ->
-          Column { NoteBottomPanel(model, note, emptyList(), {}, Modifier.height(560.dp)) }
+          Column {
+            NoteBottomPanel(
+              model,
+              note,
+              emptyList(),
+              {},
+              560.dp,
+              560.dp,
+              {},
+              Modifier.height(560.dp)
+            )
+          }
         }
       }
     }
@@ -93,7 +104,11 @@ class RefinementsTest {
         "step-drag-$source"
       ).fetchSemanticsNode().boundsInRoot.center
       val root = compose.onRoot()
-      root.performTouchInput { down(start) }
+      root.performTouchInput {
+        down(start)
+        advanceEventTime(viewConfiguration.longPressTimeoutMillis + 100)
+        moveBy(Offset(0f, 1f))
+      }
       root.performTouchInput { moveTo(destination, delayMillis = 100) }
       compose.waitForIdle()
       val image = InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()!!
@@ -142,7 +157,18 @@ class RefinementsTest {
       CommonplaceTheme {
         val state by model.state.collectAsState()
         state.notes.find { it.id == parent }?.let { note ->
-          Column { NoteBottomPanel(model, note, emptyList(), {}, Modifier.height(560.dp)) }
+          Column {
+            NoteBottomPanel(
+              model,
+              note,
+              emptyList(),
+              {},
+              560.dp,
+              560.dp,
+              {},
+              Modifier.height(560.dp)
+            )
+          }
         }
       }
     }

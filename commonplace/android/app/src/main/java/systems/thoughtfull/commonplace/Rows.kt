@@ -72,9 +72,9 @@ internal fun StarButton(starred: Boolean, onClick: () -> Unit) {
     if (starred) {
       // Adwaita's yellow_4, the color the Linux app gives a star.
       Icon(
-        painterResource(R.drawable.starred),
+        painterResource(R.drawable.starred_filled),
         "Remove the star",
-        Modifier.size(24.dp),
+        Modifier.size(20.dp),
         tint = Color(0xFFF5C211)
       )
     } else {
@@ -88,7 +88,7 @@ internal fun StarButton(starred: Boolean, onClick: () -> Unit) {
 internal fun SectionHeading(title: String) {
   Text(
     title,
-    Modifier.fillMaxWidth().padding(start = 16.dp, top = 16.dp, bottom = 4.dp),
+    Modifier.fillMaxWidth().padding(start = 16.dp, top = 8.dp, bottom = 2.dp),
     color = MaterialTheme.colorScheme.onSurfaceVariant,
     style = MaterialTheme.typography.titleSmall
   )
@@ -267,7 +267,7 @@ internal fun NoteRow(
       .combinedClickable(onLongClick = longPress) { open(note.id) }
       .alpha(if (dimmed) 0.55f else 1f)
       .padding(start = if (leading != null) 4.dp else 12.dp, end = 16.dp)
-      .padding(vertical = 12.dp),
+      .padding(vertical = 6.dp),
     verticalAlignment = Alignment.CenterVertically
   ) {
     if (leading != null) {

@@ -1,11 +1,7 @@
 <!-- SPDX-License-Identifier: MPL-2.0-no-copyleft-exception -->
-<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
-  <path d="M6 1a2 2 0 0 0 -2 2v10a2 2 0 0 0 2 2h7a2 2 0 0 0 2 -2v-10a2 2 0 0 0 -2 -2z
-           M6.25 2.5h6.5a.75 .75 0 0 1 .75 .75v9.5a.75 .75 0 0 1 -.75 .75h-6.5
-           a.75 .75 0 0 1 -.75 -.75v-9.5a.75 .75 0 0 1 .75 -.75z" fill="#222" fill-rule="evenodd"/>
-  <rect x="1.5" y="3.5" width="5" height="1.5" rx=".75" fill="#222"/>
-  <rect x="1.5" y="7.25" width="5" height="1.5" rx=".75" fill="#222"/>
-  <rect x="1.5" y="11" width="5" height="1.5" rx=".75" fill="#222"/>
-  <rect x="8" y="5" width="4" height="1.5" rx=".75" fill="#222"/>
-  <rect x="8" y="8" width="4" height="1.5" rx=".75" fill="#222"/>
+<!-- GTK fills a shape without the foreground-stroke class instead of recoloring its line. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+  stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <rect class="transparent-fill foreground-stroke" x="6" y="2" width="15" height="20" rx="2" />
+  <path class="transparent-fill foreground-stroke" d="M3 7h5M3 12h5M3 17h5M11 8h6M11 12h6" />
 </svg>

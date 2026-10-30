@@ -102,7 +102,7 @@ impl InboxView {
             .popover(&waiting_popover)
             .build();
 
-        let empty = adw::StatusPage::builder().icon_name("mail-unread-symbolic").build();
+        let empty = adw::StatusPage::builder().icon_name(icon!("inbox")).build();
         let start_over = gtk::Button::builder()
             .label("_Start over")
             .use_underline(true)

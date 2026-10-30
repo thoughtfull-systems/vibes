@@ -13,6 +13,7 @@
 let
   desktopEntry = "linux/data/systems.thoughtfull.Commonplace.desktop";
   icons = "linux/data/icons";
+  lucide = "vendor/lucide";
   workspace = ../.;
 in
 rustPlatform.buildRustPackage {
@@ -62,6 +63,7 @@ rustPlatform.buildRustPackage {
   postInstall = lib.concatLines [
     "install -Dm644 ${desktopEntry} -t $out/share/applications"
     "cp -r ${icons} $out/share"
+    "install -Dm644 ${lucide}/*.svg -t $out/share/icons/hicolor/symbolic/apps"
   ];
 
   src = lib.fileset.toSource {
@@ -74,6 +76,7 @@ rustPlatform.buildRustPackage {
       (workspace + "/linux/Cargo.toml")
       (workspace + "/linux/data")
       (workspace + "/linux/src")
+      (workspace + "/vendor/lucide")
       # keep-sorted end
     ];
   };

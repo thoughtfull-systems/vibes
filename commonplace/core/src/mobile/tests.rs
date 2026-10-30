@@ -246,6 +246,21 @@ fn archived_actions_keep_their_inherited_dates() {
 }
 
 #[test]
+fn a_dragged_panel_height_stays_with_the_note_until_unpinned() {
+    let dir = tempfile::tempdir().unwrap();
+    let mobile = MobileNotebook::open(dir.path().to_string_lossy().into()).unwrap();
+    let space = mobile.spaces().unwrap().remove(0).key;
+    let note = mobile.create_action(space, "Project".into()).unwrap();
+    let modified = mobile.note(note).unwrap().unwrap().modified;
+    let key = "android.bottom.height".to_owned();
+    mobile.set_note_setting(note, key.clone(), 240).unwrap();
+    assert_eq!(mobile.note_setting(note, key.clone()).unwrap(), Some(240));
+    assert_eq!(mobile.note(note).unwrap().unwrap().modified, modified);
+    mobile.remove_note_setting(note, key.clone()).unwrap();
+    assert_eq!(mobile.note_setting(note, key).unwrap(), None);
+}
+
+#[test]
 fn phone_dragging_reorders_and_nests_whole_subtrees() {
     let dir = tempfile::tempdir().unwrap();
     let mobile = MobileNotebook::open(dir.path().to_string_lossy().into()).unwrap();

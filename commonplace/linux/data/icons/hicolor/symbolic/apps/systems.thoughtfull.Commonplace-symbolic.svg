@@ -1,6 +1,8 @@
 <!-- SPDX-License-Identifier: MPL-2.0-no-copyleft-exception -->
-<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
-  <path d="M3 1a2 2 0 0 0 -2 2v10a2 2 0 0 0 2 2h8a2 2 0 0 0 2 -2v-10a2 2 0 0 0 -2 -2z
-           M4 1v14h1v-14zM7 4v2h4v-2z" fill="#222" fill-rule="evenodd"/>
-  <path d="M14 3h1v3h-1zM14 8h1v3h-1z" fill="#222"/>
+<!-- GTK fills a shape without the foreground-stroke class instead of recoloring its line. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+  stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <rect class="transparent-fill foreground-stroke" x="2" y="2" width="17" height="20" rx="2" />
+  <path class="transparent-fill foreground-stroke" d="M7 2v20M22 5v4M22 13v4" />
+  <rect class="transparent-fill foreground-stroke" x="10" y="6" width="6" height="3" rx="1" />
 </svg>

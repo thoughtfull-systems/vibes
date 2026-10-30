@@ -15,7 +15,7 @@ use crate::libraries;
 use crate::link_picker::{Choice, LinkPicker, Purpose};
 use crate::rows::{
     STEP_CHECK_COLUMN, STEP_MENU_COLUMN, STEP_TITLE_COLUMN, connect_day_clicked, format_date,
-    parent_labels, step_row, today,
+    parent_labels, star_toggle, step_row, today,
 };
 use crate::state::State;
 
@@ -302,12 +302,8 @@ impl ActionPanel {
         };
         let waiting_label = labelled("Waiting for", waiting_for.upcast_ref());
         let fields = gtk::Grid::builder().column_spacing(12).row_spacing(6).build();
-        let star = gtk::ToggleButton::builder()
-            .icon_name("starred-symbolic")
-            .halign(gtk::Align::Start)
-            .valign(gtk::Align::Center)
-            .css_classes(["star"])
-            .build();
+        let star = star_toggle();
+        star.set_halign(gtk::Align::Start);
         fields.attach(&labelled("Starred?", star.upcast_ref()), 0, -2, 1, 1);
         fields.attach(&star, 1, -2, 1, 1);
         fields.attach(&labelled("Done?", done.upcast_ref()), 0, -1, 1, 1);
@@ -689,7 +685,7 @@ impl ActionPanel {
     fn step_row(self: &Rc<Self>, step: &ActionEntry, editable: bool) -> gtk::Box {
         let id = step.note.id;
         let handle = gtk::Image::builder()
-            .icon_name("list-drag-handle-symbolic")
+            .icon_name(icon!("drag"))
             .tooltip_text("Drag to move")
             .cursor(&gdk::Cursor::from_name("grab", None).expect("grab is a standard cursor"))
             .visible(editable)
@@ -720,7 +716,7 @@ impl ActionPanel {
             }
         }
         let menu_button = gtk::MenuButton::builder()
-            .icon_name("view-more-symbolic")
+            .icon_name(icon!("more"))
             .tooltip_text("Step menu")
             .menu_model(&menu)
             .css_classes(["flat"])

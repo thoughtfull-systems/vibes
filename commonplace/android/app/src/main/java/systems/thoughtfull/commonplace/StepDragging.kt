@@ -7,7 +7,9 @@ import android.content.ClipboardManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -156,17 +158,12 @@ internal fun StepRows(
       withFrameNanos { }
     }
   }
-  if (editable && steps.isNotEmpty()) {
-    Text(
-      "Drag a handle to reorder; drop on a title to nest.",
-      Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-      style = MaterialTheme.typography.labelSmall,
-      color = MaterialTheme.colorScheme.onSurfaceVariant
-    )
-  }
   fun handle(id: String) = Modifier.onGloballyPositioned { handles[id] = it.positionInRoot() }
+    // The row's own press opens the step, and its long press edits the title, which would fire
+    // with the hold that starts a drag here.
+    .pointerInput(id) { awaitEachGesture { awaitFirstDown().consume() } }
     .pointerInput(id) {
-      detectDragGestures(
+      detectDragGesturesAfterLongPress(
         onDragStart = { at ->
           dragged = id
           pointer = (handles[id] ?: Offset.Zero) + at
