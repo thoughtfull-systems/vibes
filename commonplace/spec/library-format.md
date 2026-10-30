@@ -324,11 +324,14 @@ map value keyed by an identifier in the form of a note identifier.
 
 Without `rule`, the schedule is one span, from `first` to `last`. With one, each date the rule
 produces starts a span as long as the one from `first` to `last`. Readers skip a schedule whose
-`first` or `rule` they can't read, and treat a `last` before `first` as absent.
+`first` they can't read, and treat a `last` before `first` as absent. A reader that can't read a
+schedule's `rule` treats it as the first span alone, still lists it, and keeps the `rule` when it
+writes the schedule.
 
 Days off shape past dates as well as future ones, so writers never delete a schedule. Archiving it
-keeps it applying to the days before `archived`. Apps leave out of their lists a schedule that's
-archived or whose last day off passed 7 days ago or more.
+keeps it applying to the days before `archived`, which apps set to the day after the owner archives
+it, so it still covers that day. Apps leave out of their lists a schedule that's archived or whose
+last day off passed 7 days ago or more.
 
 ### `deleted`
 
@@ -380,8 +383,12 @@ Readers ignore a tombstone for a note that `notes` still holds.
 - **Close an occurrence, not the action.** To close or skip a recurring action's current occurrence,
   add its entry to `handled` and leave `state` open. To tick a step of a recurring action, add the
   current occurrence's date to the step's `occurrences`.
-- **Stop recurring with the current dates.** When an owner stops an action recurring, set its `due`
-  and `defer` to its current occurrence's in the commit that removes `recur`.
+- **Make maps before their first entry.** Make an action's `occurrences` map when you make the
+  action, and the `handled`, `moved`, and `notes` maps when you make `recur`. Two devices that each
+  made one for their first entry would each make a container under the same key, and sync would keep
+  only one, losing the other's entries.- **Stop recurring with the current dates.** When an owner
+  stops an action recurring, set its `due` and `defer` to its current occurrence's in the commit
+  that removes `recur`.
 - **Archive days off.** Never delete a schedule of days off. Set its `archived` instead.
 - **Preserve what you don't understand.** Never remove or overwrite a key or a root container that
   this spec doesn't define. A later version may define it.
@@ -449,7 +456,8 @@ these parts, and readers treat a rule with any other part as one they can't read
 A rule produces the dates that RFC 5545 gives, with three differences. The start date counts only if
 the rule produces it. A date that doesn't exist, such as February 30, produces nothing. Days off
 that the rule skips drop out before `BYSETPOS` picks among a period's dates, so the last weekday of
-the month with holidays skipped means the last workday.
+the month with holidays skipped means the last workday. Skipped days still count toward `COUNT`, as
+excluded dates do in RFC 5545, so the rule ends on the same date whatever the days off.
 
 ## Timestamps
 

@@ -150,13 +150,27 @@ impl Rule {
     }
 
     /// The dates the rule produces on or after `from`, counting from `start`, without the days for
-    /// which `skip` is true. Skipped days drop out before `positions` picks among a period's dates.
+    /// which `skip` is true. Skipped days drop out before `positions` picks among a period's dates,
+    /// but still count toward `count`, as excluded dates do in iCalendar.
     pub(crate) fn dates<'a>(
         &'a self,
         start: Date,
         from: Date,
         skip: impl Fn(Date) -> bool + 'a,
     ) -> impl Iterator<Item = Date> + 'a {
+        let end =
+            self.count.and_then(|_| self.iterate(start, start, Box::new(|_| false), None).last());
+        self.iterate(start, from, Box::new(skip), end)
+    }
+
+    /// The dates as `dates` gives them, ending after `end` if given, or else after `count` dates.
+    fn iterate<'a>(
+        &'a self,
+        start: Date,
+        from: Date,
+        skip: Box<dyn Fn(Date) -> bool + 'a>,
+        end: Option<Date>,
+    ) -> Dates<'a> {
         let period = if self.count.is_some() || from <= start {
             0
         } else {
@@ -166,7 +180,8 @@ impl Rule {
             rule: self,
             start,
             from,
-            skip: Box::new(skip),
+            skip,
+            end,
             period,
             pending: VecDeque::new(),
             produced: 0,
@@ -321,6 +336,8 @@ struct Dates<'a> {
     start: Date,
     from: Date,
     skip: Box<dyn Fn(Date) -> bool + 'a>,
+    /// The last date the rule can give, which ends it in place of `count`.
+    end: Option<Date>,
     period: i64,
     pending: VecDeque<Date>,
     /// How many dates the rule has produced since `start`, for `count`.
@@ -340,7 +357,8 @@ impl Iterator for Dates<'_> {
             }
             if let Some(date) = self.pending.pop_front() {
                 if self.rule.until.is_some_and(|until| date > until)
-                    || self.rule.count.is_some_and(|count| self.produced >= count)
+                    || self.end.is_some_and(|end| date > end)
+                    || (self.end.is_none() && self.rule.count.is_some_and(|n| self.produced >= n))
                 {
                     self.finished = true;
                     return None;
@@ -551,7 +569,14 @@ impl RepeatForm {
                 simple.then_some(form)
             }
             Frequency::Weekly => {
-                let simple = plain_days && rule.months.is_empty() && rule.positions.is_empty();
+                // The editors count weeks from Sunday. They can keep a rule that counts from
+                // another day only if it picks no day that the two week starts put in different
+                // weeks.
+                let from_sunday = |day: u8| (day + 7 - WEEK[0]) % 7;
+                let same_weeks = rule.interval == 1
+                    || days.iter().all(|&day| from_sunday(day) >= from_sunday(rule.week_start));
+                let simple =
+                    plain_days && rule.months.is_empty() && rule.positions.is_empty() && same_weeks;
                 if !days.is_empty() {
                     form.weekdays = days;
                     form.weekdays.sort_unstable();
@@ -904,5 +929,25 @@ mod tests {
                 "Yearly on November 2"
             ]
         );
+    }
+
+    #[test]
+    fn skipped_days_still_count_toward_count() {
+        let rule = Rule::parse("FREQ=DAILY;COUNT=3").unwrap();
+        let start = date("2026-10-01");
+        let dates: Vec<String> = rule
+            .dates(start, start, |day| day == date("2026-10-02"))
+            .map(|d| d.to_string())
+            .collect();
+        assert_eq!(dates, ["2026-10-01", "2026-10-03"]);
+    }
+
+    #[test]
+    fn forms_leave_another_week_start_to_custom_rules() {
+        let start = date("2026-11-01");
+        let monday = Rule::parse("FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,SU").unwrap();
+        assert!(RepeatForm::from_rule(&monday, start).is_none());
+        let sunday = Rule::parse("FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,SU;WKST=SU").unwrap();
+        assert_eq!(RepeatForm::from_rule(&sunday, start).unwrap().rule(), sunday);
     }
 }

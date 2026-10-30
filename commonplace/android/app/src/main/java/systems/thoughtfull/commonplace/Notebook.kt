@@ -138,7 +138,7 @@ class NotebookModel(application: Application) : AndroidViewModel(application) {
             actions = ActionView.entries.associateWith { core.actions(it, today) },
             journals = core.journals(),
             loaded = true,
-            notes = core.notes(""),
+            notes = core.notes("", LocalDate.now().toString()),
             spaces = spaces
           )
         }

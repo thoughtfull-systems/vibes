@@ -220,7 +220,7 @@ private fun DaysOffEditor(
         EditorRow("Repeats") {
           RepeatMenu(days.rule, days.first, allowNone = true) { choice ->
             when (choice) {
-              RepeatChoice.None -> days = days.copy(rule = null)
+              RepeatChoice.None -> days = days.copy(rule = null, unreadRule = null)
               is RepeatChoice.Preset -> days = days.copy(rule = choice.rule)
               RepeatChoice.Custom -> custom = true
             }

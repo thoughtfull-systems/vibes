@@ -1146,6 +1146,9 @@ fn insert_action_map(note: &LoroMap, list: ActionList) -> Result<(), Error> {
     action.insert(STATE, ActionState::Open.as_str()).map_err(loro_error)?;
     action.insert(LIST, list.as_str()).map_err(loro_error)?;
     action.insert(PROJECT, false).map_err(loro_error)?;
+    // The action may become a step of a recurring action. Creating the map later, on two devices
+    // at once, would make two containers under one key, and sync keeps only one.
+    action.insert_container(OCCURRENCES, LoroMap::new()).map_err(loro_error)?;
     Ok(())
 }
 

@@ -302,7 +302,10 @@ impl DaysOffDialog {
             let (days, refresh, grid) = (days.clone(), refresh.clone(), grid.clone());
             move |choice| match choice {
                 RepeatChoice::None => {
-                    days.borrow_mut().rule = None;
+                    let mut days = days.borrow_mut();
+                    days.rule = None;
+                    days.unread_rule = None;
+                    drop(days);
                     refresh();
                 }
                 RepeatChoice::Rule(rule) => {

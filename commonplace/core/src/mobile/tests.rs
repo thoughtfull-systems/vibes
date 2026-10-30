@@ -134,7 +134,7 @@ fn inherited_trash_and_links_match_the_desktop() {
     assert!(mobile.note(step).unwrap().unwrap().in_trash);
     mobile.restore(parent).unwrap();
     assert!(!mobile.note(step).unwrap().unwrap().in_trash);
-    assert_eq!(mobile.backlinks(step).unwrap().len(), 1);
+    assert_eq!(mobile.backlinks(step, Date::EPOCH).unwrap().len(), 1);
 }
 
 #[test]
@@ -171,7 +171,7 @@ fn sample_libraries_match_the_desktop_and_preserve_existing_notes() {
     assert!(!names.contains_key(&key));
     assert!(names.values().any(|name| name == "Personal"));
     assert!(names.values().any(|name| name == "Work"));
-    let notes = mobile.notes("".into()).unwrap();
+    let notes = mobile.notes("".into(), Date::EPOCH).unwrap();
     assert!(notes.iter().any(|note| note.title == "Formatting sampler"));
     assert!(notes.iter().any(|note| note.in_trash));
     assert!(notes.iter().any(|note| note.archived.is_some()));
@@ -193,7 +193,7 @@ fn sample_libraries_match_the_desktop_and_preserve_existing_notes() {
     );
     drop(mobile);
     let reopened = MobileNotebook::open(dir.path().to_string_lossy().into()).unwrap();
-    assert_eq!(reopened.notes("".into()).unwrap().len(), notes.len());
+    assert_eq!(reopened.notes("".into(), Date::EPOCH).unwrap().len(), notes.len());
 }
 
 #[test]

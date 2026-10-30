@@ -95,11 +95,12 @@ format adds them.
   year. A recurring action says, for each kind, whether a day off removes an occurrence, moves it to
   the next day that isn't a day off, or doesn't affect it, which is the default. Days off that
   remove occurrences filter the candidate days before `BYSETPOS` picks among them, so "the last
-  weekday of the month" with holidays removed means the last workday. Every reader computes
-  occurrences from the days off as they stand, so archiving a schedule early brings its later
-  occurrences back. Schedules are never deleted, only archived, and an archived schedule keeps
-  applying to the days before its owner archived it, so the past doesn't change. The apps hide a
-  schedule once it's archived or a week after its last day.
+  weekday of the month" with holidays removed means the last workday. Removed days still count
+  toward `COUNT`, as excluded dates do in iCalendar, so a rule ends on the same date whatever the
+  days off. Every reader computes occurrences from the days off as they stand, so archiving a
+  schedule early brings its later occurrences back. Schedules are never deleted, only archived, and
+  an archived schedule keeps applying through the day its owner archived it, so the past doesn't
+  change. The apps hide a schedule once it's archived or a week after its last day.
 - **Steps.** The steps of a recurring action record their completion in the same way, keyed by the
   occurrence of the recurring action they belong to, so each occurrence starts with every step open
   and nothing resets them. Readers ignore `recur` on an action inside the subtree of another

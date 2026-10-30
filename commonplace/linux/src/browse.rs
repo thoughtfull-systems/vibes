@@ -316,6 +316,7 @@ impl Browser {
                 })
                 .filter(|note| note.matches(&query))
                 .collect();
+            let notes = library.notes_on(notes, today());
             let starred_actions: HashSet<NoteId> = library
                 .action_view(ActionView::Starred, today())
                 .into_iter()

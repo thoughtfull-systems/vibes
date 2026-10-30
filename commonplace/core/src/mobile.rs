@@ -7,8 +7,9 @@ use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use crate::sync::{Config, Host, OutgoingState, Status, Syncer};
 use crate::{
     Action, ActionChange, ActionDates, ActionView, Answer, Date, DaysOff, DaysOffKind, EditBase,
-    Handled, Journal, ListKey, Note, NoteId, Occurrence, OccurrenceState, Question, QuestionKind,
-    RecurrenceSettings, RepeatForm, Rule, Schedule, ShownTitles, Spaces, Style,
+    Handled, Journal, ListKey, Note, NoteId, Occurrence, OccurrenceState, OccurrenceSummary,
+    Question, QuestionKind, RecurrenceSettings, RepeatForm, Rule, Schedule, ShownTitles, Spaces,
+    Style,
 };
 
 uniffi::custom_type!(Date, String, {
@@ -624,13 +625,14 @@ impl MobileNotebook {
         Ok(())
     }
 
-    pub fn notes(&self, query: String) -> Result<Vec<MobileNote>> {
+    /// The notes that match `query`, with each recurring action and its steps as of `today`.
+    pub fn notes(&self, query: String, today: Date) -> Result<Vec<MobileNote>> {
         let state = self.state()?;
+        let notes = state.spaces.notes().into_iter().filter(|note| note.matches(&query)).collect();
         Ok(state
             .spaces
-            .notes()
+            .notes_on(notes, today)
             .into_iter()
-            .filter(|note| note.matches(&query))
             .map(|note| mobile_note(&state.spaces, note))
             .collect())
     }
@@ -787,6 +789,10 @@ impl MobileNotebook {
         Ok(self.state()?.spaces.current_occurrence(id, today))
     }
 
+    pub fn occurrence_summary(&self, id: NoteId, today: Date) -> Result<Option<OccurrenceSummary>> {
+        Ok(self.state()?.spaces.occurrence_summary(id, today))
+    }
+
     pub fn occurrences(
         &self,
         id: NoteId,
@@ -882,11 +888,13 @@ impl MobileNotebook {
         self.write(|state| state.spaces.delete(id))
     }
 
-    pub fn backlinks(&self, id: NoteId) -> Result<Vec<MobileNote>> {
+    /// The notes that link to `id`, with each recurring action and its steps as of `today`.
+    pub fn backlinks(&self, id: NoteId, today: Date) -> Result<Vec<MobileNote>> {
         let state = self.state()?;
+        let notes = state.spaces.backlinks(id);
         Ok(state
             .spaces
-            .backlinks(id)
+            .notes_on(notes, today)
             .into_iter()
             .map(|note| mobile_note(&state.spaces, note))
             .collect())

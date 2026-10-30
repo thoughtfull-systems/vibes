@@ -7,7 +7,7 @@ use std::rc::{Rc, Weak};
 use adw::prelude::*;
 use commonplace_core::{
     Action, ActionChange, ActionEntry, ActionList, ActionState, Date, Error, Note, NoteId,
-    OccurrenceState, OccurrenceStatus, RecurrenceSettings, RepeatForm, Rule, Spaces, note_uri,
+    OccurrenceState, RecurrenceSettings, RepeatForm, Rule, Spaces, note_uri,
 };
 use gtk::{gdk, gio, glib};
 
@@ -721,9 +721,10 @@ impl ActionPanel {
             .as_ref()
             .map_or_else(|| new_settings(action, Rule::default()).start, |r| r.settings.start);
         let recurring = action.recur.is_some();
-        let current = recurring
-            .then(|| self.state.read(|spaces| spaces.current_occurrence(id, today())))
+        let summary = recurring
+            .then(|| self.state.read(|spaces| spaces.occurrence_summary(id, today())))
             .flatten();
+        let current = summary.and_then(|summary| summary.current);
         let day = current.map_or(start, |current| current.date);
         self.repeat.show(action.recur.as_ref().map(|recur| &recur.settings.rule), start, day);
         for row in &self.date_rows {
@@ -760,17 +761,7 @@ impl ActionPanel {
                 }
                 None => notes.push("Finished repeating".to_owned()),
             }
-            let history = self.state.read(|spaces| spaces.occurrences(id, today(), 50, 99));
-            let latest = history.iter().filter(|o| o.handled.is_some()).map(|o| o.date).max();
-            let missed = history
-                .iter()
-                .filter(|o| o.status == OccurrenceStatus::Missed)
-                .filter(|o| latest.is_none_or(|latest| o.date > latest))
-                .count();
-            let waiting = history
-                .iter()
-                .filter(|o| o.status == OccurrenceStatus::Upcoming && o.on <= today())
-                .count();
+            let (missed, waiting) = summary.map_or((0, 0), |s| (s.missed, s.waiting));
             if missed > 0 {
                 notes.push(format!("{missed} missed"));
             }

@@ -14,8 +14,9 @@ use crate::actions::order_key;
 use crate::library::{MODIFIED, loro_error};
 use crate::{
     ActionChange, ActionDates, ActionEntry, ActionView, Answer, Date, DaysOff, DaysOffKind,
-    EditBase, Error, Handled, Library, Note, NoteId, Occurrence, OccurrenceState, Prompt, Question,
-    RecurrenceSettings, Schedule, ShownTitles, label, plain_links, relabel,
+    EditBase, Error, Handled, Library, Note, NoteId, Occurrence, OccurrenceState,
+    OccurrenceSummary, Prompt, Question, RecurrenceSettings, Schedule, ShownTitles, label,
+    plain_links, relabel,
 };
 
 const LIBRARIES: &str = "libraries";
@@ -494,6 +495,27 @@ impl Spaces {
 
     pub fn current_occurrence(&self, id: NoteId, today: Date) -> Option<Occurrence> {
         self.owner(id)?.current_occurrence(id, today)
+    }
+
+    pub fn occurrence_summary(&self, id: NoteId, today: Date) -> Option<OccurrenceSummary> {
+        self.owner(id)?.occurrence_summary(id, today)
+    }
+
+    /// `notes` as of `today`, each resolved in its own library as [`Library::notes_on`] does.
+    pub fn notes_on(&self, notes: Vec<Note>, today: Date) -> Vec<Note> {
+        let mut resolved: Vec<Option<Note>> = vec![None; notes.len()];
+        for library in self.all() {
+            let (indices, own): (Vec<usize>, Vec<Note>) = notes
+                .iter()
+                .enumerate()
+                .filter(|(_, note)| library.note_map(note.id).is_ok())
+                .map(|(index, note)| (index, note.clone()))
+                .unzip();
+            for (index, note) in indices.into_iter().zip(library.notes_on(own, today)) {
+                resolved[index] = Some(note);
+            }
+        }
+        notes.into_iter().zip(resolved).map(|(note, resolved)| resolved.unwrap_or(note)).collect()
     }
 
     pub fn occurrences(

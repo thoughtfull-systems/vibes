@@ -122,6 +122,10 @@ pub struct DaysOff {
     pub first: Date,
     pub last: Date,
     pub rule: Option<Rule>,
+    /// A rule this version can't read, such as one from a later version, kept as written so that
+    /// saving the schedule doesn't lose it. Until a version reads it, the schedule covers only its
+    /// first span. An editor that changes how it repeats clears it.
+    pub unread_rule: Option<String>,
     /// The day its owner archived it, from which it no longer applies.
     pub archived: Option<Date>,
 }
@@ -136,6 +140,7 @@ impl DaysOff {
             first,
             last: first,
             rule: None,
+            unread_rule: None,
             archived: None,
         }
     }
@@ -148,10 +153,9 @@ impl DaysOff {
         let date = |key: &str| text(key).and_then(|t| t.parse::<Date>().ok());
         let first = date(FIRST)?;
         let last = date(LAST).filter(|last| *last >= first).unwrap_or(first);
-        let rule = match text(RULE) {
-            Some(rule) => Some(Rule::parse(&rule)?),
-            None => None,
-        };
+        let written = text(RULE);
+        let rule = written.as_deref().and_then(Rule::parse);
+        let unread_rule = written.filter(|_| rule.is_none());
         Some(Self {
             id: id.to_owned(),
             kind,
@@ -159,6 +163,7 @@ impl DaysOff {
             first,
             last,
             rule,
+            unread_rule,
             archived: date(ARCHIVED),
         })
     }
@@ -169,8 +174,9 @@ impl DaysOff {
             (FIRST.into(), self.first.to_string().into()),
             (LAST.into(), self.last.max(self.first).to_string().into()),
         ];
-        if let Some(rule) = &self.rule {
-            fields.push((RULE.into(), rule.to_string().into()));
+        let rule = self.rule.as_ref().map(Rule::to_string).or_else(|| self.unread_rule.clone());
+        if let Some(rule) = rule {
+            fields.push((RULE.into(), rule.into()));
         }
         if let Some(archived) = self.archived {
             fields.push((ARCHIVED.into(), archived.to_string().into()));
@@ -199,6 +205,7 @@ impl DaysOff {
     /// The last day off, or nothing if the schedule comes back forever.
     pub fn end(&self) -> Option<Date> {
         match &self.rule {
+            None if self.unread_rule.is_some() => None,
             None => Some(self.last),
             Some(rule) if rule.until.is_none() && rule.count.is_none() => None,
             Some(rule) => {
@@ -218,6 +225,7 @@ impl DaysOff {
     pub fn describe(&self) -> String {
         match &self.rule {
             Some(rule) => describe_rule(rule, self.first),
+            None if self.unread_rule.is_some() => "Custom repeat".to_owned(),
             None if self.first == self.last => format_long_date(self.first),
             None => format!("{} – {}", format_long_date(self.first), format_long_date(self.last)),
         }
@@ -309,8 +317,9 @@ impl Library {
         self.commit()
     }
 
-    /// Archives a schedule of days off as of `today`, or takes it out of the archive. Schedules
-    /// are never deleted, so the days off that shaped past dates keep shaping them.
+    /// Archives a schedule of days off from the day after `today`, so it still covers today, or
+    /// takes it out of the archive. Schedules are never deleted, so the days off that shaped past
+    /// dates keep shaping them.
     pub fn archive_days_off(
         &mut self,
         kind: DaysOffKind,
@@ -322,7 +331,7 @@ impl Library {
         else {
             return Ok(());
         };
-        days.archived = archived.then_some(today);
+        days.archived = archived.then(|| today.add_days(1));
         self.set_days_off(&days)
     }
 }
@@ -385,5 +394,34 @@ mod tests {
         let set = library.days_off_set();
         assert_eq!(set.moved(&holidays, date("2027-12-25")), date("2027-12-25"));
         assert_eq!(set.moved(&holidays, date("2026-12-25")), date("2026-12-26"));
+    }
+
+    #[test]
+    fn archiving_keeps_today_and_unread_rules_survive_saves() {
+        let mut library = Library::in_memory();
+        let mut christmas = DaysOff::new(DaysOffKind::Holidays, "Christmas", date("2026-12-25"));
+        christmas.rule = Rule::parse("FREQ=YEARLY");
+        library.set_days_off(&christmas).unwrap();
+        library
+            .archive_days_off(DaysOffKind::Holidays, &christmas.id, true, date("2026-12-25"))
+            .unwrap();
+        let archived = library.days_off().remove(0);
+        assert!(archived.covers(date("2026-12-25")));
+        assert!(!archived.covers(date("2027-12-25")));
+
+        let mut later = DaysOff::new(DaysOffKind::Holidays, "Later", date("2026-12-31"));
+        later.unread_rule = Some("FREQ=YEARLY;BYWEEKNO=1".to_owned());
+        library.set_days_off(&later).unwrap();
+        let read = library.days_off().into_iter().find(|days| days.id == later.id).unwrap();
+        assert_eq!(read.unread_rule, later.unread_rule);
+        assert_eq!(read.rule, None);
+        assert!(read.covers(date("2026-12-31")));
+        assert_eq!(read.describe(), "Custom repeat");
+        assert!(!read.is_hidden(date("2030-01-01")));
+        library
+            .archive_days_off(DaysOffKind::Holidays, &later.id, true, date("2027-01-01"))
+            .unwrap();
+        let read = library.days_off().into_iter().find(|days| days.id == later.id).unwrap();
+        assert_eq!(read.unread_rule, later.unread_rule);
     }
 }

@@ -331,7 +331,7 @@ impl<'a> Occurrences<'a> {
         let from =
             latest.map_or(settings.start, |entry| entry.date.add_days(1)).max(settings.start);
         let date = match settings.missed {
-            Missed::After => self.next_after(latest)?,
+            Missed::After => self.next_after(latest, 0)?,
             Missed::All => self.dates(settings.start, from).find(|d| !self.handled.contains(d))?,
             Missed::Latest => {
                 let lookahead =
@@ -358,12 +358,13 @@ impl<'a> Occurrences<'a> {
 
     /// For the `after` behavior, the occurrence after `latest`: the rule's first date after the
     /// day its owner handled it, counting from that day, or the rule's first date if nothing is
-    /// handled yet.
-    fn next_after(&self, latest: Option<&HandledOccurrence>) -> Option<Date> {
+    /// handled yet. `projected` is how many occurrences a preview assumes handled beyond the
+    /// record, which count toward the rule's `COUNT`.
+    fn next_after(&self, latest: Option<&HandledOccurrence>, projected: usize) -> Option<Date> {
         let settings = self.settings();
         let mut rule = settings.rule.clone();
         if let Some(count) = rule.count.take()
-            && self.recur.handled.len() >= count as usize
+            && self.recur.handled.len() + projected >= count as usize
         {
             return None;
         }
@@ -398,6 +399,22 @@ impl<'a> Occurrences<'a> {
             }
         }
         count
+    }
+
+    /// How many unhandled occurrences after the latest handled one count as missed: those before
+    /// `current`, or, once the rule has ended, those up to `today`.
+    fn missed(&self, current: Option<&Occurrence>, today: Date) -> u32 {
+        let settings = self.settings();
+        if settings.missed == Missed::After {
+            return 0;
+        }
+        let from = self
+            .latest_handled()
+            .map_or(settings.start, |entry| entry.date.add_days(1))
+            .max(settings.start);
+        let end = current.map_or(today.add_days(1), |current| current.date);
+        let missed = self.dates(settings.start, from).take_while(|date| *date < end);
+        missed.filter(|date| !self.handled.contains(date)).count() as u32
     }
 
     /// The current occurrence and `upcoming` more after it, in order, then the latest `past`
@@ -435,15 +452,17 @@ impl<'a> Occurrences<'a> {
             later.push(current);
             match settings.missed {
                 Missed::After => {
+                    // Each occurrence counts from the day its owner handles it, so the preview
+                    // assumes each is handled on its date, or today if that has passed.
                     let mut last = current;
-                    for _ in 0..upcoming {
+                    for projected in 1..=upcoming {
                         let entry = HandledOccurrence {
                             date: last.date,
                             state: OccurrenceState::Done,
                             at: 0,
-                            day: last.on,
+                            day: last.on.max(today),
                         };
-                        let Some(date) = self.next_after(Some(&entry)) else { break };
+                        let Some(date) = self.next_after(Some(&entry), projected) else { break };
                         last = self.occurrence(date, OccurrenceStatus::Upcoming);
                         later.push(last);
                     }
@@ -469,6 +488,17 @@ pub(crate) struct Standing {
     pub(crate) waiting: u32,
 }
 
+/// Where a recurring action stands on a day, for its details: its current occurrence, if the rule
+/// hasn't ended, how many occurrences since the latest handled one it missed, and how many more
+/// wait behind the current one.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "mobile", derive(uniffi::Record))]
+pub struct OccurrenceSummary {
+    pub current: Option<Occurrence>,
+    pub missed: u32,
+    pub waiting: u32,
+}
+
 impl Library {
     /// Makes an action recur with `settings`, or, with nothing, stops it recurring. An action that
     /// stops recurring keeps the dates of its current occurrence as its own.
@@ -487,6 +517,16 @@ impl Library {
                     return Err(Error::InvalidRule);
                 }
                 let recur = child_map(&action, RECUR)?;
+                // Two devices that each create one of these maps for their first entry would
+                // each make a container under the same key, and sync keeps only one.
+                for key in [HANDLED, MOVED, NOTES] {
+                    child_map(&recur, key)?;
+                }
+                for step in self.hierarchy().descendants(id) {
+                    if let Ok(step) = self.action_map(step) {
+                        child_map(&step, OCCURRENCES)?;
+                    }
+                }
                 recur.insert(RULE, settings.rule.to_string()).map_err(loro_error)?;
                 recur.insert(START, settings.start.to_string()).map_err(loro_error)?;
                 recur.insert(MISSED, settings.missed.as_str()).map_err(loro_error)?;
@@ -588,6 +628,44 @@ impl Library {
         let recur = self.note(id)?.action?.recur?;
         let days_off = self.days_off_set();
         Occurrences::new(&recur, &days_off).current(today)
+    }
+
+    /// Where a recurring action stands on `today`, or nothing if it doesn't recur.
+    pub fn occurrence_summary(&self, id: NoteId, today: Date) -> Option<OccurrenceSummary> {
+        let recur = self.note(id)?.action?.recur?;
+        let days_off = self.days_off_set();
+        let occurrences = Occurrences::new(&recur, &days_off);
+        let current = occurrences.current(today);
+        Some(OccurrenceSummary {
+            current,
+            missed: occurrences.missed(current.as_ref(), today),
+            waiting: current.map_or(0, |current| occurrences.waiting(&current, today)),
+        })
+    }
+
+    /// `notes` as of `today`, with each recurring action and its steps as `note_on` gives them.
+    pub fn notes_on(&self, notes: Vec<Note>, today: Date) -> Vec<Note> {
+        if !notes.iter().any(|note| note.action.is_some()) {
+            return notes;
+        }
+        let hierarchy = self.hierarchy();
+        let ids: Vec<NoteId> = notes.iter().map(|note| note.id).collect();
+        let ancestors: Vec<NoteId> = notes
+            .iter()
+            .filter(|note| note.action.is_some())
+            .flat_map(|note| hierarchy.ancestors(note.id))
+            .collect();
+        let mut all: HashMap<NoteId, Note> =
+            notes.into_iter().map(|note| (note.id, note)).collect();
+        for ancestor in ancestors {
+            if !all.contains_key(&ancestor)
+                && let Some(note) = self.note(ancestor)
+            {
+                all.insert(ancestor, note);
+            }
+        }
+        self.resolve_recurrence(&mut all, today);
+        ids.into_iter().filter_map(|id| all.remove(&id)).collect()
     }
 
     /// A recurring action's current occurrence and its `upcoming` occurrences after it, in order,
@@ -929,5 +1007,51 @@ mod tests {
         assert!(body.starts_with("Weekly review on 2026-10-05\n\n[["), "{body}");
         let occurrence = library.current_occurrence(id, date("2026-10-05")).unwrap();
         assert_eq!(occurrence.note, Some(memo));
+    }
+
+    #[test]
+    fn summaries_count_missed_and_waiting_occurrences() {
+        let mut library = Library::in_memory();
+        let id = weekly(&mut library, Missed::All);
+        let summary = library.occurrence_summary(id, date("2026-10-21")).unwrap();
+        assert_eq!((summary.missed, summary.waiting), (0, 2));
+        let latest = weekly(&mut library, Missed::Latest);
+        let summary = library.occurrence_summary(latest, date("2026-10-21")).unwrap();
+        assert_eq!(summary.current.map(|o| o.date), Some(date("2026-10-19")));
+        assert_eq!((summary.missed, summary.waiting), (2, 0));
+        let plain = library.create_task("Plain", None).unwrap();
+        assert_eq!(library.occurrence_summary(plain, date("2026-10-21")), None);
+    }
+
+    #[test]
+    fn after_previews_count_from_today_and_stop_at_count() {
+        let mut library = Library::in_memory();
+        let id = library.create_task("Water the fern", None).unwrap();
+        let mut settings = RecurrenceSettings::new(
+            Rule::parse("FREQ=DAILY;INTERVAL=7;COUNT=3").unwrap(),
+            date("2026-10-01"),
+        );
+        settings.missed = Missed::After;
+        library.set_recurrence(id, Some(settings), date("2026-10-01")).unwrap();
+        let today = date("2026-10-30");
+        let history = library.occurrences(id, today, 10, 10);
+        let upcoming: Vec<Date> = history
+            .iter()
+            .filter(|o| o.status == OccurrenceStatus::Upcoming)
+            .map(|o| o.on)
+            .collect();
+        assert_eq!(upcoming, [date("2026-11-06"), date("2026-11-13")]);
+        assert_eq!(library.occurrence_summary(id, today).unwrap().waiting, 0);
+    }
+
+    #[test]
+    fn note_lists_resolve_recurring_steps() {
+        let mut library = Library::in_memory();
+        let id = weekly(&mut library, Missed::Latest);
+        let step = library.create_task("Empty the inbox", Some(id)).unwrap();
+        let today = date("2026-10-05");
+        library.check_action(step, true, today).unwrap();
+        let notes = library.notes_on(vec![library.note(step).unwrap()], today);
+        assert_eq!(notes[0].action.as_ref().unwrap().state, ActionState::Done);
     }
 }

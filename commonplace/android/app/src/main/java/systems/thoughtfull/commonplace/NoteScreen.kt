@@ -76,9 +76,8 @@ import systems.thoughtfull.commonplace.core.DaysOffUse
 import systems.thoughtfull.commonplace.core.Missed
 import systems.thoughtfull.commonplace.core.MobileLink
 import systems.thoughtfull.commonplace.core.MobileNote
-import systems.thoughtfull.commonplace.core.Occurrence
 import systems.thoughtfull.commonplace.core.OccurrenceState
-import systems.thoughtfull.commonplace.core.OccurrenceStatus
+import systems.thoughtfull.commonplace.core.OccurrenceSummary
 import systems.thoughtfull.commonplace.core.RecurrenceSettings
 import systems.thoughtfull.commonplace.core.Rule
 import systems.thoughtfull.commonplace.core.newRepeatForm
@@ -120,7 +119,7 @@ internal fun NoteScreen(
   LaunchedEffect(id, state.revision) {
     note = model.read { it.note(id) }
     loaded = true
-    backlinks = model.read { it.backlinks(id) }.orEmpty()
+    backlinks = model.read { it.backlinks(id, LocalDate.now().toString()) }.orEmpty()
     if (!initialized && note != null) {
       model.read { it.editorBody(id) }?.let {
         val body = model.draft(id) ?: it
@@ -470,17 +469,16 @@ internal fun ActionDetails(model: NotebookModel, note: MobileNote, open: (String
   val today = LocalDate.now().toString()
   var dates by remember(note.id) { mutableStateOf<ActionDates?>(null) }
   var resolved by remember(note.id) { mutableStateOf<Action?>(null) }
-  var current by remember(note.id) { mutableStateOf<Occurrence?>(null) }
-  var history by remember(note.id) { mutableStateOf<List<Occurrence>>(emptyList()) }
+  var summary by remember(note.id) { mutableStateOf<OccurrenceSummary?>(null) }
   LaunchedEffect(note.id, state.revision, today) {
     dates = model.read { it.actionDates(note.id, today) }
     resolved = model.read { it.noteOn(note.id, today) }?.action
-    current = model.read { it.currentOccurrence(note.id, today) }
-    history = model.read { it.occurrences(note.id, today, 50u, 99u) }.orEmpty()
+    summary = model.read { it.occurrenceSummary(note.id, today) }
   }
   val own = note.action!!
   val action = resolved ?: own
   val recur = action.recur
+  val current = summary?.current
   var dateField by remember(note.id) { mutableStateOf<String?>(null) }
   var waitingText by remember(note.id) { mutableStateOf(action.waitingFor.orEmpty()) }
   var custom by remember(note.id) { mutableStateOf(false) }
@@ -490,6 +488,15 @@ internal fun ActionDetails(model: NotebookModel, note: MobileNote, open: (String
   }
   fun setRecurrence(settings: RecurrenceSettings?) {
     model.perform { it.setRecurrence(note.id, settings, today) }
+  }
+
+  // Changes the stored settings, not the shown ones, which miss a change still being saved.
+  fun updateRecurrence(change: (RecurrenceSettings) -> RecurrenceSettings) {
+    model.perform { core ->
+      core.note(note.id)?.action?.recur?.settings?.let {
+        core.setRecurrence(note.id, change(it), today)
+      }
+    }
   }
   Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
     // Match the field order and control column in the Linux details panel.
@@ -571,24 +578,24 @@ internal fun ActionDetails(model: NotebookModel, note: MobileNote, open: (String
       val settings = recur.settings
       ActionField("Starts", "detail-starts") {
         OffsetRow(note.id, settings.defer, -1, "days before", optional = false) {
-          setRecurrence(settings.copy(defer = it))
+          updateRecurrence { settings -> settings.copy(defer = it) }
         }
       }
       ActionField("Due", "detail-due") {
         OffsetRow(note.id, settings.due, 1, "days after", optional = true) {
-          setRecurrence(settings.copy(due = it))
+          updateRecurrence { settings -> settings.copy(due = it) }
         }
       }
       ActionField("If missed", "detail-missed") {
         MenuControl(settings.missed, missedChoices.map { it.second }, { choice ->
           missedChoices.first { it.second == choice }.first
-        }) { setRecurrence(settings.copy(missed = it)) }
+        }) { missed -> updateRecurrence { it.copy(missed = missed) } }
       }
       DaysOffRows(
         settings.daysOff.holidays,
         settings.daysOff.vacations,
-        { setRecurrence(settings.copy(daysOff = settings.daysOff.copy(holidays = it))) },
-        { setRecurrence(settings.copy(daysOff = settings.daysOff.copy(vacations = it))) }
+        { effect -> updateRecurrence { it.copy(daysOff = it.daysOff.copy(holidays = effect)) } },
+        { effect -> updateRecurrence { it.copy(daysOff = it.daysOff.copy(vacations = effect)) } }
       )
     }
     val context = rememberRowContext(state)
@@ -621,9 +628,9 @@ internal fun ActionDetails(model: NotebookModel, note: MobileNote, open: (String
         }
       }
     }
-    if (recur != null) {
+    summary?.takeIf { recur != null }?.let {
       Text(
-        occurrenceSummary(current, history, today),
+        occurrenceSummary(it),
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         style = MaterialTheme.typography.bodySmall
       )
@@ -669,16 +676,9 @@ internal fun ActionDetails(model: NotebookModel, note: MobileNote, open: (String
  * missed since the last one its owner handled, and how many more wait, as the Linux details panel
  * does.
  */
-internal fun occurrenceSummary(
-  current: Occurrence?,
-  history: List<Occurrence>,
-  today: String
-): String {
-  val latest = history.filter { it.handled != null }.maxOfOrNull { it.date }
-  val missed = history.count {
-    it.status == OccurrenceStatus.MISSED && (latest == null || it.date > latest)
-  }
-  val waiting = history.count { it.status == OccurrenceStatus.UPCOMING && it.on <= today }
+internal fun occurrenceSummary(summary: OccurrenceSummary): String {
+  val current = summary.current
+  val (missed, waiting) = summary.missed to summary.waiting
   val about = if (current == null) {
     listOf("Finished repeating")
   } else {
@@ -692,11 +692,8 @@ internal fun occurrenceSummary(
   return (
     about +
       listOfNotNull(
-        "$missed missed".takeIf { missed > 0 },
-        "$waiting more waiting".takeIf {
-          waiting >
-            0
-        }
+        "$missed missed".takeIf { missed > 0u },
+        "$waiting more waiting".takeIf { waiting > 0u }
       )
     ).joinToString(" · ")
 }

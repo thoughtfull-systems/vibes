@@ -53,7 +53,7 @@ pub use recur::{
 };
 pub use recurring::{
     HandledOccurrence, Missed, MovedOccurrence, Occurrence, OccurrenceNote, OccurrenceState,
-    OccurrenceStatus, Recurrence, RecurrenceSettings, StepOccurrence,
+    OccurrenceStatus, OccurrenceSummary, Recurrence, RecurrenceSettings, StepOccurrence,
 };
 pub use spaces::Spaces;
 #[cfg(feature = "sync")]

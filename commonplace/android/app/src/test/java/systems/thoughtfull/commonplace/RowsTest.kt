@@ -14,13 +14,12 @@ import systems.thoughtfull.commonplace.core.ActionState
 import systems.thoughtfull.commonplace.core.ActionStatus
 import systems.thoughtfull.commonplace.core.ChoiceOption
 import systems.thoughtfull.commonplace.core.Dated
-import systems.thoughtfull.commonplace.core.HandledOccurrence
 import systems.thoughtfull.commonplace.core.Journal
 import systems.thoughtfull.commonplace.core.MobileEntry
 import systems.thoughtfull.commonplace.core.MobileNote
 import systems.thoughtfull.commonplace.core.Occurrence
-import systems.thoughtfull.commonplace.core.OccurrenceState
 import systems.thoughtfull.commonplace.core.OccurrenceStatus
+import systems.thoughtfull.commonplace.core.OccurrenceSummary
 import systems.thoughtfull.commonplace.core.Question
 import systems.thoughtfull.commonplace.core.QuestionKind
 
@@ -126,36 +125,31 @@ class RowsTest {
 
   @Test
   fun occurrenceSummariesMatchLinux() {
-    fun occurrence(date: String, on: String, status: OccurrenceStatus, done: Boolean = false) =
-      Occurrence(
-        date,
-        on,
-        null,
-        on,
-        status,
-        if (done) HandledOccurrence(date, OccurrenceState.DONE, 0, date) else null,
-        on != date,
-        null
-      )
-    val current = occurrence("2026-10-26", "2026-10-27", OccurrenceStatus.CURRENT)
-    val history = listOf(
-      occurrence("2026-11-02", "2026-11-02", OccurrenceStatus.UPCOMING),
-      current,
-      occurrence("2026-10-19", "2026-10-19", OccurrenceStatus.MISSED),
-      occurrence("2026-10-12", "2026-10-12", OccurrenceStatus.DONE, done = true),
-      occurrence("2026-10-05", "2026-10-05", OccurrenceStatus.MISSED)
+    val current = Occurrence(
+      "2026-10-26",
+      "2026-10-27",
+      null,
+      "2026-10-27",
+      OccurrenceStatus.CURRENT,
+      null,
+      true,
+      null
     )
     assertEquals(
       "Due ${formatDate("2026-10-27")} · Moved from ${formatDate("2026-10-26")} · 1 missed",
-      occurrenceSummary(current, history, "2026-10-30")
+      occurrenceSummary(OccurrenceSummary(current, 1u, 0u))
     )
-    val waiting = history + occurrence("2026-10-28", "2026-10-28", OccurrenceStatus.UPCOMING)
     assertEquals(
       "Due ${formatDate("2026-10-27")} · Moved from ${formatDate("2026-10-26")} · 1 missed · " +
         "1 more waiting",
-      occurrenceSummary(current, waiting, "2026-10-30")
+      occurrenceSummary(OccurrenceSummary(current, 1u, 1u))
     )
-    assertEquals("Finished repeating", occurrenceSummary(null, emptyList(), "2026-10-30"))
+    val onTheDay = current.copy(on = "2026-10-26", due = null, moved = false)
+    assertEquals(
+      "On ${formatDate("2026-10-26")}",
+      occurrenceSummary(OccurrenceSummary(onTheDay, 0u, 0u))
+    )
+    assertEquals("Finished repeating", occurrenceSummary(OccurrenceSummary(null, 0u, 0u)))
   }
 
   @Test
