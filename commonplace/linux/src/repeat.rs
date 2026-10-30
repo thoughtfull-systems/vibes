@@ -446,8 +446,8 @@ impl RepeatEditor {
     }
 }
 
-/// A spin button that sets how many days before or after an occurrence's date something falls,
-/// with a check button that turns it off if `optional` is set. `sign` is -1 for days before.
+/// A check button and a spin button that set how many days before or after an occurrence's date
+/// something falls, if at all. `sign` is -1 for days before.
 pub struct OffsetRow {
     pub widget: gtk::Box,
     on: gtk::CheckButton,
@@ -456,8 +456,8 @@ pub struct OffsetRow {
 }
 
 impl OffsetRow {
-    pub fn new(sign: i32, after: &str, optional: bool) -> Self {
-        let on = gtk::CheckButton::builder().active(true).visible(optional).build();
+    pub fn new(sign: i32, after: &str) -> Self {
+        let on = gtk::CheckButton::new();
         let days = gtk::SpinButton::with_range(0.0, 365.0, 1.0);
         let widget = gtk::Box::builder().spacing(6).build();
         widget.append(&on);
@@ -466,12 +466,10 @@ impl OffsetRow {
         Self { widget, on, days, sign }
     }
 
-    /// Shows `offset`, where nothing means none, or zero days if the row isn't optional.
     pub fn show(&self, offset: Option<i32>) {
-        let on = offset.is_some() || !self.on.is_visible();
-        self.on.set_active(on);
+        self.on.set_active(offset.is_some());
         self.days.set_value(f64::from(offset.map_or(0, |days| days * self.sign).max(0)));
-        self.days.set_sensitive(on);
+        self.days.set_sensitive(offset.is_some());
     }
 
     pub fn offset(&self) -> Option<i32> {

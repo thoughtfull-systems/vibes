@@ -347,8 +347,8 @@ impl ActionPanel {
             fields.attach(button, 1, row, 1, 1);
             date_rows.extend([label.upcast(), button.clone().upcast()]);
         }
-        let defer_offset = OffsetRow::new(-1, "days before", false);
-        let due_offset = OffsetRow::new(1, "days after", true);
+        let defer_offset = OffsetRow::new(-1, "days before");
+        let due_offset = OffsetRow::new(1, "days after");
         let missed = gtk::DropDown::from_strings(&MISSED.map(|(name, _)| name));
         let days_off = DaysOffMenus::new();
         let mut recurrence_rows = Vec::new();

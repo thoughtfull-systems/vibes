@@ -133,16 +133,15 @@ fn check(app: &adw::Application, state: &State, shown: &Shown, cache: &Journals)
         .filter(|journal| state.prompts_here(journal.id))
         .cloned()
         .collect();
+    let prompts =
+        state.read(|spaces| spaces.due_prompts(&journals, today, minute, now, local_millis));
     let mut due: HashMap<NoteId, (Prompt, i64)> = HashMap::new();
-    for journal in &journals {
-        let Some(fields) = &journal.journal else {
-            continue;
-        };
-        let prompt =
-            state.read(|spaces| spaces.due_prompt(journal.id, today, minute, now, local_millis));
-        if let Some(prompt) = prompt {
+    for (id, prompt) in prompts {
+        let fields =
+            journals.iter().find(|journal| journal.id == id).and_then(|j| j.journal.as_ref());
+        if let Some(fields) = fields {
             let at = due_at(fields, &prompt);
-            due.insert(journal.id, (prompt, at));
+            due.insert(id, (prompt, at));
         }
     }
     let mut shown = shown.borrow_mut();

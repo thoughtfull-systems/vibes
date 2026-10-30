@@ -982,27 +982,26 @@ impl MobileNotebook {
         date: Date,
     ) -> Result<Vec<ScheduledPrompt>> {
         let state = self.state()?;
-        let mut result = Vec::new();
-        for note in state.spaces.all_journals() {
-            if !journals.contains(&note.id) {
-                continue;
-            }
-            let Some(journal) = note.journal else {
-                continue;
-            };
-            for schedule in &journal.schedules {
-                for minute in state.spaces.schedule_minutes(note.id, schedule, date) {
-                    let key = crate::prompt_key(&schedule.id, date, minute);
-                    result.push(ScheduledPrompt {
-                        handled: journal.handled.get(&key).copied(),
-                        journal: note.id,
-                        key,
-                        minute,
-                    });
-                }
-            }
-        }
-        Ok(result)
+        let notes: Vec<Note> = state
+            .spaces
+            .all_journals()
+            .into_iter()
+            .filter(|note| journals.contains(&note.id))
+            .collect();
+        Ok(state
+            .spaces
+            .scheduled_minutes(&notes, date)
+            .into_iter()
+            .map(|(journal, schedule, minute)| {
+                let key = crate::prompt_key(&schedule, date, minute);
+                let handled = notes
+                    .iter()
+                    .find(|note| note.id == journal)
+                    .and_then(|note| note.journal.as_ref())
+                    .and_then(|fields| fields.handled.get(&key).copied());
+                ScheduledPrompt { handled, journal, key, minute }
+            })
+            .collect())
     }
 
     pub fn due_prompts(
@@ -1014,21 +1013,22 @@ impl MobileNotebook {
         local_times: Vec<i64>,
     ) -> Result<Vec<MobilePrompt>> {
         let state = self.state()?;
-        Ok(state
+        let notes: Vec<Note> = state
             .spaces
             .all_journals()
             .into_iter()
             .filter(|note| journals.contains(&note.id))
-            .filter_map(|note| {
-                let prompt = state.spaces.due_prompt(note.id, today, minute, now, |_, at| {
-                    local_times.get(usize::from(at)).copied().unwrap_or(now)
-                })?;
-                Some(MobilePrompt {
-                    journal: note.id,
-                    key: prompt.key,
-                    minute: prompt.minute,
-                    title: state.spaces.link_title(note.id).unwrap_or_default(),
-                })
+            .collect();
+        let local = |_, at: u16| local_times.get(usize::from(at)).copied().unwrap_or(now);
+        Ok(state
+            .spaces
+            .due_prompts(&notes, today, minute, now, local)
+            .into_iter()
+            .map(|(journal, prompt)| MobilePrompt {
+                journal,
+                key: prompt.key,
+                minute: prompt.minute,
+                title: state.spaces.link_title(journal).unwrap_or_default(),
             })
             .collect())
     }
@@ -1260,6 +1260,18 @@ mod tests;
 #[uniffi::export]
 pub fn describe_rule(rule: Rule, start: Date) -> String {
     crate::describe_rule(&rule, start)
+}
+
+/// A rule as the library stores it, such as `FREQ=WEEKLY;BYDAY=MO`.
+#[uniffi::export]
+pub fn rule_text(rule: Rule) -> String {
+    rule.to_string()
+}
+
+/// The rule that `text` writes as the library stores it, or nothing if it isn't one.
+#[uniffi::export]
+pub fn parse_rule(text: String) -> Option<Rule> {
+    Rule::parse(&text)
 }
 
 /// The rules the repeat menu offers before Custom, for something that starts on `start`.

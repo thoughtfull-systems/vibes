@@ -42,6 +42,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -67,14 +68,17 @@ import systems.thoughtfull.commonplace.core.DaysOffUse
 import systems.thoughtfull.commonplace.core.MobileNote
 import systems.thoughtfull.commonplace.core.Question
 import systems.thoughtfull.commonplace.core.QuestionKind
+import systems.thoughtfull.commonplace.core.Rule
 import systems.thoughtfull.commonplace.core.Schedule
 import systems.thoughtfull.commonplace.core.Times
 import systems.thoughtfull.commonplace.core.answerPlaceholder
 import systems.thoughtfull.commonplace.core.describeRule
 import systems.thoughtfull.commonplace.core.newId
 import systems.thoughtfull.commonplace.core.parseAnswer
+import systems.thoughtfull.commonplace.core.parseRule
 import systems.thoughtfull.commonplace.core.parseTimeOfDay
 import systems.thoughtfull.commonplace.core.repeatPresets
+import systems.thoughtfull.commonplace.core.ruleText
 import systems.thoughtfull.commonplace.core.scheduleIsValid
 
 @Composable
@@ -565,6 +569,9 @@ private fun QuestionDialog(initial: Question?, dismiss: () -> Unit, save: (Quest
   )
 }
 
+/** Keeps a rule across configuration changes as the text the library stores. */
+private val ruleSaver = Saver<Rule, String>({ ruleText(it) }, { parseRule(it) })
+
 @Composable
 private fun ScheduleDialog(
   model: NotebookModel,
@@ -585,15 +592,19 @@ private fun ScheduleDialog(
   var end by rememberSaveable { mutableStateOf(minuteLabel(original?.end?.toInt() ?: 1020)) }
   var mean by rememberSaveable { mutableStateOf((original?.mean?.toInt() ?: 60).toString()) }
   var gap by rememberSaveable { mutableStateOf((original?.minGap?.toInt() ?: 20).toString()) }
-  var rule by remember {
+  var rule by rememberSaveable(stateSaver = ruleSaver) {
     mutableStateOf(initial?.rule ?: repeatPresets(LocalDate.now().toString())[1])
   }
-  var ruleStart by remember { mutableStateOf(initial?.start ?: LocalDate.now().toString()) }
-  var holidays by remember { mutableStateOf(initial?.daysOff?.holidays ?: DayOffEffect.IGNORE) }
-  var vacations by remember { mutableStateOf(initial?.daysOff?.vacations ?: DayOffEffect.IGNORE) }
+  var ruleStart by rememberSaveable { mutableStateOf(initial?.start ?: LocalDate.now().toString()) }
+  var holidays by rememberSaveable {
+    mutableStateOf(initial?.daysOff?.holidays ?: DayOffEffect.IGNORE)
+  }
+  var vacations by rememberSaveable {
+    mutableStateOf(initial?.daysOff?.vacations ?: DayOffEffect.IGNORE)
+  }
   var custom by remember { mutableStateOf(false) }
   val daysOff = DaysOffUse(holidays, vacations)
-  val id = remember { initial?.id ?: newId() }
+  val id = rememberSaveable { initial?.id ?: newId() }
   val schedule = if (random) {
     val from = parseTimeOfDay(start.trim())
     val to = parseTimeOfDay(end.trim())

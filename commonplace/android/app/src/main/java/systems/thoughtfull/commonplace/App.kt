@@ -85,10 +85,17 @@ fun CommonplaceApp(model: NotebookModel, incoming: Intent?, consumed: () -> Unit
     focusManager.clearFocus()
     keyboard?.hide()
     val from = navigation
-    scope.launch {
-      val own = model.read { it.note(id) }?.let(::ownTab)
-      if (navigation == from) {
-        navigation = from.go(Location(tabFor(own ?: from.current.tab, from.current.tab), id))
+    fun go(own: String?) {
+      navigation = from.go(Location(tabFor(own ?: from.current.tab, from.current.tab), id))
+    }
+    val known = state.notes.find { it.id == id }
+    if (known != null) {
+      go(ownTab(known))
+    } else {
+      // A note made just now may not be in the loaded notes yet.
+      scope.launch {
+        val own = model.read { it.note(id) }?.let(::ownTab)
+        if (navigation == from) go(own)
       }
     }
   }

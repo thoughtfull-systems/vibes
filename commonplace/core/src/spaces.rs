@@ -534,21 +534,50 @@ impl Spaces {
         self.owner(id)?.note_on(id, today)
     }
 
-    pub fn due_prompt(
+    /// The prompt each of `journals` shows now, if any, as [`Library::due_prompt`] finds it, with
+    /// each library's days off read once.
+    pub fn due_prompts(
         &self,
-        journal: NoteId,
+        journals: &[Note],
         today: Date,
         minute: u16,
         now: i64,
         local: impl Fn(Date, u16) -> i64,
-    ) -> Option<Prompt> {
-        self.owner(journal)?.due_prompt(journal, today, minute, now, local)
+    ) -> Vec<(NoteId, Prompt)> {
+        let mut due = Vec::new();
+        for library in self.all() {
+            let mut days_off = None;
+            for note in journals.iter().filter(|note| library.note_map(note.id).is_ok()) {
+                let Some(fields) = &note.journal else { continue };
+                let days_off = days_off.get_or_insert_with(|| library.days_off_set());
+                if let Some(prompt) =
+                    fields.due_prompt(note.id, today, minute, now, &local, days_off)
+                {
+                    due.push((note.id, prompt));
+                }
+            }
+        }
+        due
     }
 
-    pub fn schedule_minutes(&self, journal: NoteId, schedule: &Schedule, date: Date) -> Vec<u16> {
-        self.owner(journal)
-            .map(|library| library.schedule_minutes(journal, schedule, date))
-            .unwrap_or_default()
+    /// The local times, in minutes since midnight, at which each schedule of `journals` prompts on
+    /// `date`, with the journal and the schedule's identifier, and each library's days off read
+    /// once.
+    pub fn scheduled_minutes(&self, journals: &[Note], date: Date) -> Vec<(NoteId, String, u16)> {
+        let mut minutes = Vec::new();
+        for library in self.all() {
+            let mut days_off = None;
+            for note in journals.iter().filter(|note| library.note_map(note.id).is_ok()) {
+                let Some(fields) = &note.journal else { continue };
+                let days_off = days_off.get_or_insert_with(|| library.days_off_set());
+                for schedule in &fields.schedules {
+                    for minute in schedule.minutes_on(note.id, date, days_off) {
+                        minutes.push((note.id, schedule.id.clone(), minute));
+                    }
+                }
+            }
+        }
+        minutes
     }
 
     /// The dates the first `count` occurrences on or after `from` would fall on under `settings`,

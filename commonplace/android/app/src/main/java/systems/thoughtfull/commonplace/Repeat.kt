@@ -185,9 +185,8 @@ private fun NumberField(value: String, change: (String) -> Unit, modifier: Modif
 }
 
 /**
- * A number of days before or after an occurrence's date, with a checkbox that turns it off if
- * `optional` is set, as the Linux app's row shows them. `sign` is -1 for days before. A row that
- * isn't optional shows no offset as zero days. `key` names what the row belongs to, so that the
+ * A checkbox and a number of days before or after an occurrence's date, as the Linux app's row
+ * shows them. `sign` is -1 for days before. `key` names what the row belongs to, so that the
  * number the owner is typing stays put while saves of its first digits come back.
  */
 @Composable
@@ -196,20 +195,16 @@ internal fun OffsetRow(
   offset: Int?,
   sign: Int,
   after: String,
-  optional: Boolean,
   change: (Int?) -> Unit
 ) {
-  val on = offset != null || !optional
-  var text by remember(key, on) {
+  var text by remember(key, offset == null) {
     mutableStateOf(((offset ?: 0) * sign).coerceAtLeast(0).toString())
   }
   Row(verticalAlignment = Alignment.CenterVertically) {
-    if (optional) {
-      Checkbox(on, { checked -> change(if (checked) (text.toIntOrNull() ?: 0) * sign else null) })
-    }
+    Checkbox(offset != null, { on -> change(if (on) (text.toIntOrNull() ?: 0) * sign else null) })
     NumberField(text, { typed ->
       text = typed
-      typed.toIntOrNull()?.let { if (on) change(it * sign) }
+      typed.toIntOrNull()?.let { if (offset != null) change(it * sign) }
     })
     Text(" $after")
   }
