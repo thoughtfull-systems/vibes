@@ -196,7 +196,7 @@ impl DaysOff {
         match &self.rule {
             None => date <= self.last,
             Some(rule) => rule
-                .dates(self.first, date.add_days(-self.span()), |_| false)
+                .all_dates(self.first, date.add_days(-self.span()))
                 .next()
                 .is_some_and(|start| start <= date),
         }
@@ -209,7 +209,7 @@ impl DaysOff {
             None => Some(self.last),
             Some(rule) if rule.until.is_none() && rule.count.is_none() => None,
             Some(rule) => {
-                let last = rule.dates(self.first, self.first, |_| false).last()?;
+                let last = rule.all_dates(self.first, self.first).last()?;
                 Some(last.add_days(self.span()))
             }
         }

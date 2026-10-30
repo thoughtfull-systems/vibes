@@ -157,10 +157,14 @@ impl Rule {
         start: Date,
         from: Date,
         skip: impl Fn(Date) -> bool + 'a,
-    ) -> impl Iterator<Item = Date> + 'a {
-        let end =
-            self.count.and_then(|_| self.iterate(start, start, Box::new(|_| false), None).last());
+    ) -> Dates<'a> {
+        let end = self.count.and_then(|_| self.all_dates(start, start).last());
         self.iterate(start, from, Box::new(skip), end)
+    }
+
+    /// The dates the rule produces on or after `from`, counting from `start`, skipping none.
+    pub(crate) fn all_dates(&self, start: Date, from: Date) -> Dates<'_> {
+        self.iterate(start, from, Box::new(|_| false), None)
     }
 
     /// The dates as `dates` gives them, ending after `end` if given, or else after `count` dates.
@@ -331,7 +335,7 @@ impl fmt::Display for Rule {
     }
 }
 
-struct Dates<'a> {
+pub(crate) struct Dates<'a> {
     rule: &'a Rule,
     start: Date,
     from: Date,
@@ -570,11 +574,14 @@ impl RepeatForm {
             }
             Frequency::Weekly => {
                 // The editors count weeks from Sunday. They can keep a rule that counts from
-                // another day only if it picks no day that the two week starts put in different
-                // weeks.
+                // another day only if neither its days nor its start fall where the two week
+                // starts put them in different weeks.
                 let from_sunday = |day: u8| (day + 7 - WEEK[0]) % 7;
                 let same_weeks = rule.interval == 1
-                    || days.iter().all(|&day| from_sunday(day) >= from_sunday(rule.week_start));
+                    || days
+                        .iter()
+                        .chain([start.weekday()].iter())
+                        .all(|&day| from_sunday(day) >= from_sunday(rule.week_start));
                 let simple =
                     plain_days && rule.months.is_empty() && rule.positions.is_empty() && same_weeks;
                 if !days.is_empty() {
@@ -803,7 +810,7 @@ mod tests {
 
     fn first(rule: &str, start: &str, from: &str, n: usize) -> Vec<String> {
         let rule = Rule::parse(rule).unwrap();
-        rule.dates(date(start), date(from), |_| false).take(n).map(|d| d.to_string()).collect()
+        rule.all_dates(date(start), date(from)).take(n).map(|d| d.to_string()).collect()
     }
 
     #[test]
@@ -949,5 +956,8 @@ mod tests {
         assert!(RepeatForm::from_rule(&monday, start).is_none());
         let sunday = Rule::parse("FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,SU;WKST=SU").unwrap();
         assert_eq!(RepeatForm::from_rule(&sunday, start).unwrap().rule(), sunday);
+        let mondays = Rule::parse("FREQ=WEEKLY;INTERVAL=2;BYDAY=MO").unwrap();
+        assert!(RepeatForm::from_rule(&mondays, start).is_none());
+        assert!(RepeatForm::from_rule(&mondays, start.add_days(1)).is_some());
     }
 }

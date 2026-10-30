@@ -61,10 +61,12 @@ pub fn present(state: &Rc<State>, parent: &impl IsA<gtk::Widget>, id: NoteId, op
         state: state.clone(),
     });
     let weak = Rc::downgrade(&history);
-    state.connect_changed(move || {
-        if let Some(history) = weak.upgrade() {
+    state.connect_changed_while(move || {
+        let open = weak.upgrade();
+        if let Some(history) = &open {
             history.fill();
         }
+        open.is_some()
     });
     history.fill();
     // The dialog keeps the history alive until it closes, then lets it go, which also lets go of

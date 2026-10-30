@@ -60,8 +60,16 @@ impl RepeatMenu {
     /// Shows `rule`, which counts from `start`, or that nothing repeats, and offers presets that
     /// fall on `day`, such as the current occurrence's date.
     pub fn show(self: &Rc<Self>, rule: Option<&Rule>, start: Date, day: Date) {
-        let text =
-            rule.map_or_else(|| "Doesn't repeat".to_owned(), |rule| describe_rule(rule, start));
+        self.show_with(rule, false, start, day);
+    }
+
+    /// Shows `rule` as `show` does, or, if `unread` is set, a rule this version can't read.
+    pub fn show_with(self: &Rc<Self>, rule: Option<&Rule>, unread: bool, start: Date, day: Date) {
+        let text = match rule {
+            Some(rule) => describe_rule(rule, start),
+            None if unread => "Custom repeat".to_owned(),
+            None => "Doesn't repeat".to_owned(),
+        };
         self.label.set_label(&text);
         self.button.set_tooltip_text(Some(&text));
         while let Some(child) = self.items.first_child() {
@@ -69,7 +77,8 @@ impl RepeatMenu {
         }
         let mut choices: Vec<Option<(String, RepeatChoice, bool)>> = Vec::new();
         if self.allow_none {
-            choices.push(Some(("Doesn't repeat".into(), RepeatChoice::None, rule.is_none())));
+            let none = rule.is_none() && !unread;
+            choices.push(Some(("Doesn't repeat".into(), RepeatChoice::None, none)));
             choices.push(None);
         }
         for preset in repeat_presets(day) {

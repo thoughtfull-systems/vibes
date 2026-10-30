@@ -460,7 +460,7 @@ impl Schedule {
     fn prompts_on(&self, date: Date, days_off: &DaysOffSet) -> bool {
         let uses = &self.days_off;
         if !DaysOffSet::applies(uses) {
-            return self.rule.includes(self.start, date, |_| false);
+            return self.rule.all_dates(self.start, date).next() == Some(date);
         }
         let given = |day: Date| self.rule.includes(self.start, day, |d| days_off.skips(uses, d));
         if given(date) && days_off.moved(uses, date) == date {

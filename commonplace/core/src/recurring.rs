@@ -7,7 +7,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use loro::{LoroMap, LoroMapValue, LoroValue, ValueOrContainer};
 
-use crate::actions::{ACTION, ActionState, Date};
+use crate::actions::{ACTION, ActionState, Date, Hierarchy};
 use crate::days_off::{DaysOffSet, DaysOffUse};
 use crate::library::{MODIFIED, integer, loro_error, string};
 use crate::recur::Rule;
@@ -282,8 +282,12 @@ impl<'a> Occurrences<'a> {
     fn dates(&self, start: Date, from: Date) -> impl Iterator<Item = Date> + '_ {
         let uses = self.settings().days_off;
         let days_off = self.days_off;
-        let skips = DaysOffSet::applies(&uses);
-        self.settings().rule.dates(start, from, move |date| skips && days_off.skips(&uses, date))
+        let rule = &self.settings().rule;
+        if DaysOffSet::applies(&uses) {
+            rule.dates(start, from, move |date| days_off.skips(&uses, date))
+        } else {
+            rule.all_dates(start, from)
+        }
     }
 
     fn occurrence(&self, date: Date, status: OccurrenceStatus) -> Occurrence {
@@ -649,14 +653,13 @@ impl Library {
             return notes;
         }
         let hierarchy = self.hierarchy();
-        let ids: Vec<NoteId> = notes.iter().map(|note| note.id).collect();
         let ancestors: Vec<NoteId> = notes
             .iter()
             .filter(|note| note.action.is_some())
             .flat_map(|note| hierarchy.ancestors(note.id))
             .collect();
         let mut all: HashMap<NoteId, Note> =
-            notes.into_iter().map(|note| (note.id, note)).collect();
+            notes.iter().map(|note| (note.id, note.clone())).collect();
         for ancestor in ancestors {
             if !all.contains_key(&ancestor)
                 && let Some(note) = self.note(ancestor)
@@ -664,8 +667,9 @@ impl Library {
                 all.insert(ancestor, note);
             }
         }
-        self.resolve_recurrence(&mut all, today);
-        ids.into_iter().filter_map(|id| all.remove(&id)).collect()
+        self.resolve_recurrence_in(&mut all, today, &hierarchy);
+        // Looked up by position, not by draining `all`, so a note listed twice comes back twice.
+        notes.into_iter().map(|note| all.get(&note.id).cloned().unwrap_or(note)).collect()
     }
 
     /// A recurring action's current occurrence and its `upcoming` occurrences after it, in order,
@@ -750,6 +754,21 @@ impl Library {
         notes: &mut HashMap<NoteId, Note>,
         today: Date,
     ) -> HashMap<NoteId, Standing> {
+        let recurs =
+            |note: &Note| note.action.as_ref().is_some_and(|action| action.recur.is_some());
+        if !notes.values().any(recurs) {
+            return HashMap::new();
+        }
+        self.resolve_recurrence_in(notes, today, &self.hierarchy())
+    }
+
+    /// Resolves recurrence as `resolve_recurrence` does, with the library's `hierarchy`.
+    fn resolve_recurrence_in(
+        &self,
+        notes: &mut HashMap<NoteId, Note>,
+        today: Date,
+        hierarchy: &Hierarchy,
+    ) -> HashMap<NoteId, Standing> {
         let recurring: Vec<NoteId> = notes
             .values()
             .filter(|note| note.action.as_ref().is_some_and(|action| action.recur.is_some()))
@@ -758,7 +777,6 @@ impl Library {
         if recurring.is_empty() {
             return HashMap::new();
         }
-        let hierarchy = self.hierarchy();
         let days_off = self.days_off_set();
         let mut standings = HashMap::new();
         for &id in &recurring {
@@ -1051,7 +1069,9 @@ mod tests {
         let step = library.create_task("Empty the inbox", Some(id)).unwrap();
         let today = date("2026-10-05");
         library.check_action(step, true, today).unwrap();
-        let notes = library.notes_on(vec![library.note(step).unwrap()], today);
-        assert_eq!(notes[0].action.as_ref().unwrap().state, ActionState::Done);
+        let raw = library.note(step).unwrap();
+        let notes = library.notes_on(vec![raw.clone(), raw], today);
+        assert_eq!(notes.len(), 2);
+        assert!(notes.iter().all(|note| note.action.as_ref().unwrap().state == ActionState::Done));
     }
 }

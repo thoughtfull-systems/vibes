@@ -99,10 +99,12 @@ pub fn present(state: &Rc<State>, parent: &impl IsA<gtk::Widget>) {
         move |_| this.edit(None)
     ));
     let weak = Rc::downgrade(&this);
-    state.connect_changed(move || {
-        if let Some(this) = weak.upgrade() {
+    state.connect_changed_while(move || {
+        let open = weak.upgrade();
+        if let Some(this) = &open {
             this.fill();
         }
+        open.is_some()
     });
     this.fill();
     let keeper = RefCell::new(Some(this));
@@ -262,7 +264,8 @@ impl DaysOffDialog {
                     format_date(days.last)
                 };
                 last_button.set_label(&last);
-                repeat.show(days.rule.as_ref(), days.first, days.first);
+                let unread = days.unread_rule.is_some();
+                repeat.show_with(days.rule.as_ref(), unread, days.first, days.first);
             })
         };
         refresh();

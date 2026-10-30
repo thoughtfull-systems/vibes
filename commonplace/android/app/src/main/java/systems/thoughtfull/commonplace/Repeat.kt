@@ -73,7 +73,8 @@ internal sealed class RepeatChoice {
 /**
  * A button that shows how something repeats, by a rule that counts from `start`, with the same
  * menu as the Linux app: presets that fall on `day`, Custom, and, where the owner can turn
- * repeating off, "Doesn't repeat."
+ * repeating off, "Doesn't repeat." With `unread` set and no `rule`, it shows a rule this version
+ * can't read.
  */
 @Composable
 internal fun RepeatMenu(
@@ -82,6 +83,7 @@ internal fun RepeatMenu(
   allowNone: Boolean,
   modifier: Modifier = Modifier,
   day: String = start,
+  unread: Boolean = false,
   choose: (RepeatChoice) -> Unit
 ) {
   var expanded by remember { mutableStateOf(false) }
@@ -98,7 +100,7 @@ internal fun RepeatMenu(
     ) {
       AppIcon(R.drawable.repeat, modifier = Modifier.padding(end = 6.dp))
       Text(
-        rule?.let { describeRule(it, start) } ?: "Doesn't repeat",
+        rule?.let { describeRule(it, start) } ?: if (unread) "Custom repeat" else "Doesn't repeat",
         Modifier.weight(1f, fill = false),
         maxLines = 1,
         overflow = TextOverflow.Ellipsis
@@ -110,7 +112,7 @@ internal fun RepeatMenu(
         DropdownMenuItem(
           text = { Text("Doesn't repeat") },
           onClick = { pick(RepeatChoice.None) },
-          trailingIcon = { if (rule == null) AppIcon(R.drawable.actions) }
+          trailingIcon = { if (rule == null && !unread) AppIcon(R.drawable.actions) }
         )
         HorizontalDivider()
       }

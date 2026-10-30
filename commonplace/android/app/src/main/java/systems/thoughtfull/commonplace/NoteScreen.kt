@@ -555,9 +555,11 @@ internal fun ActionDetails(model: NotebookModel, note: MobileNote, open: (String
           RepeatChoice.None -> setRecurrence(null)
 
           is RepeatChoice.Preset ->
-            setRecurrence(
-              recur?.settings?.copy(rule = choice.rule) ?: newSettings(own, choice.rule)
-            )
+            if (recur != null) {
+              updateRecurrence { it.copy(rule = choice.rule) }
+            } else {
+              setRecurrence(newSettings(own, choice.rule))
+            }
 
           RepeatChoice.Custom -> custom = true
         }
@@ -664,7 +666,11 @@ internal fun ActionDetails(model: NotebookModel, note: MobileNote, open: (String
       daysOff = settings.daysOff,
       dismiss = { custom = false }
     ) { values ->
-      setRecurrence(settings.copy(rule = values.rule, start = values.start))
+      if (recur != null) {
+        updateRecurrence { it.copy(rule = values.rule, start = values.start) }
+      } else {
+        setRecurrence(settings.copy(rule = values.rule, start = values.start))
+      }
       custom = false
     }
   }
