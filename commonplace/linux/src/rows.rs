@@ -199,6 +199,31 @@ pub fn note_row(state: &Rc<State>, entry: &ActionEntry, show_path: bool) -> gtk:
     stamped_note_row(state, entry, show_path, None, None)
 }
 
+/// The grid columns of a step's row, which `step_row` lays out.
+pub const STEP_CHECK_COLUMN: i32 = 1;
+pub const STEP_TITLE_COLUMN: i32 = 2;
+pub const STEP_MENU_COLUMN: i32 = 3;
+
+/// A row for a step in an action's steps list, like `note_row`, with `handle` before the
+/// indentation and `menu` at the end of the title's line. The row's grid holds them on its first
+/// row, in the columns the constants above name.
+pub fn step_row(
+    state: &Rc<State>,
+    entry: &ActionEntry,
+    handle: &gtk::Widget,
+    menu: &gtk::Widget,
+) -> gtk::Box {
+    let row = stamped_note_row(state, entry, false, None, Some(menu.clone()));
+    let grid = row.first_child().and_downcast::<gtk::Grid>().expect("a note row holds a grid");
+    grid.insert_column(0);
+    grid.attach(handle, 0, 0, 1, 1);
+    if let Some(check) = grid.child_at(STEP_CHECK_COLUMN, 0) {
+        check.set_margin_start(row.margin_start());
+    }
+    row.set_margin_start(0);
+    row
+}
+
 /// A row for a note, like `note_row`, that also shows the time `stamp` names, and `title_end` at
 /// the end of the title's line.
 fn stamped_note_row(
