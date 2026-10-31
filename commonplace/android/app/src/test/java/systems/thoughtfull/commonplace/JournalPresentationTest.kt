@@ -14,12 +14,7 @@ import systems.thoughtfull.commonplace.core.Times
 
 class JournalPresentationTest {
   @Test
-  fun scheduleDescriptionsMatchLinuxForFixedRandomAndCustomDays() {
-    assertEquals("Every day", describeDays("FREQ=DAILY"))
-    assertEquals("Every day", describeDays("FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR,SA,SU"))
-    assertEquals("Workdays", describeDays("FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR"))
-    assertEquals("Su, Sa", describeDays("FREQ=WEEKLY;BYDAY=SA,SU"))
-    assertEquals("Mo, We, Fr", describeDays("FREQ=WEEKLY;BYDAY=FR,MO,WE"))
+  fun scheduleTimeDescriptionsMatchLinuxForFixedAndRandomTimes() {
     assertEquals("At 09:00, 17:30", describeTimes(Times.Fixed(listOf(540u, 1050u))))
     assertEquals(
       "About every 60 minutes from 09:00 until 17:00",

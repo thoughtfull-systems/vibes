@@ -8,7 +8,9 @@ use std::fmt;
 use loro::{LoroMap, LoroMovableList, LoroValue, UpdateOptions, ValueOrContainer};
 
 use crate::actions::Date;
+use crate::days_off::{DaysOffKind, DaysOffSet, DaysOffUse};
 use crate::library::{MODIFIED, integer, loro_error, string};
+use crate::recur::Rule;
 use crate::{Error, Library, NoteId, wikilink};
 
 pub const JOURNAL_KIND: &str = "journal";
@@ -94,18 +96,19 @@ impl Journal {
     /// nobody has handled, or whose snooze has run out. `minute` is the local time of day, in
     /// minutes since midnight, `now` the current timestamp, and `local` turns a local date and
     /// minute into a timestamp.
-    pub fn due_prompt(
+    pub(crate) fn due_prompt(
         &self,
         journal: NoteId,
         today: Date,
         minute: u16,
         now: i64,
         local: impl Fn(Date, u16) -> i64,
+        days_off: &DaysOffSet,
     ) -> Option<Prompt> {
         self.schedules
             .iter()
             .flat_map(|schedule| {
-                schedule.minutes_on(journal, today).into_iter().map(|at| Prompt {
+                schedule.minutes_on(journal, today, days_off).into_iter().map(|at| Prompt {
                     journal,
                     key: prompt_key(&schedule.id, today, at),
                     date: today,
@@ -355,13 +358,21 @@ impl ChoiceOption {
 #[cfg_attr(feature = "mobile", derive(uniffi::Record))]
 pub struct Schedule {
     pub id: String,
-    pub days: Days,
+    /// The days the schedule prompts on.
+    pub rule: Rule,
+    /// The date the rule counts from.
+    pub start: Date,
+    pub days_off: DaysOffUse,
     pub times: Times,
 }
 
+/// The date a schedule with no `start` counts from, so that its rule covers every date.
+const NO_START: Date = Date::EPOCH;
+
 impl Schedule {
-    pub fn new(days: Days, times: Times) -> Self {
-        Self { id: NoteId::generate().to_string(), days, times }
+    pub fn new(rule: Rule, start: Date, times: Times) -> Self {
+        let id = NoteId::generate().to_string();
+        Self { id, rule, start, days_off: DaysOffUse::default(), times }
     }
 
     /// Reads a stored schedule, or nothing if it's malformed or one `set_schedule` would refuse.
@@ -393,13 +404,27 @@ impl Schedule {
             },
             _ => return None,
         };
-        let days = map.get("rule").and_then(|v| string(v.clone())).and_then(|r| Days::parse(&r))?;
-        let schedule = Self { id: id.to_owned(), days, times };
+        let rule = map.get("rule").and_then(|v| string(v.clone())).and_then(|r| Rule::parse(&r))?;
+        let start = match map.get("from").and_then(|v| string(v.clone())) {
+            Some(text) => text.parse().ok()?,
+            None => NO_START,
+        };
+        let days_off = DaysOffUse::from_map(map);
+        let schedule = Self { id: id.to_owned(), rule, start, days_off, times };
         schedule.is_valid().then_some(schedule)
     }
 
     fn to_value(&self) -> LoroValue {
-        let mut fields: Vec<(String, LoroValue)> = vec![("rule".into(), self.days.rule().into())];
+        let mut fields: Vec<(String, LoroValue)> =
+            vec![("rule".into(), self.rule.to_string().into())];
+        if self.start != NO_START {
+            fields.push(("from".into(), self.start.to_string().into()));
+        }
+        for kind in DaysOffKind::ALL {
+            if let Some(effect) = self.days_off.effect(kind).as_str() {
+                fields.push((kind.key().into(), effect.into()));
+            }
+        }
         match &self.times {
             Times::Fixed(times) => {
                 fields.push(("kind".into(), "fixed".into()));
@@ -418,19 +443,49 @@ impl Schedule {
         LoroValue::Map(fields.into())
     }
 
-    /// Whether every time falls within a day, and a random schedule has a window and a mean gap.
+    /// Whether the rule is one the spec allows, every time falls within a day, and a random
+    /// schedule has a window and a mean gap.
     pub fn is_valid(&self) -> bool {
-        match &self.times {
-            Times::Fixed(times) => !times.is_empty() && times.iter().all(|at| *at < 1440),
-            &Times::Random { start, end, mean, min_gap } => {
-                start < end && end < 1440 && mean > 0 && mean <= 1440 && min_gap <= 1440
+        self.rule.is_valid()
+            && match &self.times {
+                Times::Fixed(times) => !times.is_empty() && times.iter().all(|at| *at < 1440),
+                &Times::Random { start, end, mean, min_gap } => {
+                    start < end && end < 1440 && mean > 0 && mean <= 1440 && min_gap <= 1440
+                }
             }
+    }
+
+    /// Whether the schedule prompts on `date`: the rule gives the date, unless a day off moves it
+    /// away, or the rule gives an earlier date that a day off moves to it.
+    fn prompts_on(&self, date: Date, days_off: &DaysOffSet) -> bool {
+        let uses = &self.days_off;
+        if !DaysOffSet::applies(uses) {
+            return self.rule.all_dates(self.start, date).next() == Some(date);
         }
+        let end = self.rule.end(self.start);
+        let given = |day: Date| {
+            let skip = Box::new(|d| days_off.skips(uses, d));
+            self.rule.iterate(self.start, day, skip, end).next() == Some(day)
+        };
+        if given(date) && days_off.moved(uses, date) == date {
+            return true;
+        }
+        let first = days_off.before(uses, date).max(self.start);
+        let skip = Box::new(|day| days_off.skips(uses, day));
+        self.rule
+            .iterate(self.start, first, skip, end)
+            .take_while(|&day| day < date)
+            .any(|day| days_off.moved(uses, day) == date)
     }
 
     /// The local times, in minutes since midnight, at which the schedule prompts on `date`.
-    pub fn minutes_on(&self, journal: NoteId, date: Date) -> Vec<u16> {
-        if !self.days.includes(date) {
+    pub(crate) fn minutes_on(
+        &self,
+        journal: NoteId,
+        date: Date,
+        days_off: &DaysOffSet,
+    ) -> Vec<u16> {
+        if !self.prompts_on(date, days_off) {
             return Vec::new();
         }
         match &self.times {
@@ -451,63 +506,6 @@ impl Schedule {
                 minutes
             }
         }
-    }
-}
-
-/// The days a schedule prompts on, from an `RRULE` of dates: every day, or certain days of the
-/// week.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct Days {
-    /// Whether the schedule prompts on each day of the week, Monday first.
-    pub weekdays: [bool; 7],
-}
-
-const WEEKDAYS: [&str; 7] = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"];
-
-impl Days {
-    pub const EVERY_DAY: Self = Self { weekdays: [true; 7] };
-    pub const WORKDAYS: Self = Self { weekdays: [true, true, true, true, true, false, false] };
-
-    /// Reads `FREQ=DAILY`, or `FREQ=WEEKLY` with `BYDAY` naming days without ordinals.
-    pub fn parse(rule: &str) -> Option<Self> {
-        let mut freq = None;
-        let mut by_day = None;
-        for part in rule.split(';') {
-            let (key, value) = part.split_once('=')?;
-            match key {
-                "FREQ" => freq = Some(value),
-                "BYDAY" => {
-                    let mut weekdays = [false; 7];
-                    for day in value.split(',') {
-                        weekdays[WEEKDAYS.iter().position(|&name| name == day)?] = true;
-                    }
-                    by_day = Some(weekdays);
-                }
-                _ => return None,
-            }
-        }
-        match (freq?, by_day) {
-            ("DAILY", None) => Some(Self::EVERY_DAY),
-            ("WEEKLY", Some(weekdays)) if weekdays.contains(&true) => Some(Self { weekdays }),
-            _ => None,
-        }
-    }
-
-    pub fn rule(&self) -> String {
-        if self.weekdays == [true; 7] {
-            return "FREQ=DAILY".to_owned();
-        }
-        let days: Vec<&str> = WEEKDAYS
-            .iter()
-            .zip(self.weekdays)
-            .filter(|(_, on)| *on)
-            .map(|(name, _)| *name)
-            .collect();
-        format!("FREQ=WEEKLY;BYDAY={}", days.join(","))
-    }
-
-    pub fn includes(&self, date: Date) -> bool {
-        self.weekdays[usize::from(date.weekday())]
     }
 }
 
@@ -859,6 +857,26 @@ impl Library {
         self.commit()
     }
 
+    /// The journal's prompt to show now, if any, as [`Journal::due_prompt`] finds it, with the
+    /// library's days off applied.
+    pub fn due_prompt(
+        &self,
+        journal: NoteId,
+        today: Date,
+        minute: u16,
+        now: i64,
+        local: impl Fn(Date, u16) -> i64,
+    ) -> Option<Prompt> {
+        let fields = self.note(journal)?.journal?;
+        fields.due_prompt(journal, today, minute, now, local, &self.days_off_set())
+    }
+
+    /// The local times, in minutes since midnight, at which a journal's schedule prompts on
+    /// `date`, with the library's days off applied.
+    pub fn schedule_minutes(&self, journal: NoteId, schedule: &Schedule, date: Date) -> Vec<u16> {
+        schedule.minutes_on(journal, date, &self.days_off_set())
+    }
+
     /// Records what happened to a prompt, and forgets the records of prompts from before
     /// yesterday, which never show again.
     pub fn handle_prompt(
@@ -1123,17 +1141,54 @@ mod tests {
     }
 
     #[test]
-    fn reads_and_writes_day_rules() {
-        assert_eq!(Days::parse("FREQ=DAILY"), Some(Days::EVERY_DAY));
-        let workdays = Days::parse("FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR").unwrap();
-        assert_eq!(workdays, Days::WORKDAYS);
-        assert_eq!(workdays.rule(), "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR");
-        assert_eq!(Days::EVERY_DAY.rule(), "FREQ=DAILY");
-        assert_eq!(Days::parse("FREQ=MONTHLY"), None);
-        assert_eq!(Days::parse("FREQ=WEEKLY;BYDAY=1MO"), None);
+    fn schedules_follow_rules_and_days_off() {
+        let mut library = Library::in_memory();
+        let journal = library.create_journal("Log").unwrap();
+        let workdays = Rule::parse("FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR").unwrap();
+        let mut schedule = Schedule::new(workdays, Date::EPOCH, Times::Fixed(vec![600]));
+        library.set_schedule(journal, &schedule).unwrap();
+        let read = library.note(journal).unwrap().journal.unwrap().schedules;
+        assert_eq!(read, [schedule.clone()]);
+        let minutes = |library: &Library, schedule: &Schedule, day: &str| {
+            library.schedule_minutes(journal, schedule, date(day))
+        };
         // 2026-10-24 is a Saturday.
-        assert!(!workdays.includes(date("2026-10-24")));
-        assert!(workdays.includes(date("2026-10-26")));
+        assert!(minutes(&library, &schedule, "2026-10-24").is_empty());
+        assert_eq!(minutes(&library, &schedule, "2026-10-26"), [600]);
+        let mut holiday =
+            crate::DaysOff::new(DaysOffKind::Holidays, "Founders' day", date("2026-10-26"));
+        holiday.rule = Rule::parse("FREQ=YEARLY");
+        library.set_days_off(&holiday).unwrap();
+        assert_eq!(minutes(&library, &schedule, "2026-10-26"), [600]);
+        schedule.days_off.holidays = crate::DayOffEffect::Skip;
+        assert!(minutes(&library, &schedule, "2026-10-26").is_empty());
+        assert!(minutes(&library, &schedule, "2026-10-27").len() == 1);
+        schedule.days_off.holidays = crate::DayOffEffect::Move;
+        library.set_schedule(journal, &schedule).unwrap();
+        let read = library.note(journal).unwrap().journal.unwrap().schedules;
+        assert_eq!(read, [schedule.clone()]);
+        assert!(minutes(&library, &schedule, "2026-10-26").is_empty());
+        assert_eq!(minutes(&library, &schedule, "2026-10-27"), [600]);
+    }
+
+    #[test]
+    fn moved_prompts_pass_days_off_they_skip() {
+        let mut library = Library::in_memory();
+        let journal = library.create_journal("Log").unwrap();
+        let mondays = Rule::parse("FREQ=WEEKLY;BYDAY=MO").unwrap();
+        let mut schedule = Schedule::new(mondays, Date::EPOCH, Times::Fixed(vec![600]));
+        schedule.days_off.holidays = crate::DayOffEffect::Move;
+        schedule.days_off.vacations = crate::DayOffEffect::Skip;
+        // 2026-10-26 is a Monday.
+        let holiday = crate::DaysOff::new(DaysOffKind::Holidays, "Holiday", date("2026-10-26"));
+        library.set_days_off(&holiday).unwrap();
+        let mut trip = crate::DaysOff::new(DaysOffKind::Vacations, "Trip", date("2026-10-27"));
+        trip.last = date("2026-10-28");
+        library.set_days_off(&trip).unwrap();
+        let minutes = |day: &str| library.schedule_minutes(journal, &schedule, date(day));
+        assert!(minutes("2026-10-26").is_empty());
+        assert!(minutes("2026-10-27").is_empty());
+        assert_eq!(minutes("2026-10-29"), [600]);
     }
 
     #[test]
@@ -1147,24 +1202,25 @@ mod tests {
             Times::Random { start: 600, end: 1440, mean: 30, min_gap: 0 },
             Times::Random { start: 600, end: 700, mean: 0, min_gap: 0 },
         ] {
-            let schedule = Schedule::new(Days::EVERY_DAY, times);
+            let schedule = Schedule::new(Rule::default(), Date::EPOCH, times);
             assert!(matches!(
                 library.set_schedule(journal, &schedule),
                 Err(Error::InvalidSchedule)
             ));
         }
-        let fixed = Schedule::new(Days::EVERY_DAY, Times::Fixed(vec![0, 1439]));
+        let fixed = Schedule::new(Rule::default(), Date::EPOCH, Times::Fixed(vec![0, 1439]));
         library.set_schedule(journal, &fixed).unwrap();
         // Another device or an earlier version can still store a schedule that set_schedule
         // refuses.
         let backwards = Schedule::new(
-            Days::EVERY_DAY,
+            Rule::default(),
+            Date::EPOCH,
             Times::Random { start: 700, end: 600, mean: 30, min_gap: 0 },
         );
         let schedules = library.schedules_map(journal).unwrap();
         schedules.insert(&backwards.id, backwards.to_value()).unwrap();
         let read = library.note(journal).unwrap().journal.unwrap().schedules;
-        assert_eq!(read, [fixed.clone()]);
+        assert_eq!(read, std::slice::from_ref(&fixed));
         library.set_schedule(journal, &fixed).unwrap();
         assert!(schedules.get(&backwards.id).is_none());
     }
@@ -1174,12 +1230,14 @@ mod tests {
         let journal = NoteId::from_uuid(uuid::Uuid::from_u128(1));
         let schedule = Schedule {
             id: "s".to_owned(),
-            days: Days::EVERY_DAY,
+            rule: Rule::default(),
+            start: Date::EPOCH,
+            days_off: DaysOffUse::default(),
             times: Times::Random { start: 9 * 60, end: 17 * 60, mean: 45, min_gap: 20 },
         };
-        let first = schedule.minutes_on(journal, date("2026-10-26"));
-        assert_eq!(first, schedule.minutes_on(journal, date("2026-10-26")));
-        assert_ne!(first, schedule.minutes_on(journal, date("2026-10-27")));
+        let first = schedule.minutes_on(journal, date("2026-10-26"), &DaysOffSet::default());
+        assert_eq!(first, schedule.minutes_on(journal, date("2026-10-26"), &DaysOffSet::default()));
+        assert_ne!(first, schedule.minutes_on(journal, date("2026-10-27"), &DaysOffSet::default()));
         assert!(!first.is_empty());
         assert!(first.iter().all(|&minute| (9 * 60..17 * 60).contains(&minute)));
         assert!(first.windows(2).all(|pair| pair[1] - pair[0] >= 20));
@@ -1196,7 +1254,8 @@ mod tests {
 
     fn work_log(library: &mut Library) -> (NoteId, Schedule) {
         let journal = library.create_journal("Work log").unwrap();
-        let schedule = Schedule::new(Days::EVERY_DAY, Times::Fixed(vec![10 * 60, 14 * 60]));
+        let schedule =
+            Schedule::new(Rule::default(), Date::EPOCH, Times::Fixed(vec![10 * 60, 14 * 60]));
         library.set_schedule(journal, &schedule).unwrap();
         (journal, schedule)
     }
@@ -1208,8 +1267,7 @@ mod tests {
         let today = date("2026-10-26");
         let local = |_: Date, minute: u16| i64::from(minute) * 60_000;
         let due = |library: &Library, minute: u16| {
-            let fields = library.note(journal).unwrap().journal.unwrap();
-            fields.due_prompt(journal, today, minute, i64::from(minute) * 60_000, local)
+            library.due_prompt(journal, today, minute, i64::from(minute) * 60_000, local)
         };
         assert_eq!(due(&library, 9 * 60), None);
         let morning = due(&library, 11 * 60).unwrap();

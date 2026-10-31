@@ -5,12 +5,14 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use commonplace_core::{
-    COLORS, ChoiceOption, Days, Journal, Note, NoteId, Question, QuestionKind, Schedule, Times,
-    format_time, parse_loose_time, parse_time,
+    COLORS, ChoiceOption, Date, Journal, Note, NoteId, Question, QuestionKind, Rule, Schedule,
+    Times, describe_rule, format_time, parse_loose_time, parse_time,
 };
 use gtk::glib;
 
 use crate::journals_view::{dot, journal_color};
+use crate::repeat::{DaysOffMenus, RepeatChoice, RepeatEditor, RepeatMenu, present_repeat_dialog};
+use crate::rows::today;
 use crate::state::State;
 
 /// The question types in the order the picker lists them, with their names.
@@ -27,11 +29,6 @@ const KINDS: [(&str, &str); 8] = [
 
 /// Each option's identifier, if it has one already, and its entry.
 type Options = Rc<RefCell<Vec<(Option<String>, gtk::Entry)>>>;
-
-/// The days of the week as the app shows them, starting on Sunday, each with its index in
-/// `Days::weekdays`, which starts on Monday.
-const WEEKDAYS: [(usize, &str); 7] =
-    [(6, "Su"), (0, "Mo"), (1, "Tu"), (2, "We"), (3, "Th"), (4, "Fr"), (5, "Sa")];
 
 /// The details sidebar's fields for a journal: whether it prompts here, its color, its questions,
 /// and its schedules.
@@ -240,7 +237,7 @@ impl JournalPanel {
         }
         for schedule in &journal.schedules {
             let row = adw::ActionRow::builder()
-                .title(describe_days(&schedule.days))
+                .title(describe_rule(&schedule.rule, schedule.start))
                 .subtitle(describe_times(&schedule.times))
                 .build();
             let edit = icon_button(icon!("edit"), "Edit");
@@ -315,7 +312,7 @@ impl JournalPanel {
         let Some(journal) = self.current.get() else {
             return;
         };
-        let editor = ScheduleEditor::new(schedule.as_ref());
+        let editor = ScheduleEditor::new(schedule.as_ref(), &self.state, journal);
         let adding = schedule.is_none();
         let dialog = adw::AlertDialog::new(
             Some(if adding { "Add schedule" } else { "Edit schedule" }),
@@ -555,32 +552,28 @@ fn add_option(holder: &gtk::Box, options: &Options, id: Option<String>, label: &
 /// The widgets that edit one schedule.
 struct ScheduleEditor {
     widget: gtk::Box,
-    days: Vec<gtk::ToggleButton>,
+    rule: RefCell<Rule>,
+    start: RefCell<Date>,
+    repeat: Rc<RepeatMenu>,
+    days_off: DaysOffMenus,
     random: gtk::Switch,
     times: gtk::Entry,
-    start: gtk::Entry,
+    start_time: gtk::Entry,
     end: gtk::Entry,
     mean: gtk::SpinButton,
     min_gap: gtk::SpinButton,
 }
 
 impl ScheduleEditor {
-    fn new(schedule: Option<&Schedule>) -> Rc<Self> {
-        let weekdays = schedule.map_or(Days::WORKDAYS, |schedule| schedule.days).weekdays;
-        let day_row =
-            gtk::Box::builder().css_classes(["linked"]).halign(gtk::Align::Center).build();
-        let days: Vec<gtk::ToggleButton> = WEEKDAYS
-            .iter()
-            .map(|&(index, name)| {
-                let button =
-                    gtk::ToggleButton::builder().label(name).active(weekdays[index]).build();
-                day_row.append(&button);
-                button
-            })
-            .collect();
+    fn new(schedule: Option<&Schedule>, state: &Rc<State>, journal: NoteId) -> Rc<Self> {
+        let workdays = || Rule::parse("FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR").unwrap_or_default();
+        let rule = schedule.map_or_else(workdays, |schedule| schedule.rule.clone());
+        let start = schedule.map_or_else(today, |schedule| schedule.start);
+        let uses = schedule.map(|schedule| schedule.days_off).unwrap_or_default();
+        let repeat = RepeatMenu::new(false);
         let random = gtk::Switch::builder().halign(gtk::Align::Start).build();
         let times = gtk::Entry::builder().placeholder_text("10:00, 14:00, 17:00").build();
-        let start = gtk::Entry::builder().placeholder_text("09:00").text("09:00").build();
+        let start_time = gtk::Entry::builder().placeholder_text("09:00").text("09:00").build();
         let end = gtk::Entry::builder().placeholder_text("17:00").text("17:00").build();
         let mean = gtk::SpinButton::with_range(1.0, 720.0, 5.0);
         mean.set_value(60.0);
@@ -593,7 +586,7 @@ impl ScheduleEditor {
             }
             Some(Times::Random { start: s, end: e, mean: m, min_gap: g }) => {
                 random.set_active(true);
-                start.set_text(&format_time(*s));
+                start_time.set_text(&format_time(*s));
                 end.set_text(&format_time(*e));
                 mean.set_value(f64::from(*m));
                 min_gap.set_value(f64::from(*g));
@@ -602,23 +595,31 @@ impl ScheduleEditor {
         }
         let grid = gtk::Grid::builder().column_spacing(12).row_spacing(6).build();
         let label = |text: &str| gtk::Label::builder().label(text).xalign(0.0).build();
-        grid.attach(&label("Random times?"), 0, 0, 1, 1);
-        grid.attach(&random, 1, 0, 1, 1);
+        grid.attach(&label("Repeats"), 0, 0, 1, 1);
+        grid.attach(&repeat.button, 1, 0, 1, 1);
+        grid.attach(&label("Random times?"), 0, 1, 1, 1);
+        grid.attach(&random, 1, 1, 1, 1);
         let times_label = label("Times");
-        grid.attach(&times_label, 0, 1, 1, 1);
-        grid.attach(&times, 1, 1, 1, 1);
+        grid.attach(&times_label, 0, 2, 1, 1);
+        grid.attach(&times, 1, 2, 1, 1);
         let random_rows = [
-            (label("From"), start.clone().upcast::<gtk::Widget>()),
+            (label("From"), start_time.clone().upcast::<gtk::Widget>()),
             (label("Until"), end.clone().upcast()),
             (label("Minutes apart, on average"), mean.clone().upcast()),
             (label("Minutes apart, at least"), min_gap.clone().upcast()),
         ];
         for (row, (label, widget)) in random_rows.iter().enumerate() {
-            grid.attach(label, 0, row as i32 + 2, 1, 1);
-            grid.attach(widget, 1, row as i32 + 2, 1, 1);
+            grid.attach(label, 0, row as i32 + 3, 1, 1);
+            grid.attach(widget, 1, row as i32 + 3, 1, 1);
+        }
+        grid.attach(&gtk::Separator::new(gtk::Orientation::Horizontal), 0, 7, 2, 1);
+        let days_off = DaysOffMenus::new();
+        days_off.show(uses);
+        for ((name, menu), row) in days_off.rows().zip(8..) {
+            grid.attach(&label(name), 0, row, 1, 1);
+            grid.attach(menu, 1, row, 1, 1);
         }
         let widget = gtk::Box::new(gtk::Orientation::Vertical, 12);
-        widget.append(&day_row);
         widget.append(&grid);
         let update = glib::clone!(
             #[weak]
@@ -636,21 +637,67 @@ impl ScheduleEditor {
         );
         update(random.is_active());
         random.connect_active_notify(move |random| update(random.is_active()));
-        Rc::new(Self { widget, days, random, times, start, end, mean, min_gap })
+        let editor = Rc::new(Self {
+            widget,
+            rule: RefCell::new(rule),
+            start: RefCell::new(start),
+            repeat,
+            days_off,
+            random,
+            times,
+            start_time,
+            end,
+            mean,
+            min_gap,
+        });
+        editor.show_rule();
+        let state = state.clone();
+        editor.repeat.connect_chosen(glib::clone!(
+            #[weak]
+            editor,
+            move |choice| match choice {
+                RepeatChoice::Rule(rule) => {
+                    *editor.rule.borrow_mut() = rule;
+                    editor.show_rule();
+                }
+                RepeatChoice::None => {}
+                RepeatChoice::Custom => {
+                    let rule = editor.rule.borrow().clone();
+                    let start = *editor.start.borrow();
+                    let uses = editor.days_off.uses();
+                    let preview = crate::days_off::preview(&state, Some(journal), uses);
+                    let custom = RepeatEditor::new(Some(&rule), start, true, preview);
+                    present_repeat_dialog(
+                        &editor.widget,
+                        custom,
+                        glib::clone!(
+                            #[weak]
+                            editor,
+                            move |values| {
+                                *editor.rule.borrow_mut() = values.rule;
+                                *editor.start.borrow_mut() = values.start;
+                                editor.show_rule();
+                            }
+                        ),
+                    );
+                }
+            }
+        ));
+        editor
+    }
+
+    fn show_rule(self: &Rc<Self>) {
+        let start = *self.start.borrow();
+        self.repeat.show(Some(&self.rule.borrow()), start, start);
     }
 
     /// The schedule the widgets describe, keeping `existing`'s identifier.
     fn schedule(&self, existing: Option<&Schedule>) -> Option<Schedule> {
-        let mut weekdays = [false; 7];
-        for (&(index, _), button) in WEEKDAYS.iter().zip(&self.days) {
-            weekdays[index] = button.is_active();
-        }
-        if !weekdays.contains(&true) {
-            return None;
-        }
-        let days = Days { weekdays };
+        let rule = self.rule.borrow().clone();
+        let start = *self.start.borrow();
+        let days_off = self.days_off.uses();
         let times = if self.random.is_active() {
-            let start = parse_time(self.start.text().trim())?;
+            let start = parse_time(self.start_time.text().trim())?;
             let end = parse_time(self.end.text().trim())?;
             if end <= start {
                 return None;
@@ -677,8 +724,8 @@ impl ScheduleEditor {
             Times::Fixed(list)
         };
         Some(match existing {
-            Some(existing) => Schedule { days, times, ..existing.clone() },
-            None => Schedule::new(days, times),
+            Some(existing) => Schedule { rule, start, days_off, times, ..existing.clone() },
+            None => Schedule { days_off, ..Schedule::new(rule, start, times) },
         })
     }
 }
@@ -701,22 +748,6 @@ fn describe_question(question: &Question) -> String {
         }
         _ => name.to_owned(),
     }
-}
-
-/// The days a schedule prompts on, as words.
-pub fn describe_days(days: &Days) -> String {
-    if *days == Days::EVERY_DAY {
-        return "Every day".to_owned();
-    }
-    if *days == Days::WORKDAYS {
-        return "Workdays".to_owned();
-    }
-    let names: Vec<&str> = WEEKDAYS
-        .iter()
-        .filter(|&&(index, _)| days.weekdays[index])
-        .map(|&(_, name)| name)
-        .collect();
-    names.join(", ")
 }
 
 /// The times a schedule prompts at, as words.

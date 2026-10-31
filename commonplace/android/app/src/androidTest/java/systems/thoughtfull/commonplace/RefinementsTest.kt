@@ -35,11 +35,14 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
+import systems.thoughtfull.commonplace.core.DayOffEffect
+import systems.thoughtfull.commonplace.core.DaysOffUse
 import systems.thoughtfull.commonplace.core.Question
 import systems.thoughtfull.commonplace.core.QuestionKind
 import systems.thoughtfull.commonplace.core.Schedule
 import systems.thoughtfull.commonplace.core.Times
 import systems.thoughtfull.commonplace.core.noteUri
+import systems.thoughtfull.commonplace.core.parseRule
 
 class RefinementsTest {
   @get:Rule val compose = createComposeRule()
@@ -237,7 +240,16 @@ class RefinementsTest {
           Question("two", "Second question", QuestionKind.YesNo, null),
           true
         )
-        core.setSchedule(journal, Schedule("daily", "FREQ=DAILY", Times.Fixed(listOf(540u))))
+        core.setSchedule(
+          journal,
+          Schedule(
+            "daily",
+            checkNotNull(parseRule("FREQ=DAILY")),
+            LocalDate.now().toString(),
+            DaysOffUse(DayOffEffect.IGNORE, DayOffEffect.IGNORE),
+            Times.Fixed(listOf(540u))
+          )
+        )
         Triple(
           journal,
           other,

@@ -6,19 +6,15 @@ use std::sync::{Arc, Mutex, MutexGuard, Weak};
 
 use crate::sync::{Config, Host, OutgoingState, Status, Syncer};
 use crate::{
-    Action, ActionChange, ActionDates, ActionView, Answer, Date, Days, EditBase, Handled, Journal,
-    ListKey, Note, NoteId, Question, QuestionKind, Schedule, ShownTitles, Spaces, Style,
+    Action, ActionChange, ActionDates, ActionView, Answer, Date, DaysOff, DaysOffKind, EditBase,
+    Handled, Journal, ListKey, Note, NoteId, Occurrence, OccurrenceState, OccurrenceSummary,
+    Question, QuestionKind, RecurrenceSettings, RepeatForm, Rule, Schedule, ShownTitles, Spaces,
+    Style,
 };
 
 uniffi::custom_type!(Date, String, {
     lower: |date| date.to_string(),
     try_lift: |text| Ok(text.parse()?),
-});
-uniffi::custom_type!(Days, String, {
-    lower: |days| days.rule(),
-    try_lift: |text| {
-        Days::parse(&text).ok_or_else(|| uniffi::deps::anyhow::anyhow!("invalid days"))
-    },
 });
 uniffi::custom_type!(NoteId, String, {
     lower: |id| id.to_string(),
@@ -82,6 +78,13 @@ pub struct MobileAction {
     pub note: MobileNote,
     pub parents: Vec<NoteId>,
     pub stalled: bool,
+    pub waiting: u32,
+}
+
+#[derive(uniffi::Record)]
+pub struct MobileDaysOff {
+    pub days: DaysOff,
+    pub space: String,
 }
 
 #[derive(uniffi::Record)]
@@ -622,13 +625,14 @@ impl MobileNotebook {
         Ok(())
     }
 
-    pub fn notes(&self, query: String) -> Result<Vec<MobileNote>> {
+    /// The notes that match `query`, with each recurring action and its steps as of `today`.
+    pub fn notes(&self, query: String, today: Date) -> Result<Vec<MobileNote>> {
         let state = self.state()?;
+        let notes = state.spaces.notes().into_iter().filter(|note| note.matches(&query)).collect();
         Ok(state
             .spaces
-            .notes()
+            .notes_on(notes, today)
             .into_iter()
-            .filter(|note| note.matches(&query))
             .map(|note| mobile_note(&state.spaces, note))
             .collect())
     }
@@ -650,6 +654,7 @@ impl MobileNotebook {
                 note: mobile_note(&state.spaces, entry.note),
                 parents: entry.parents,
                 stalled: entry.stalled,
+                waiting: entry.waiting,
             })
             .collect())
     }
@@ -666,6 +671,7 @@ impl MobileNotebook {
                 note: mobile_note(&state.spaces, entry.note),
                 parents: entry.parents,
                 stalled: entry.stalled,
+                waiting: entry.waiting,
             })
             .collect())
     }
@@ -741,6 +747,107 @@ impl MobileNotebook {
         })
     }
 
+    /// A note as of `today`, with a recurring action's dates and its steps' states for the current
+    /// occurrence.
+    pub fn note_on(&self, id: NoteId, today: Date) -> Result<Option<MobileNote>> {
+        let state = self.state()?;
+        Ok(state.spaces.note_on(id, today).map(|note| mobile_note(&state.spaces, note)))
+    }
+
+    pub fn check_action(&self, id: NoteId, done: bool, today: Date) -> Result<()> {
+        self.write(|state| state.spaces.check_action(id, done, today))
+    }
+
+    pub fn set_recurrence(
+        &self,
+        id: NoteId,
+        settings: Option<RecurrenceSettings>,
+        today: Date,
+    ) -> Result<()> {
+        self.write(|state| state.spaces.set_recurrence(id, settings, today))
+    }
+
+    pub fn handle_occurrence(
+        &self,
+        id: NoteId,
+        date: Date,
+        state: Option<OccurrenceState>,
+        today: Date,
+    ) -> Result<()> {
+        self.write(|spaces| spaces.spaces.handle_occurrence(id, date, state, today))
+    }
+
+    pub fn move_occurrence(&self, id: NoteId, date: Date, to: Option<Date>) -> Result<()> {
+        self.write(|state| state.spaces.move_occurrence(id, date, to))
+    }
+
+    pub fn write_occurrence_note(&self, id: NoteId, date: Date) -> Result<NoteId> {
+        self.write(|state| state.spaces.write_occurrence_note(id, date))
+    }
+
+    pub fn current_occurrence(&self, id: NoteId, today: Date) -> Result<Option<Occurrence>> {
+        Ok(self.state()?.spaces.current_occurrence(id, today))
+    }
+
+    pub fn occurrence_summary(&self, id: NoteId, today: Date) -> Result<Option<OccurrenceSummary>> {
+        Ok(self.state()?.spaces.occurrence_summary(id, today))
+    }
+
+    pub fn occurrences(
+        &self,
+        id: NoteId,
+        today: Date,
+        past: u32,
+        upcoming: u32,
+    ) -> Result<Vec<Occurrence>> {
+        Ok(self.state()?.spaces.occurrences(id, today, past, upcoming))
+    }
+
+    /// The dates the first `count` occurrences on or after `from` would fall on, with the days off
+    /// of `id`'s library, or of `space`.
+    pub fn preview_dates(
+        &self,
+        id: Option<NoteId>,
+        space: Option<String>,
+        settings: RecurrenceSettings,
+        from: Date,
+        count: u32,
+    ) -> Result<Vec<Date>> {
+        let state = self.state()?;
+        Ok(state.spaces.preview_dates(id, space.as_deref(), &settings, from, count))
+    }
+
+    /// The days off of every library that shows.
+    pub fn days_off(&self) -> Result<Vec<MobileDaysOff>> {
+        let days = self.state()?.spaces.days_off();
+        Ok(days.into_iter().map(|(space, days)| MobileDaysOff { days, space }).collect())
+    }
+
+    pub fn all_days_off(&self) -> Result<Vec<MobileDaysOff>> {
+        let days = self.state()?.spaces.all_days_off();
+        Ok(days.into_iter().map(|(space, days)| MobileDaysOff { days, space }).collect())
+    }
+
+    /// The days off that apply to a note.
+    pub fn days_off_of(&self, id: NoteId) -> Result<Vec<DaysOff>> {
+        Ok(self.state()?.spaces.days_off_of(id))
+    }
+
+    pub fn set_days_off(&self, space: String, days: DaysOff) -> Result<()> {
+        self.write(|state| state.spaces.set_days_off(&space, &days))
+    }
+
+    pub fn archive_days_off(
+        &self,
+        space: String,
+        kind: DaysOffKind,
+        id: String,
+        archived: bool,
+        today: Date,
+    ) -> Result<()> {
+        self.write(|state| state.spaces.archive_days_off(&space, kind, &id, archived, today))
+    }
+
     pub fn change_action(&self, id: NoteId, change: ActionChange) -> Result<()> {
         self.write(|state| state.spaces.change_action(id, change))
     }
@@ -786,11 +893,13 @@ impl MobileNotebook {
         self.write(|state| state.spaces.delete(id))
     }
 
-    pub fn backlinks(&self, id: NoteId) -> Result<Vec<MobileNote>> {
+    /// The notes that link to `id`, with each recurring action and its steps as of `today`.
+    pub fn backlinks(&self, id: NoteId, today: Date) -> Result<Vec<MobileNote>> {
         let state = self.state()?;
+        let notes = state.spaces.backlinks(id);
         Ok(state
             .spaces
-            .backlinks(id)
+            .notes_on(notes, today)
             .into_iter()
             .map(|note| mobile_note(&state.spaces, note))
             .collect())
@@ -878,27 +987,26 @@ impl MobileNotebook {
         date: Date,
     ) -> Result<Vec<ScheduledPrompt>> {
         let state = self.state()?;
-        let mut result = Vec::new();
-        for note in state.spaces.all_journals() {
-            if !journals.contains(&note.id) {
-                continue;
-            }
-            let Some(journal) = note.journal else {
-                continue;
-            };
-            for schedule in &journal.schedules {
-                for minute in schedule.minutes_on(note.id, date) {
-                    let key = crate::prompt_key(&schedule.id, date, minute);
-                    result.push(ScheduledPrompt {
-                        handled: journal.handled.get(&key).copied(),
-                        journal: note.id,
-                        key,
-                        minute,
-                    });
-                }
-            }
-        }
-        Ok(result)
+        let notes: Vec<Note> = state
+            .spaces
+            .all_journals()
+            .into_iter()
+            .filter(|note| journals.contains(&note.id))
+            .collect();
+        Ok(state
+            .spaces
+            .scheduled_minutes(&notes, date)
+            .into_iter()
+            .map(|(journal, schedule, minute)| {
+                let key = crate::prompt_key(&schedule, date, minute);
+                let handled = notes
+                    .iter()
+                    .find(|note| note.id == journal)
+                    .and_then(|note| note.journal.as_ref())
+                    .and_then(|fields| fields.handled.get(&key).copied());
+                ScheduledPrompt { handled, journal, key, minute }
+            })
+            .collect())
     }
 
     pub fn due_prompts(
@@ -910,22 +1018,22 @@ impl MobileNotebook {
         local_times: Vec<i64>,
     ) -> Result<Vec<MobilePrompt>> {
         let state = self.state()?;
-        Ok(state
+        let notes: Vec<Note> = state
             .spaces
             .all_journals()
             .into_iter()
             .filter(|note| journals.contains(&note.id))
-            .filter_map(|note| {
-                let prompt =
-                    note.journal.as_ref()?.due_prompt(note.id, today, minute, now, |_, at| {
-                        local_times.get(usize::from(at)).copied().unwrap_or(now)
-                    })?;
-                Some(MobilePrompt {
-                    journal: note.id,
-                    key: prompt.key,
-                    minute: prompt.minute,
-                    title: state.spaces.link_title(note.id).unwrap_or_default(),
-                })
+            .collect();
+        let local = |_, at: u16| local_times.get(usize::from(at)).copied().unwrap_or(now);
+        Ok(state
+            .spaces
+            .due_prompts(&notes, today, minute, now, local)
+            .into_iter()
+            .map(|(journal, prompt)| MobilePrompt {
+                journal,
+                key: prompt.key,
+                minute: prompt.minute,
+                title: state.spaces.link_title(journal).unwrap_or_default(),
             })
             .collect())
     }
@@ -1152,3 +1260,70 @@ pub fn is_sync_invite(text: String) -> bool {
 
 #[cfg(test)]
 mod tests;
+
+/// A short description of a rule, the same as the Linux app shows.
+#[uniffi::export]
+pub fn describe_rule(rule: Rule, start: Date) -> String {
+    crate::describe_rule(&rule, start)
+}
+
+/// A rule as the library stores it, such as `FREQ=WEEKLY;BYDAY=MO`.
+#[uniffi::export]
+pub fn rule_text(rule: Rule) -> String {
+    rule.to_string()
+}
+
+/// The rule that `text` writes as the library stores it, or nothing if it isn't one.
+#[uniffi::export]
+pub fn parse_rule(text: String) -> Option<Rule> {
+    Rule::parse(&text)
+}
+
+/// The rules the repeat menu offers before Custom, for something that starts on `start`.
+#[uniffi::export]
+pub fn repeat_presets(start: Date) -> Vec<Rule> {
+    crate::repeat_presets(start)
+}
+
+/// The repeat editor's form for `rule`, or nothing if the editor can't show it.
+#[uniffi::export]
+pub fn repeat_form(rule: Rule, start: Date) -> Option<RepeatForm> {
+    RepeatForm::from_rule(&rule, start)
+}
+
+#[uniffi::export]
+pub fn new_repeat_form(start: Date) -> RepeatForm {
+    RepeatForm::new(start)
+}
+
+#[uniffi::export]
+pub fn repeat_form_rule(form: RepeatForm) -> Rule {
+    form.rule()
+}
+
+/// "first" to "fifth", or "last."
+#[uniffi::export]
+pub fn ordinal_word(ordinal: i8) -> String {
+    crate::ordinal_word(ordinal)
+}
+
+#[uniffi::export]
+pub fn new_days_off(kind: DaysOffKind, name: String, first: Date) -> DaysOff {
+    DaysOff::new(kind, &name, first)
+}
+
+/// When days off fall, as the Linux app shows it.
+#[uniffi::export]
+pub fn describe_days_off(days: DaysOff) -> String {
+    days.describe()
+}
+
+#[uniffi::export]
+pub fn days_off_hidden(days: DaysOff, today: Date) -> bool {
+    days.is_hidden(today)
+}
+
+#[uniffi::export]
+pub fn days_off_kind_name(kind: DaysOffKind) -> String {
+    kind.name().to_owned()
+}

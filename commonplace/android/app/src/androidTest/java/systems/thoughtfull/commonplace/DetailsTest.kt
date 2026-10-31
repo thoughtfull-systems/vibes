@@ -4,7 +4,10 @@ package systems.thoughtfull.commonplace
 
 import android.graphics.Bitmap
 import android.os.SystemClock
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasTestTag
@@ -16,6 +19,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.unit.Density
 import androidx.test.espresso.Espresso
 import androidx.test.platform.app.InstrumentationRegistry
 import java.io.File
@@ -29,7 +33,12 @@ import org.junit.Rule
 import org.junit.Test
 import systems.thoughtfull.commonplace.core.ActionList
 import systems.thoughtfull.commonplace.core.ActionState
+import systems.thoughtfull.commonplace.core.DayOffEffect
+import systems.thoughtfull.commonplace.core.DaysOffUse
+import systems.thoughtfull.commonplace.core.Missed
 import systems.thoughtfull.commonplace.core.MobileNote
+import systems.thoughtfull.commonplace.core.RecurrenceSettings
+import systems.thoughtfull.commonplace.core.parseRule
 
 class DetailsTest {
   @get:Rule
@@ -207,5 +216,101 @@ class DetailsTest {
     compose.onNodeWithTag("detail-archive").performScrollTo().performClick()
     saved(action) { it.archived != null }
     assertNotNull(runBlocking { repository.use { it.note(parent) } })
+  }
+
+  @Test
+  fun finishedRulesKeepHistoryAvailable() {
+    val library = space("Finished repeat")
+    val today = LocalDate.now().toString()
+    val action = runBlocking {
+      repository.use { core ->
+        core.createAction(library, "Finished repeat").also { id ->
+          val settings = RecurrenceSettings(
+            checkNotNull(parseRule("FREQ=DAILY;COUNT=1")),
+            today,
+            Missed.ALL,
+            0,
+            0,
+            DaysOffUse(DayOffEffect.IGNORE, DayOffEffect.IGNORE)
+          )
+          core.setRecurrence(id, settings, today)
+          core.checkAction(id, true, today)
+        }
+      }
+    }
+    show(action)
+    compose.onNodeWithText("Details").performClick()
+    compose.onNodeWithText("History…").performScrollTo().performClick()
+    compose.onNodeWithTag("history").assertExists()
+    compose.onNodeWithText("Past").assertExists()
+  }
+
+  @Test
+  fun nestedRepeatsDoNotExposeControlsForIgnoredOccurrences() {
+    val library = space("Nested repeat")
+    val today = LocalDate.now().toString()
+    val inner = runBlocking {
+      repository.use { core ->
+        val outer = core.createAction(library, "Outer repeat")
+        core.createStep(outer, "Inner repeat").also { inner ->
+          val settings = RecurrenceSettings(
+            checkNotNull(parseRule("FREQ=DAILY")),
+            today,
+            Missed.ALL,
+            0,
+            0,
+            DaysOffUse(DayOffEffect.IGNORE, DayOffEffect.IGNORE)
+          )
+          listOf(outer, inner).forEach { core.setRecurrence(it, settings, today) }
+        }
+      }
+    }
+    show(inner)
+    compose.onNodeWithText("Details").performClick()
+    compose.waitUntil(5_000) {
+      runCatching { compose.onNodeWithText("Doesn't repeat").assertExists() }.isSuccess
+    }
+    compose.onNodeWithText("Doesn't repeat").performScrollTo().assertExists()
+    compose.onNodeWithTag("detail-this-time").assertDoesNotExist()
+  }
+
+  @Test
+  fun everyWeekdayRemainsSelectableInANarrowRepeatEditor() {
+    space("Narrow repeat editor")
+    model = NotebookModel(application)
+    compose.setContent {
+      val density = LocalDensity.current
+      CompositionLocalProvider(LocalDensity provides Density(density.density * 1.5f)) {
+        CommonplaceTheme {
+          RepeatEditorDialog(
+            model,
+            null,
+            checkNotNull(parseRule("FREQ=WEEKLY;BYDAY=MO")),
+            LocalDate.now().toString(),
+            true,
+            DaysOffUse(DayOffEffect.IGNORE, DayOffEffect.IGNORE),
+            {},
+            {}
+          )
+        }
+      }
+    }
+    compose.onNodeWithText("Sa").performScrollTo().assertIsDisplayed().performClick()
+    compose.onNodeWithText("Su").performScrollTo().assertIsDisplayed().performClick()
+  }
+
+  @Test
+  fun syncedOffsetsReplaceTheDisplayedValue() {
+    space("Synced offset")
+    val offset = mutableStateOf<Int?>(-3)
+    compose.setContent {
+      CommonplaceTheme {
+        OffsetRow("synced", offset.value, -1, "days before", false) { offset.value = it }
+      }
+    }
+    compose.onNodeWithText("3").assertExists()
+    compose.runOnIdle { offset.value = -8 }
+    compose.onNodeWithText("8").assertExists()
+    compose.onNodeWithText("3").assertDoesNotExist()
   }
 }

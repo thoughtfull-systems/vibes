@@ -42,6 +42,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -62,15 +63,22 @@ import java.time.format.DateTimeFormatter
 import java.time.format.ResolverStyle
 import systems.thoughtfull.commonplace.core.Answer
 import systems.thoughtfull.commonplace.core.ChoiceOption
+import systems.thoughtfull.commonplace.core.DayOffEffect
+import systems.thoughtfull.commonplace.core.DaysOffUse
 import systems.thoughtfull.commonplace.core.MobileNote
 import systems.thoughtfull.commonplace.core.Question
 import systems.thoughtfull.commonplace.core.QuestionKind
+import systems.thoughtfull.commonplace.core.Rule
 import systems.thoughtfull.commonplace.core.Schedule
 import systems.thoughtfull.commonplace.core.Times
 import systems.thoughtfull.commonplace.core.answerPlaceholder
+import systems.thoughtfull.commonplace.core.describeRule
 import systems.thoughtfull.commonplace.core.newId
 import systems.thoughtfull.commonplace.core.parseAnswer
+import systems.thoughtfull.commonplace.core.parseRule
 import systems.thoughtfull.commonplace.core.parseTimeOfDay
+import systems.thoughtfull.commonplace.core.repeatPresets
+import systems.thoughtfull.commonplace.core.ruleText
 import systems.thoughtfull.commonplace.core.scheduleIsValid
 
 @Composable
@@ -347,7 +355,7 @@ internal fun JournalDetails(model: NotebookModel, note: MobileNote) {
   journal.schedules.forEach { item ->
     Row(verticalAlignment = Alignment.CenterVertically) {
       Column(Modifier.weight(1f)) {
-        Text(describeDays(item.days), style = MaterialTheme.typography.titleSmall)
+        Text(describeRule(item.rule, item.start), style = MaterialTheme.typography.titleSmall)
         Text(
           describeTimes(item.times),
           color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -380,6 +388,8 @@ internal fun JournalDetails(model: NotebookModel, note: MobileNote) {
   }
   if (addingSchedule || schedule != null) {
     ScheduleDialog(
+      model,
+      note.id,
       schedule,
       {
         addingSchedule = false
@@ -559,8 +569,17 @@ private fun QuestionDialog(initial: Question?, dismiss: () -> Unit, save: (Quest
   )
 }
 
+/** Keeps a rule across configuration changes as the text the library stores. */
+private val ruleSaver = Saver<Rule, String>({ ruleText(it) }, { parseRule(it) })
+
 @Composable
-private fun ScheduleDialog(initial: Schedule?, dismiss: () -> Unit, save: (Schedule) -> Unit) {
+private fun ScheduleDialog(
+  model: NotebookModel,
+  journal: String,
+  initial: Schedule?,
+  dismiss: () -> Unit,
+  save: (Schedule) -> Unit
+) {
   var random by remember { mutableStateOf(initial?.times is Times.Random) }
   val original = initial?.times as? Times.Random
   var times by rememberSaveable {
@@ -573,22 +592,33 @@ private fun ScheduleDialog(initial: Schedule?, dismiss: () -> Unit, save: (Sched
   var end by rememberSaveable { mutableStateOf(minuteLabel(original?.end?.toInt() ?: 1020)) }
   var mean by rememberSaveable { mutableStateOf((original?.mean?.toInt() ?: 60).toString()) }
   var gap by rememberSaveable { mutableStateOf((original?.minGap?.toInt() ?: 20).toString()) }
-  var days by remember { mutableStateOf(initial?.days ?: WORKDAYS) }
-  val id = remember { initial?.id ?: newId() }
+  var rule by rememberSaveable(stateSaver = ruleSaver) {
+    mutableStateOf(initial?.rule ?: repeatPresets(LocalDate.now().toString())[1])
+  }
+  var ruleStart by rememberSaveable { mutableStateOf(initial?.start ?: LocalDate.now().toString()) }
+  var holidays by rememberSaveable {
+    mutableStateOf(initial?.daysOff?.holidays ?: DayOffEffect.IGNORE)
+  }
+  var vacations by rememberSaveable {
+    mutableStateOf(initial?.daysOff?.vacations ?: DayOffEffect.IGNORE)
+  }
+  var custom by remember { mutableStateOf(false) }
+  val daysOff = DaysOffUse(holidays, vacations)
+  val id = rememberSaveable { initial?.id ?: newId() }
   val schedule = if (random) {
     val from = parseTimeOfDay(start.trim())
     val to = parseTimeOfDay(end.trim())
     val meanGap = mean.trim().toUShortOrNull()
     val minGap = gap.trim().toUShortOrNull()
     if (from != null && to != null && meanGap != null && minGap != null) {
-      Schedule(id, days, Times.Random(from, to, meanGap, minGap))
+      Schedule(id, rule, ruleStart, daysOff, Times.Random(from, to, meanGap, minGap))
     } else {
       null
     }
   } else {
     val fixed = times.split(',', ' ').filter { it.isNotBlank() }.map { parseTimeOfDay(it.trim()) }
     if (fixed.all { it != null }) {
-      Schedule(id, days, Times.Fixed(fixed.filterNotNull().distinct().sorted()))
+      Schedule(id, rule, ruleStart, daysOff, Times.Fixed(fixed.filterNotNull().distinct().sorted()))
     } else {
       null
     }
@@ -602,13 +632,13 @@ private fun ScheduleDialog(initial: Schedule?, dismiss: () -> Unit, save: (Sched
         Modifier.verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(8.dp)
       ) {
-        ChipRow {
-          scheduleWeekdays.forEach { (code, name) ->
-            FilterChip(
-              code in ruleWeekdays(days),
-              onClick = { days = toggleWeekday(days, code) },
-              label = { Text(name) }
-            )
+        EditorRow("Repeats") {
+          RepeatMenu(rule, ruleStart, allowNone = false) { choice ->
+            when (choice) {
+              is RepeatChoice.Preset -> rule = choice.rule
+              RepeatChoice.Custom -> custom = true
+              RepeatChoice.None -> {}
+            }
           }
         }
         ToggleRow("Random times?", random) { random = it }
@@ -625,6 +655,8 @@ private fun ScheduleDialog(initial: Schedule?, dismiss: () -> Unit, save: (Sched
             placeholder = { Text("10:00, 14:00, 17:00") }
           )
         }
+        HorizontalDivider()
+        DaysOffRows(holidays, vacations, { holidays = it }, { vacations = it })
       }
     },
     confirmButton = {
@@ -634,6 +666,21 @@ private fun ScheduleDialog(initial: Schedule?, dismiss: () -> Unit, save: (Sched
     },
     dismissButton = { TextButton(onClick = dismiss) { Text("Cancel") } }
   )
+  if (custom) {
+    RepeatEditorDialog(
+      model,
+      journal,
+      rule,
+      ruleStart,
+      showStart = true,
+      daysOff = DaysOffUse(holidays, vacations),
+      dismiss = { custom = false }
+    ) { values ->
+      rule = values.rule
+      ruleStart = values.start
+      custom = false
+    }
+  }
 }
 
 @Composable

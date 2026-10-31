@@ -53,7 +53,10 @@ class JournalCaptureTest {
         0,
         runBlocking {
           repository.use { core ->
-            core.notes("").count { it.space == space && it.journal != null }
+            core.notes("", LocalDate.now().toString()).count {
+              it.space == space &&
+                it.journal != null
+            }
           }
         }
       )
@@ -87,7 +90,10 @@ class JournalCaptureTest {
         1,
         runBlocking {
           repository.use { core ->
-            core.notes("").count { it.space == space && it.journal != null }
+            core.notes("", LocalDate.now().toString()).count {
+              it.space == space &&
+                it.journal != null
+            }
           }
         }
       )

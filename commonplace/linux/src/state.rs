@@ -29,7 +29,7 @@ pub struct Space {
 /// The open libraries and this device's settings, shared by every window in the process.
 pub struct State {
     device: Device,
-    listeners: RefCell<Vec<Box<dyn Fn()>>>,
+    listeners: RefCell<Vec<Box<dyn Fn() -> bool>>>,
     spaces: RefCell<Spaces>,
     sync_listeners: RefCell<Vec<Box<dyn Fn() -> bool>>>,
     syncer: RefCell<Option<Rc<Syncer>>>,
@@ -115,12 +115,32 @@ impl State {
     }
 
     pub fn connect_changed(&self, listener: impl Fn() + 'static) {
+        self.connect_changed_while(move || {
+            listener();
+            true
+        });
+    }
+
+    /// Calls `listener` after each change until it returns false.
+    pub fn connect_changed_while(&self, listener: impl Fn() -> bool + 'static) {
         self.listeners.borrow_mut().push(Box::new(listener));
     }
 
     fn notify(&self) {
-        for listener in self.listeners.borrow().iter() {
-            listener();
+        let done: Vec<usize> = self
+            .listeners
+            .borrow()
+            .iter()
+            .enumerate()
+            .filter(|(_, listener)| !listener())
+            .map(|(index, _)| index)
+            .collect();
+        // A listener that changes the library runs this again inside the loop above, while the
+        // list is still borrowed, so only the outermost call removes listeners.
+        if let Ok(mut listeners) = self.listeners.try_borrow_mut() {
+            for index in done.into_iter().rev() {
+                drop(listeners.remove(index));
+            }
         }
     }
 

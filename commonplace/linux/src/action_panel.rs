@@ -6,13 +6,17 @@ use std::rc::{Rc, Weak};
 
 use adw::prelude::*;
 use commonplace_core::{
-    ActionChange, ActionEntry, ActionList, ActionState, Date, Error, Note, NoteId, Spaces, note_uri,
+    Action, ActionChange, ActionEntry, ActionList, ActionState, Date, Error, Note, NoteId,
+    OccurrenceState, RecurrenceSettings, RepeatForm, Rule, Spaces, note_uri,
 };
 use gtk::{gdk, gio, glib};
 
 use crate::drag_scroll::DragScroll;
 use crate::libraries;
 use crate::link_picker::{Choice, LinkPicker, Purpose};
+use crate::repeat::{
+    DaysOffMenus, MISSED, OffsetRow, RepeatChoice, RepeatEditor, RepeatMenu, present_repeat_dialog,
+};
 use crate::rows::{
     STEP_CHECK_COLUMN, STEP_MENU_COLUMN, STEP_TITLE_COLUMN, connect_day_clicked, format_date,
     parent_labels, star_toggle, step_row, today,
@@ -33,11 +37,19 @@ type StepChange = Box<dyn Fn(&mut Spaces) -> Result<(), Error>>;
 /// The fields of the open action, shown above its text, and its steps, shown below.
 pub struct ActionPanel {
     current: Cell<Option<NoteId>>,
+    /// The Starts and Due rows of an action that doesn't repeat.
+    date_rows: Vec<gtk::Widget>,
+    /// What days off do to a recurring action's occurrences.
+    days_off: DaysOffMenus,
     defer: DateButton,
+    /// How many days before each occurrence a recurring action starts.
+    defer_offset: OffsetRow,
     done: gtk::Switch,
     /// A line over the steps list that shows where a dragged step would go between two steps.
     drop_line: gtk::Box,
     due: DateButton,
+    /// How many days after each occurrence a recurring action is due.
+    due_offset: OffsetRow,
     editable: Cell<bool>,
     /// Names the projects whose start or due dates apply, if they aren't the action's own.
     inherited: gtk::Label,
@@ -47,7 +59,18 @@ pub struct ActionPanel {
     /// The lists the list picker offers, in its order. The inbox is among them only while the
     /// open action started out there, because only capture puts actions in the inbox.
     lists: RefCell<Vec<ActionList>>,
+    missed: gtk::DropDown,
+    /// Gives a recurring action's current occurrence's dates, and says whether it moved, or how
+    /// many it missed or has waiting.
+    moved: gtk::Label,
     move_button: gtk::Button,
+    /// The rows that only a recurring action shows.
+    recurrence_rows: Vec<gtk::Widget>,
+    /// How the open action repeats.
+    repeat: Rc<RepeatMenu>,
+    /// The buttons that close or skip a recurring action's current occurrence, or show its history.
+    this_time: gtk::Box,
+    this_time_label: gtk::Label,
     on_open: RefCell<Option<OpenHandler>>,
     /// The actions the open action belongs to, outermost first, each a button that opens it.
     path: gtk::Label,
@@ -314,19 +337,57 @@ impl ActionPanel {
         fields.attach(&waiting_for, 1, 1, 1, 1);
         fields.attach(&labelled("Project?", project.upcast_ref()), 0, 2, 1, 1);
         fields.attach(&project, 1, 2, 1, 1);
-        fields.attach(&labelled("Starts", defer.button.upcast_ref()), 0, 3, 1, 1);
-        fields.attach(&defer.button, 1, 3, 1, 1);
-        fields.attach(&labelled("Due", due.button.upcast_ref()), 0, 4, 1, 1);
-        fields.attach(&due.button, 1, 4, 1, 1);
-        fields.attach(&inherited, 0, 5, 2, 1);
+        let repeat = RepeatMenu::new(true);
+        fields.attach(&labelled("Repeats", repeat.button.upcast_ref()), 0, 3, 1, 1);
+        fields.attach(&repeat.button, 1, 3, 1, 1);
+        let mut date_rows = Vec::new();
+        for (row, name, button) in [(4, "Starts", &defer.button), (5, "Due", &due.button)] {
+            let label = labelled(name, button.upcast_ref());
+            fields.attach(&label, 0, row, 1, 1);
+            fields.attach(button, 1, row, 1, 1);
+            date_rows.extend([label.upcast(), button.clone().upcast()]);
+        }
+        let defer_offset = OffsetRow::new(-1, "days before", false);
+        let due_offset = OffsetRow::new(1, "days after", true);
+        let missed = gtk::DropDown::from_strings(&MISSED.map(|(name, _)| name));
+        let days_off = DaysOffMenus::new();
+        let mut recurrence_rows = Vec::new();
+        let recurring = [
+            ("Starts", defer_offset.widget.clone().upcast::<gtk::Widget>()),
+            ("Due", due_offset.widget.clone().upcast()),
+            ("If missed", missed.clone().upcast()),
+        ]
+        .into_iter()
+        .chain(days_off.rows().map(|(name, menu)| (name, menu.clone().upcast())));
+        for ((name, widget), row) in recurring.zip(6..) {
+            let label = labelled(name, &widget);
+            fields.attach(&label, 0, row, 1, 1);
+            fields.attach(&widget, 1, row, 1, 1);
+            recurrence_rows.extend([label.upcast(), widget]);
+        }
+        fields.attach(&inherited, 0, 11, 2, 1);
+        let moved =
+            gtk::Label::builder().xalign(0.0).wrap(true).css_classes(["caption", "dimmed"]).build();
+        fields.attach(&moved, 0, 13, 2, 1);
+        let this_time = gtk::Box::builder().spacing(6).build();
+        for (label, tooltip) in [
+            ("Done", "Close this occurrence"),
+            ("Skip", "Skip this occurrence"),
+            ("History…", "Show past and upcoming occurrences"),
+        ] {
+            this_time.append(&gtk::Button::builder().label(label).tooltip_text(tooltip).build());
+        }
+        let this_time_label = field_label("This time");
+        fields.attach(&this_time_label, 0, 12, 1, 1);
+        fields.attach(&this_time, 1, 12, 1, 1);
         let planning = gtk::Switch::builder()
             .halign(gtk::Align::Start)
             .valign(gtk::Align::Center)
             .tooltip_text("Leave the next tasks until planned")
             .build();
         let planning_label = labelled("_Unclear?", planning.upcast_ref());
-        fields.attach(&planning_label, 0, 6, 1, 1);
-        fields.attach(&planning, 1, 6, 1, 1);
+        fields.attach(&planning_label, 0, 14, 1, 1);
+        fields.attach(&planning, 1, 14, 1, 1);
         let path = gtk::Label::builder().xalign(0.0).build();
         let move_button = gtk::Button::builder().label("Move…").halign(gtk::Align::Start).build();
         let widget = gtk::Box::builder()
@@ -416,16 +477,26 @@ impl ActionPanel {
 
         let panel = Rc::new_cyclic(|panel: &Weak<Self>| Self {
             current: Cell::new(None),
+            date_rows,
+            days_off,
             defer,
+            defer_offset,
             done,
             drop_line,
             due,
+            due_offset,
             editable: Cell::new(false),
             inherited,
             loading: Cell::new(false),
             list,
             lists: RefCell::default(),
+            missed,
+            moved,
             move_button,
+            recurrence_rows,
+            repeat,
+            this_time,
+            this_time_label,
             on_open: RefCell::default(),
             path,
             picker,
@@ -536,7 +607,10 @@ impl ActionPanel {
     fn show_current(self: &Rc<Self>) {
         let editable = self.editable.get();
         self.set_sensitive(editable);
-        let note = self.current.get().and_then(|id| self.state.read(|library| library.note(id)));
+        let note = self
+            .current
+            .get()
+            .and_then(|id| self.state.read(|library| library.note_on(id, today())));
         let Some((note, action)) =
             note.and_then(|note| note.action.clone().map(|action| (note, action)))
         else {
@@ -555,6 +629,7 @@ impl ActionPanel {
         self.planning_label.set_visible(action.is_open());
         self.due.show(action.due);
         self.defer.show(action.defer);
+        self.show_recurrence(note.id, &action);
         let dates = self.state.read(|library| library.action_dates(today()));
         let dates = dates.get(&note.id).copied().unwrap_or_default();
         let start = dates.start.filter(|start| start.date > today());
@@ -635,6 +710,168 @@ impl ActionPanel {
         self.loading.set(false);
         self.widget.set_visible(true);
         self.steps_section.set_visible(true);
+    }
+
+    /// Shows how the action `id` repeats. A recurring action shows its settings in place of its
+    /// dates, and its current occurrence's dates, whether that moved, how many it missed or has
+    /// waiting, and the buttons that handle it.
+    fn show_recurrence(&self, id: NoteId, action: &Action) {
+        let start = action
+            .recur
+            .as_ref()
+            .map_or_else(|| new_settings(action, Rule::default()).start, |r| r.settings.start);
+        let recurring = action.recur.is_some();
+        let summary = recurring
+            .then(|| self.state.read(|spaces| spaces.occurrence_summary(id, today())))
+            .flatten();
+        let current = summary.and_then(|summary| summary.current);
+        let day = current.map_or(start, |current| current.date);
+        self.repeat.show(action.recur.as_ref().map(|recur| &recur.settings.rule), start, day);
+        for row in &self.date_rows {
+            row.set_visible(!recurring);
+        }
+        for row in &self.recurrence_rows {
+            row.set_visible(recurring);
+        }
+        if let Some(recur) = &action.recur {
+            let settings = &recur.settings;
+            self.defer_offset.show(settings.defer);
+            self.due_offset.show(settings.due);
+            let missed = MISSED.iter().position(|(_, m)| *m == settings.missed);
+            self.missed.set_selected(missed.unwrap_or(1) as u32);
+            self.days_off.show(settings.days_off);
+        }
+        self.this_time.set_visible(recurring);
+        self.this_time_label.set_visible(current.is_some());
+        for button in
+            std::iter::successors(self.this_time.first_child(), |b| b.next_sibling()).take(2)
+        {
+            button.set_visible(current.is_some());
+        }
+        let mut notes = Vec::new();
+        if recurring {
+            match current {
+                Some(current) => {
+                    let dates: Vec<String> = [("Starts", current.defer), ("Due", current.due)]
+                        .into_iter()
+                        .filter_map(|(word, date)| Some(format!("{word} {}", format_date(date?))))
+                        .collect();
+                    notes.extend(dates);
+                    if current.on != current.date {
+                        notes.push(format!("Moved from {}", format_date(current.date)));
+                    }
+                }
+                None => notes.push("Finished repeating".to_owned()),
+            }
+            let (missed, waiting) = summary.map_or((0, 0), |s| (s.missed, s.waiting));
+            if missed > 0 {
+                notes.push(format!("{missed} missed"));
+            }
+            if waiting > 0 {
+                notes.push(format!("{waiting} more waiting"));
+            }
+        }
+        let text = notes.join(" · ");
+        self.moved.set_label(&text);
+        self.moved.set_visible(!text.is_empty());
+    }
+
+    /// Sets the action's due date, or its start date if `due` isn't set.
+    fn set_date(&self, due: bool, day: Option<Date>) {
+        self.change(if due { ActionChange::Due(day) } else { ActionChange::Defer(day) });
+    }
+
+    /// Saves the recurring action's settings as its rows show them.
+    fn save_recurrence(&self) {
+        if self.loading.get() {
+            return;
+        }
+        let Some(id) = self.current.get() else { return };
+        let action = self.state.read(|spaces| spaces.note(id)).and_then(|note| note.action);
+        let Some(recur) = action.and_then(|action| action.recur) else { return };
+        let missed = MISSED.get(self.missed.selected() as usize).map(|(_, missed)| *missed);
+        let settings = RecurrenceSettings {
+            missed: missed.unwrap_or(recur.settings.missed),
+            due: self.due_offset.offset(),
+            defer: self.defer_offset.offset(),
+            days_off: self.days_off.uses(),
+            ..recur.settings.clone()
+        };
+        if settings != recur.settings {
+            self.report(
+                self.state.write(|spaces| spaces.set_recurrence(id, Some(settings), today())),
+            );
+        }
+    }
+
+    /// Marks a recurring action done, which stops it, or otherwise ticks or unticks the action as
+    /// its checkbox does.
+    fn set_done(&self, done: bool) {
+        if self.loading.get() {
+            return;
+        }
+        let Some(id) = self.current.get() else { return };
+        let recurring = self
+            .state
+            .read(|spaces| spaces.note_on(id, today()))
+            .and_then(|note| note.action)
+            .is_some_and(|action| action.recur.is_some());
+        if recurring && done {
+            self.change(ActionChange::State(ActionState::Done));
+        } else {
+            self.report(self.state.write(|spaces| spaces.check_action(id, done, today())));
+        }
+    }
+
+    /// Makes the action repeat as the owner chose in the repeat menu, or stops it repeating.
+    fn choose_repeat(self: &Rc<Self>, choice: RepeatChoice) {
+        let Some(id) = self.current.get() else { return };
+        let Some(action) = self.state.read(|spaces| spaces.note(id)).and_then(|n| n.action) else {
+            return;
+        };
+        let existing = action.recur.as_ref().map(|recur| recur.settings.clone());
+        let settings = match choice {
+            RepeatChoice::None => None,
+            RepeatChoice::Rule(rule) => Some(match existing {
+                Some(existing) => RecurrenceSettings { rule, ..existing },
+                None => new_settings(&action, rule),
+            }),
+            RepeatChoice::Custom => {
+                let settings = existing.clone().unwrap_or_else(|| {
+                    new_settings(
+                        &action,
+                        RepeatForm::new(new_settings(&action, Rule::default()).start).rule(),
+                    )
+                });
+                let editor = RepeatEditor::new(
+                    existing.as_ref().map(|existing| &existing.rule),
+                    settings.start,
+                    true,
+                    crate::days_off::preview(&self.state, Some(id), settings.days_off),
+                );
+                let state = self.state.clone();
+                present_repeat_dialog(&self.widget, editor, move |values| {
+                    let settings = RecurrenceSettings {
+                        rule: values.rule,
+                        start: values.start,
+                        ..settings.clone()
+                    };
+                    let result =
+                        state.write(|spaces| spaces.set_recurrence(id, Some(settings), today()));
+                    if let Err(error) = result {
+                        eprintln!("commonplace: {error}");
+                    }
+                });
+                return;
+            }
+        };
+        self.report(self.state.write(|spaces| spaces.set_recurrence(id, settings, today())));
+    }
+
+    fn report(&self, result: Result<(), Error>) {
+        if let Err(error) = result {
+            eprintln!("commonplace: {error}");
+        }
     }
 
     /// Shows the actions that `id` belongs to as a breadcrumb of buttons that open them.
@@ -894,9 +1131,60 @@ impl ActionPanel {
         self.done.connect_active_notify(glib::clone!(
             #[weak(rename_to = panel)]
             self,
-            move |done| {
-                let state = if done.is_active() { ActionState::Done } else { ActionState::Open };
-                panel.change(ActionChange::State(state));
+            move |done| panel.set_done(done.is_active())
+        ));
+        self.repeat.connect_chosen(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |choice| panel.choose_repeat(choice)
+        ));
+        let save = glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move || panel.save_recurrence()
+        );
+        self.defer_offset.connect_changed(save.clone());
+        self.due_offset.connect_changed(save.clone());
+        self.days_off.connect_changed(save.clone());
+        self.missed.connect_selected_notify(move |_| save());
+        let mut buttons = std::iter::successors(self.this_time.first_child(), |b| b.next_sibling());
+        let (Some(done_now), Some(skip), Some(history)) =
+            (buttons.next(), buttons.next(), buttons.next())
+        else {
+            unreachable!("the this-time row holds three buttons");
+        };
+        for (button, state) in [(done_now, OccurrenceState::Done), (skip, OccurrenceState::Skipped)]
+        {
+            button.downcast::<gtk::Button>().expect("a button").connect_clicked(glib::clone!(
+                #[weak(rename_to = panel)]
+                self,
+                move |_| {
+                    let Some(id) = panel.current.get() else { return };
+                    let current = panel.state.read(|s| s.current_occurrence(id, today()));
+                    if let Some(current) = current {
+                        panel.report(panel.state.write(|spaces| {
+                            spaces.handle_occurrence(id, current.date, Some(state), today())
+                        }));
+                    }
+                }
+            ));
+        }
+        history.downcast::<gtk::Button>().expect("a button").connect_clicked(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |button| {
+                let Some(id) = panel.current.get() else { return };
+                let opener = Rc::downgrade(&panel);
+                crate::history::present(
+                    &panel.state,
+                    button,
+                    id,
+                    Rc::new(move |note| {
+                        if let Some(panel) = opener.upgrade() {
+                            panel.open(note);
+                        }
+                    }),
+                );
             }
         ));
         self.list.connect_selected_notify(glib::clone!(
@@ -924,10 +1212,7 @@ impl ActionPanel {
             self,
             move |planning| panel.change(ActionChange::Planning(planning.is_active()))
         ));
-        for (button, change) in [
-            (&self.due, ActionChange::Due as fn(Option<Date>) -> ActionChange),
-            (&self.defer, ActionChange::Defer),
-        ] {
+        for (button, due) in [(&self.due, true), (&self.defer, false)] {
             let menu = button.button.clone();
             connect_day_clicked(
                 &menu,
@@ -935,7 +1220,7 @@ impl ActionPanel {
                 glib::clone!(
                     #[weak(rename_to = panel)]
                     self,
-                    move |day| panel.change(change(Some(day)))
+                    move |day| panel.set_date(due, Some(day))
                 ),
             );
             button.clear.connect_clicked(glib::clone!(
@@ -944,7 +1229,7 @@ impl ActionPanel {
                 #[weak]
                 menu,
                 move |_| {
-                    panel.change(change(None));
+                    panel.set_date(due, None);
                     menu.popdown();
                 }
             ));
@@ -1257,5 +1542,67 @@ impl ActionPanel {
                 }
             ),
         );
+    }
+}
+
+/// Settings that make `action` repeat by `rule`, from its due date, or else its start date, or
+/// else today, keeping the gap between its start and due dates.
+fn new_settings(action: &Action, rule: Rule) -> RecurrenceSettings {
+    let start = action.due.or(action.defer).unwrap_or_else(today);
+    let mut settings = RecurrenceSettings::new(rule, start);
+    match (action.defer, action.due) {
+        (Some(defer), Some(due)) => settings.defer = Some(defer.days_since(due)),
+        (Some(_), None) => {
+            settings.due = None;
+            settings.defer = Some(0);
+        }
+        _ => {}
+    }
+    settings
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[ignore = "needs an isolated GTK Broadway display and temporary sample library"]
+    fn finished_actions_keep_history_and_nested_steps_hide_it() {
+        assert_eq!(std::env::var("GDK_BACKEND").as_deref(), Ok("broadway"));
+        adw::init().unwrap();
+        let dir = std::path::PathBuf::from(std::env::var_os("COMMONPLACE_LIBRARY").unwrap());
+        assert!(dir.starts_with(std::env::temp_dir()));
+        let mut spaces = Spaces::in_memory(&["test"]);
+        let day = today();
+        let library = spaces.library_mut("test").unwrap();
+        let finished = library.create_task("Finished", None).unwrap();
+        let rule = Rule { count: Some(1), ..Rule::default() };
+        library.set_recurrence(finished, Some(RecurrenceSettings::new(rule, day)), day).unwrap();
+        library.check_action(finished, true, day).unwrap();
+        let state = Rc::new(State::new(spaces, crate::device::Device::open(&dir)));
+        let parent = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        let picker = LinkPicker::new(state.clone(), &parent);
+        let panel = ActionPanel::new(state.clone(), picker);
+        panel.show(state.read(|spaces| spaces.note(finished)).as_ref(), true);
+        assert!(panel.this_time.is_visible());
+        let buttons: Vec<_> =
+            std::iter::successors(panel.this_time.first_child(), |b| b.next_sibling()).collect();
+        assert!(!buttons[0].is_visible());
+        assert!(!buttons[1].is_visible());
+        assert!(buttons[2].is_visible());
+        let nested = state
+            .write(|spaces| {
+                let library = spaces.library_mut("test")?;
+                let outer = library.create_task("Outer", None)?;
+                let inner = library.create_task("Inner", Some(outer))?;
+                for id in [outer, inner] {
+                    let settings = RecurrenceSettings::new(Rule::default(), day);
+                    library.set_recurrence(id, Some(settings), day)?;
+                }
+                Ok(inner)
+            })
+            .unwrap();
+        panel.show(state.read(|spaces| spaces.note(nested)).as_ref(), true);
+        assert!(!panel.this_time.is_visible());
     }
 }

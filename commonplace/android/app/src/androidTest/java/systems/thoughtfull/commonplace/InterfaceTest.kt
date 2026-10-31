@@ -32,6 +32,7 @@ import androidx.compose.ui.text.TextRange
 import androidx.test.espresso.Espresso
 import androidx.test.platform.app.InstrumentationRegistry
 import java.io.File
+import java.time.LocalDate
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertTrue
@@ -108,7 +109,7 @@ class InterfaceTest {
     compose.onNodeWithTag("search").performTextInput("Packing list")
     runBlocking {
       repository.use { core ->
-        val packing = core.notes("Packing list").first()
+        val packing = core.notes("Packing list", LocalDate.now().toString()).first()
         val body = core.editorBody(packing.id)
         core.setBody(
           packing.id,
@@ -142,7 +143,9 @@ class InterfaceTest {
     compose.waitUntil(10_000) {
       runBlocking {
         repository.use { core ->
-          core.notes("Packing list").any { it.body.contains("- [ ] Passport") }
+          core.notes("Packing list", LocalDate.now().toString()).any {
+            it.body.contains("- [ ] Passport")
+          }
         }
       }
     }
@@ -150,7 +153,9 @@ class InterfaceTest {
     compose.waitUntil(10_000) {
       runBlocking {
         repository.use { core ->
-          core.notes("Packing list").any { it.body.contains("- [x] Passport") }
+          core.notes("Packing list", LocalDate.now().toString()).any {
+            it.body.contains("- [x] Passport")
+          }
         }
       }
     }
@@ -162,7 +167,9 @@ class InterfaceTest {
     compose.waitUntil(10_000) {
       runBlocking {
         repository.use { core ->
-          core.notes("Packing list").any { it.body.contains("  - [ ] Walking shoes") }
+          core.notes("Packing list", LocalDate.now().toString()).any {
+            it.body.contains("  - [ ] Walking shoes")
+          }
         }
       }
     }
@@ -173,7 +180,9 @@ class InterfaceTest {
     compose.waitUntil(10_000) {
       runBlocking {
         repository.use { core ->
-          core.notes("Packing list").any { it.body.contains("**Walking shoes**") }
+          core.notes("Packing list", LocalDate.now().toString()).any {
+            it.body.contains("**Walking shoes**")
+          }
         }
       }
     }

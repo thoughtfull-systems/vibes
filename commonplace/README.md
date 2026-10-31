@@ -40,6 +40,14 @@ The Linux app covers memos, actions, and journals:
   dates, and work with them in four modes, Execute, Plan, Review, and Inbox.
   [Where actions show](#where-actions-show) describes what each mode lists.
 - Mark an action done.
+- Make an action repeat from the **Repeats** menu in its details sidebar: daily, every workday,
+  weekly, monthly, yearly, or a custom rule, such as the last workday of the month. Ticking a
+  recurring action closes this occurrence and shows the next, with its steps open again. **This
+  time** closes or skips the current occurrence, picking a date moves it, and **History** lists past
+  and upcoming occurrences. A rule can keep each missed occurrence, only the latest, or count from
+  when you last did it.
+- Keep holidays and vacations under **Days off** in the main menu. Each recurring action and journal
+  schedule ignores them, skips them, or moves to the next day. Past and archived days off hide.
 - Star a project, a task, or a memo in its details sidebar. Starred actions lead Execute, starred
   memos lead the Memos tab, and All notes leads with every starred note. Click a star there, or in a
   Starred section, to take it away. An archived note, or a done action, leaves its Starred section
@@ -52,7 +60,7 @@ The Linux app covers memos, actions, and journals:
   entry keeps as answers. A duration takes minutes, such as `90`, or hours and minutes, such as
   `1:30` or `1h30m`. A journal's sidebar edits its questions, its color, its schedules, and whether
   it prompts on this device.
-- Get prompted by a notification that names the journal, on the days a schedule picks, at fixed
+- Get prompted by a notification that names the journal, on the days a schedule repeats, at fixed
   times or at random times within a window. Answer it, snooze it for 15 minutes or an hour, or skip
   it. Answering opens the capture window for that prompt. Your notification server's do-not-disturb
   mode holds prompts, such as while you share your screen.

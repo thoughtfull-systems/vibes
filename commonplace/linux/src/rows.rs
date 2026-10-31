@@ -7,7 +7,7 @@ use std::rc::Rc;
 use adw::prelude::*;
 use commonplace_core::{
     Action, ActionChange, ActionDates, ActionEntry, ActionList, ActionState, ActionStatus, Date,
-    Dated, Note, NoteId, Spaces, Style, expand_links, inline_pieces,
+    Dated, Note, NoteId, Spaces, Style, describe_rule, expand_links, inline_pieces,
 };
 use gtk::glib;
 
@@ -326,6 +326,7 @@ fn stamped_note_row(
         widget.set_valign(gtk::Align::Center);
         text.attach(&widget, column + 1, 0, 1, 1);
     }
+    let recurring = note.action.as_ref().is_some_and(|action| action.recur.is_some());
     for (line, index) in [summary, path].into_iter().filter(|line| !line.is_empty()).zip(1..) {
         let label = gtk::Label::builder()
             .label(line)
@@ -333,7 +334,20 @@ fn stamped_note_row(
             .ellipsize(gtk::pango::EllipsizeMode::End)
             .css_classes(["caption", "dimmed"])
             .build();
-        text.attach(&label, column, index, 1, 1);
+        if index == 1 && recurring {
+            let line = gtk::Box::builder().spacing(4).build();
+            line.append(
+                &gtk::Image::builder()
+                    .icon_name(icon!("repeat"))
+                    .pixel_size(12)
+                    .css_classes(["dimmed"])
+                    .build(),
+            );
+            line.append(&label);
+            text.attach(&line, column, index, 1, 1);
+        } else {
+            text.attach(&label, column, index, 1, 1);
+        }
     }
     match entry.dates.status {
         ActionStatus::DueSoon => {
@@ -386,10 +400,7 @@ fn action_check(state: &Rc<State>, id: NoteId, action: &Action) -> gtk::CheckBut
         #[strong]
         state,
         move |_| {
-            let new_state = if open { ActionState::Done } else { ActionState::Open };
-            if let Err(error) =
-                state.write(|library| library.change_action(id, ActionChange::State(new_state)))
-            {
+            if let Err(error) = state.write(|library| library.check_action(id, open, today())) {
                 eprintln!("commonplace: {error}");
             }
         }
@@ -403,6 +414,9 @@ fn action_summary(state: &State, entry: &ActionEntry, action: &Action) -> String
     let mut parts = Vec::new();
     if entry.note.archived.is_some() {
         parts.push("Archived".to_owned());
+    }
+    if let Some(recur) = &action.recur {
+        parts.push(describe_rule(&recur.settings.rule, recur.settings.start));
     }
     if action.project {
         parts.push(if entry.stalled { "Stalled project" } else { "Project" }.to_owned());
@@ -424,6 +438,9 @@ fn action_summary(state: &State, entry: &ActionEntry, action: &Action) -> String
     }
     if let Some(start) = entry.dates.start.filter(|start| start.date > today()) {
         parts.push(describe_date(state, "Starts", start, entry.note.id));
+    }
+    if entry.waiting > 0 {
+        parts.push(format!("{} more waiting", entry.waiting));
     }
     parts.join(" · ")
 }
@@ -451,7 +468,7 @@ pub fn entry(
 ) -> ActionEntry {
     let dates = dates.get(&note.id).copied().unwrap_or_default();
     let parents = paths.get(&note.id).cloned().unwrap_or_default();
-    ActionEntry { dates, depth: 0, note, parents, stalled: false }
+    ActionEntry { dates, depth: 0, note, parents, stalled: false, waiting: 0 }
 }
 
 /// The labels of the actions in `parents`, with their identifiers.

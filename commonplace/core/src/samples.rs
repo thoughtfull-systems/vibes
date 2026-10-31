@@ -3,8 +3,9 @@
 use std::collections::BTreeMap;
 
 use crate::{
-    ActionChange, ActionList, ActionState, Answer, ChoiceOption, Date, Days, Error, Library,
-    NoteId, Question, QuestionKind, Schedule, Spaces, Times, wikilink,
+    ActionChange, ActionList, ActionState, Answer, ChoiceOption, Date, DayOffEffect, DaysOff,
+    DaysOffKind, Error, Library, Missed, NoteId, OccurrenceState, Question, QuestionKind,
+    RecurrenceSettings, Rule, Schedule, Spaces, Times, wikilink,
 };
 
 /// Adds the same Personal and Work samples on every platform, preserving existing notes.
@@ -28,6 +29,9 @@ fn generate(
     let mut work = library();
     let trip = memos(&mut personal)?;
     actions(&mut personal, today)?;
+    days_off(&mut personal, today)?;
+    recurring(&mut personal, today)?;
+    days_off(&mut work, today)?;
     work_notes(&mut work, trip, today)?;
     health_journal(&mut personal, today)?;
     work_log(&mut work, today)?;
@@ -182,9 +186,8 @@ fn actions(library: &mut Library, today: Date) -> Result<(), Error> {
     // Active tasks in each part of Execute.
     let overdue = library.create_task("Renew the passport", None)?;
     due(library, overdue, -2)?;
-    let soon = library.create_task("Pay the electric bill", None)?;
+    let soon = library.create_task("Renew the car registration", None)?;
     due(library, soon, 3)?;
-    library.create_task("Water the plants", None)?;
     let later = library.create_task("File the taxes", None)?;
     due(library, later, 40)?;
     let starting = library.create_task("Book the train tickets", None)?;
@@ -249,6 +252,83 @@ fn actions(library: &mut Library, today: Date) -> Result<(), Error> {
     Ok(())
 }
 
+/// Holidays that come back each year, a vacation ahead, and one that passed and hides.
+fn days_off(library: &mut Library, today: Date) -> Result<(), Error> {
+    let year = today.year();
+    let holiday = |name: &str, first: Option<Date>, rule: &str| {
+        let mut days = DaysOff::new(DaysOffKind::Holidays, name, first.unwrap_or(today));
+        days.rule = Rule::parse(rule);
+        days
+    };
+    library.set_days_off(&holiday(
+        "Christmas",
+        Date::new(year, 12, 25),
+        "FREQ=YEARLY;BYMONTH=12;BYMONTHDAY=25",
+    ))?;
+    library.set_days_off(&holiday(
+        "Thanksgiving",
+        Date::new(year, 1, 1),
+        "FREQ=YEARLY;BYMONTH=11;BYDAY=4TH",
+    ))?;
+    let mut trip = DaysOff::new(DaysOffKind::Vacations, "Trip to Portugal", today.add_days(17));
+    trip.last = today.add_days(24);
+    library.set_days_off(&trip)?;
+    let mut past = DaysOff::new(DaysOffKind::Vacations, "Camping", today.add_days(-60));
+    past.last = today.add_days(-56);
+    library.set_days_off(&past)
+}
+
+/// Recurring actions, one for each way of handling missed occurrences.
+fn recurring(library: &mut Library, today: Date) -> Result<(), Error> {
+    let repeat = |rule: &str, start: Date, missed: Missed| {
+        let mut settings = RecurrenceSettings::new(Rule::parse(rule).unwrap_or_default(), start);
+        settings.missed = missed;
+        settings
+    };
+
+    // A weekly review that keeps only the latest, with steps that start open each week.
+    let review = library.create_task("Weekly review", None)?;
+    for step in ["Empty the inbox", "Look over the calendar", "Review the projects"] {
+        library.create_task(step, Some(review))?;
+    }
+    let monday = today.add_days(-i32::from(today.weekday()));
+    let mut settings = repeat("FREQ=WEEKLY;BYDAY=MO", monday.add_days(-21), Missed::Latest);
+    settings.days_off.vacations = DayOffEffect::Skip;
+    library.set_recurrence(review, Some(settings), today)?;
+    library.handle_occurrence(
+        review,
+        monday.add_days(-14),
+        Some(OccurrenceState::Done),
+        monday.add_days(-14),
+    )?;
+
+    // A monthly bill that keeps every occurrence, so missed ones wait their turn.
+    let bill = library.create_task("Pay the electric bill", None)?;
+    let first = Date::new(today.year(), today.month(), 15).unwrap_or(today).add_days(-62);
+    let mut settings = repeat("FREQ=MONTHLY;BYMONTHDAY=15", first, Missed::All);
+    settings.defer = Some(-5);
+    settings.days_off.holidays = DayOffEffect::Move;
+    library.set_recurrence(bill, Some(settings), today)?;
+
+    // Plants to water a week after the last watering.
+    let plants = library.create_task("Water the plants", None)?;
+    let settings = repeat("FREQ=DAILY;INTERVAL=7", today.add_days(-10), Missed::After);
+    library.set_recurrence(plants, Some(settings), today)?;
+    library.handle_occurrence(
+        plants,
+        today.add_days(-10),
+        Some(OccurrenceState::Done),
+        today.add_days(-3),
+    )?;
+    let supplies = library.create_task("Review emergency supplies", None)?;
+    let settings = repeat("FREQ=WEEKLY;COUNT=2", today.add_days(-7), Missed::All);
+    library.set_recurrence(supplies, Some(settings), today)?;
+    for day in [today.add_days(-7), today] {
+        library.handle_occurrence(supplies, day, Some(OccurrenceState::Done), day)?;
+    }
+    library.write_occurrence_note(supplies, today)?;
+    Ok(())
+}
 /// A journal of structured answers, with a week of entries to chart.
 fn health_journal(library: &mut Library, today: Date) -> Result<(), Error> {
     let journal = library.create_journal("Health")?;
@@ -272,7 +352,7 @@ fn health_journal(library: &mut Library, today: Date) -> Result<(), Error> {
     for question in [&sleep, &bedtime, &mood, &exercise, &training, &caffeine, &highlight, &notes] {
         library.add_question(journal, question)?;
     }
-    let mornings = Schedule::new(Days::EVERY_DAY, Times::Fixed(vec![8 * 60]));
+    let mornings = Schedule::new(Rule::default(), today, Times::Fixed(vec![8 * 60]));
     library.set_schedule(journal, &mornings)?;
     let hours = [7.5, 6.0, 8.0, 5.5, 7.0, 8.5, 6.5];
     for (day, &hour) in hours.iter().enumerate() {
@@ -317,7 +397,11 @@ fn work_log(library: &mut Library, today: Date) -> Result<(), Error> {
         library.add_question(journal, &Question::new(prompt, QuestionKind::Text))?;
     }
     let random = Times::Random { start: 9 * 60, end: 17 * 60, mean: 45, min_gap: 30 };
-    library.set_schedule(journal, &Schedule::new(Days::WORKDAYS, random))?;
+    let workdays = Rule::parse("FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR").unwrap_or_default();
+    let mut schedule = Schedule::new(workdays, today, random);
+    schedule.days_off.holidays = DayOffEffect::Skip;
+    schedule.days_off.vacations = DayOffEffect::Skip;
+    library.set_schedule(journal, &schedule)?;
     for (hours, text) in [
         (2, "Reviewed the **quarterly numbers** and ==next steps==."),
         (5, "Paired on the *release checklist* and ran `cargo test`."),

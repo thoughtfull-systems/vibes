@@ -23,6 +23,7 @@ import kotlinx.coroutines.withContext
 import systems.thoughtfull.commonplace.core.ActionDates
 import systems.thoughtfull.commonplace.core.ActionView
 import systems.thoughtfull.commonplace.core.MobileAction
+import systems.thoughtfull.commonplace.core.MobileDaysOff
 import systems.thoughtfull.commonplace.core.MobileException
 import systems.thoughtfull.commonplace.core.MobileNote
 import systems.thoughtfull.commonplace.core.MobileNotebook
@@ -67,6 +68,7 @@ data class NotebookState(
   val actionPaths: Map<String, List<String>> = emptyMap(),
   val actions: Map<ActionView, List<MobileAction>> = emptyMap(),
   val busy: Boolean = false,
+  val daysOff: List<MobileDaysOff> = emptyList(),
   val error: String? = null,
   val journals: List<MobileNote> = emptyList(),
   val loaded: Boolean = false,
@@ -74,6 +76,9 @@ data class NotebookState(
   val revision: Long = 0,
   val spaces: List<MobileSpace> = emptyList()
 )
+
+internal fun NotebookState.promptsChangedSince(previous: NotebookState) =
+  !previous.loaded || journals != previous.journals || daysOff != previous.daysOff
 
 class NotebookModel(application: Application) : AndroidViewModel(application) {
   val repository = (application as CommonplaceApplication).repository
@@ -136,15 +141,16 @@ class NotebookModel(application: Application) : AndroidViewModel(application) {
             actionDates = core.allActionDates(today),
             actionPaths = core.actionPaths(),
             actions = ActionView.entries.associateWith { core.actions(it, today) },
+            daysOff = core.allDaysOff(),
             journals = core.journals(),
             loaded = true,
-            notes = core.notes(""),
+            notes = core.notes("", LocalDate.now().toString()),
             spaces = spaces
           )
         }
         val previous = mutable.value
         mutable.value = snapshot.copy(revision = previous.revision + 1)
-        if (!previous.loaded || snapshot.journals != previous.journals) {
+        if (snapshot.promptsChangedSince(previous)) {
           PromptScheduler.schedule(getApplication())
         }
         complete(true)

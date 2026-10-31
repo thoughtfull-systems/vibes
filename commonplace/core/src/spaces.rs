@@ -13,8 +13,10 @@ use loro::ExportMode;
 use crate::actions::order_key;
 use crate::library::{MODIFIED, loro_error};
 use crate::{
-    ActionChange, ActionDates, ActionEntry, ActionView, Answer, Date, EditBase, Error, Handled,
-    Library, Note, NoteId, Question, Schedule, ShownTitles, label, plain_links, relabel,
+    ActionChange, ActionDates, ActionEntry, ActionView, Answer, Date, DaysOff, DaysOffKind,
+    EditBase, Error, Handled, Library, Note, NoteId, Occurrence, OccurrenceState,
+    OccurrenceSummary, Prompt, Question, RecurrenceSettings, Schedule, ShownTitles, label,
+    plain_links, relabel,
 };
 
 const LIBRARIES: &str = "libraries";
@@ -454,6 +456,181 @@ impl Spaces {
         self.owner_mut(memo)?.convert_memo(memo, journal)
     }
 
+    /// Makes an action recur, or stops it recurring, as [`Library::set_recurrence`] does.
+    pub fn set_recurrence(
+        &mut self,
+        id: NoteId,
+        settings: Option<RecurrenceSettings>,
+        today: Date,
+    ) -> Result<(), Error> {
+        self.owner_mut(id)?.set_recurrence(id, settings, today)
+    }
+
+    pub fn handle_occurrence(
+        &mut self,
+        id: NoteId,
+        date: Date,
+        state: Option<OccurrenceState>,
+        today: Date,
+    ) -> Result<(), Error> {
+        self.owner_mut(id)?.handle_occurrence(id, date, state, today)
+    }
+
+    pub fn move_occurrence(
+        &mut self,
+        id: NoteId,
+        date: Date,
+        to: Option<Date>,
+    ) -> Result<(), Error> {
+        self.owner_mut(id)?.move_occurrence(id, date, to)
+    }
+
+    pub fn write_occurrence_note(&mut self, id: NoteId, date: Date) -> Result<NoteId, Error> {
+        self.owner_mut(id)?.write_occurrence_note(id, date)
+    }
+
+    pub fn check_action(&mut self, id: NoteId, done: bool, today: Date) -> Result<(), Error> {
+        self.owner_mut(id)?.check_action(id, done, today)
+    }
+
+    pub fn current_occurrence(&self, id: NoteId, today: Date) -> Option<Occurrence> {
+        self.owner(id)?.current_occurrence(id, today)
+    }
+
+    pub fn occurrence_summary(&self, id: NoteId, today: Date) -> Option<OccurrenceSummary> {
+        self.owner(id)?.occurrence_summary(id, today)
+    }
+
+    /// `notes` as of `today`, each resolved in its own library as [`Library::notes_on`] does.
+    pub fn notes_on(&self, notes: Vec<Note>, today: Date) -> Vec<Note> {
+        let mut resolved: Vec<Option<Note>> = vec![None; notes.len()];
+        for library in self.all() {
+            let (indices, own): (Vec<usize>, Vec<Note>) = notes
+                .iter()
+                .enumerate()
+                .filter(|(_, note)| library.note_map(note.id).is_ok())
+                .map(|(index, note)| (index, note.clone()))
+                .unzip();
+            for (index, note) in indices.into_iter().zip(library.notes_on(own, today)) {
+                resolved[index] = Some(note);
+            }
+        }
+        notes.into_iter().zip(resolved).map(|(note, resolved)| resolved.unwrap_or(note)).collect()
+    }
+
+    pub fn occurrences(
+        &self,
+        id: NoteId,
+        today: Date,
+        past: u32,
+        upcoming: u32,
+    ) -> Vec<Occurrence> {
+        self.owner(id)
+            .map(|library| library.occurrences(id, today, past, upcoming))
+            .unwrap_or_default()
+    }
+
+    pub fn note_on(&self, id: NoteId, today: Date) -> Option<Note> {
+        self.owner(id)?.note_on(id, today)
+    }
+
+    /// The prompt each of `journals` shows now, if any, as [`Library::due_prompt`] finds it, with
+    /// each library's days off read once.
+    pub fn due_prompts(
+        &self,
+        journals: &[Note],
+        today: Date,
+        minute: u16,
+        now: i64,
+        local: impl Fn(Date, u16) -> i64,
+    ) -> Vec<(NoteId, Prompt)> {
+        let mut due = Vec::new();
+        for library in self.all() {
+            let mut days_off = None;
+            for note in journals.iter().filter(|note| library.note_map(note.id).is_ok()) {
+                let Some(fields) = &note.journal else { continue };
+                let days_off = days_off.get_or_insert_with(|| library.days_off_set());
+                if let Some(prompt) =
+                    fields.due_prompt(note.id, today, minute, now, &local, days_off)
+                {
+                    due.push((note.id, prompt));
+                }
+            }
+        }
+        due
+    }
+
+    /// The local times, in minutes since midnight, at which each schedule of `journals` prompts on
+    /// `date`, with the journal and the schedule's identifier, and each library's days off read
+    /// once.
+    pub fn scheduled_minutes(&self, journals: &[Note], date: Date) -> Vec<(NoteId, String, u16)> {
+        let mut minutes = Vec::new();
+        for library in self.all() {
+            let mut days_off = None;
+            for note in journals.iter().filter(|note| library.note_map(note.id).is_ok()) {
+                let Some(fields) = &note.journal else { continue };
+                let days_off = days_off.get_or_insert_with(|| library.days_off_set());
+                for schedule in &fields.schedules {
+                    for minute in schedule.minutes_on(note.id, date, days_off) {
+                        minutes.push((note.id, schedule.id.clone(), minute));
+                    }
+                }
+            }
+        }
+        minutes
+    }
+
+    /// The dates the first `count` occurrences on or after `from` would fall on under `settings`,
+    /// with the days off of `id`'s library, or of `space` for something not yet saved.
+    pub fn preview_dates(
+        &self,
+        id: Option<NoteId>,
+        space: Option<&str>,
+        settings: &RecurrenceSettings,
+        from: Date,
+        count: u32,
+    ) -> Vec<Date> {
+        let library = id
+            .and_then(|id| self.owner(id))
+            .or_else(|| space.and_then(|space| self.library(space)))
+            .or_else(|| self.all().next());
+        library.map(|library| library.preview_dates(settings, from, count)).unwrap_or_default()
+    }
+
+    /// The days off of every library that shows, each with its library's key.
+    pub fn days_off(&self) -> Vec<(String, DaysOff)> {
+        self.all_days_off().into_iter().filter(|(key, _)| self.is_shown(key)).collect()
+    }
+
+    pub fn all_days_off(&self) -> Vec<(String, DaysOff)> {
+        self.spaces
+            .iter()
+            .flat_map(|space| {
+                space.library.days_off().into_iter().map(|days| (space.key.clone(), days))
+            })
+            .collect()
+    }
+
+    /// The days off that apply to a note's library.
+    pub fn days_off_of(&self, id: NoteId) -> Vec<DaysOff> {
+        self.owner(id).map(Library::days_off).unwrap_or_default()
+    }
+
+    pub fn set_days_off(&mut self, space: &str, days: &DaysOff) -> Result<(), Error> {
+        self.library_mut(space)?.set_days_off(days)
+    }
+
+    pub fn archive_days_off(
+        &mut self,
+        space: &str,
+        kind: DaysOffKind,
+        id: &str,
+        archived: bool,
+        today: Date,
+    ) -> Result<(), Error> {
+        self.library_mut(space)?.archive_days_off(kind, id, archived, today)
+    }
+
     pub fn change_action(&mut self, id: NoteId, change: ActionChange) -> Result<(), Error> {
         self.owner_mut(id)?.change_action(id, change)
     }
@@ -672,6 +849,16 @@ mod tests {
         single.create_memo("only", "x").unwrap();
         single.set_shown("only", false);
         assert_eq!(single.notes().len(), 1);
+    }
+
+    #[test]
+    fn hidden_libraries_keep_their_days_off_available_to_notifications() {
+        let mut spaces = Spaces::in_memory(&["a", "b"]);
+        let holiday = DaysOff::new(DaysOffKind::Holidays, "Holiday", today());
+        spaces.set_days_off("b", &holiday).unwrap();
+        spaces.set_shown("b", false);
+        assert!(spaces.days_off().is_empty());
+        assert_eq!(spaces.all_days_off(), [("b".to_owned(), holiday)]);
     }
 
     #[test]

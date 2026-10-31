@@ -926,9 +926,9 @@ impl NotePage {
 
     fn refresh_backlinks(&self) {
         let (notes, dates, paths) = match self.current.get() {
-            Some(id) => {
-                self.state.read(|l| (l.backlinks(id), l.action_dates(today()), l.action_paths()))
-            }
+            Some(id) => self.state.read(|l| {
+                (l.notes_on(l.backlinks(id), today()), l.action_dates(today()), l.action_paths())
+            }),
             None => Default::default(),
         };
         self.backlinks.remove_all();
