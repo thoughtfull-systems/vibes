@@ -252,6 +252,7 @@ impl RepeatEditor {
         row += 1;
 
         let (start_button, start_calendar) = day_picker(&format_date(start), None);
+        show_on_calendar(&start_calendar, start);
         if show_start {
             attach(&mut row, "Starting", start_button.upcast_ref());
         }
@@ -261,6 +262,7 @@ impl RepeatEditor {
             _ => start.add_days(365),
         };
         let (until_button, until_calendar) = day_picker(&format_date(until), None);
+        show_on_calendar(&until_calendar, until);
         let count = gtk::SpinButton::with_range(1.0, 999.0, 1.0);
         count.set_value(10.0);
         match form.ends {
@@ -562,5 +564,34 @@ pub fn show_on_calendar(calendar: &gtk::Calendar, date: Date) {
         0.0,
     ) {
         calendar.set_date(&shown);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[ignore = "needs an isolated GTK Broadway display"]
+    fn repeat_calendars_open_on_the_stored_dates() {
+        assert_eq!(std::env::var("GDK_BACKEND").as_deref(), Ok("broadway"));
+        adw::init().unwrap();
+        let start = Date::new(2030, 12, 25).unwrap();
+        let until = Date::new(2032, 1, 3).unwrap();
+        let rule = Rule { until: Some(until), ..Rule::default() };
+        let editor = RepeatEditor::new(Some(&rule), start, true, Box::new(|_, _| Vec::new()));
+        let calendar = |button: &gtk::MenuButton| {
+            button
+                .popover()
+                .unwrap()
+                .child()
+                .unwrap()
+                .first_child()
+                .unwrap()
+                .downcast::<gtk::Calendar>()
+                .unwrap()
+        };
+        assert_eq!(crate::rows::calendar_day(&calendar(&editor.start_button)), Some(start));
+        assert_eq!(crate::rows::calendar_day(&calendar(&editor.until_button)), Some(until));
     }
 }

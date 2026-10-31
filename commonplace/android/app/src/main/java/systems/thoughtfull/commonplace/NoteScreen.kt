@@ -478,7 +478,7 @@ internal fun ActionDetails(model: NotebookModel, note: MobileNote, open: (String
   val own = note.action!!
   val action = resolved ?: own
   val recur = action.recur
-  val current = summary?.current
+  val current = summary?.current?.takeIf { recur != null }
   var dateField by remember(note.id) { mutableStateOf<String?>(null) }
   var waitingText by remember(note.id) { mutableStateOf(action.waitingFor.orEmpty()) }
   var custom by remember(note.id) { mutableStateOf(false) }
@@ -609,19 +609,21 @@ internal fun ActionDetails(model: NotebookModel, note: MobileNote, open: (String
         style = MaterialTheme.typography.bodySmall
       )
     }
-    current?.let { occurrence ->
-      ActionField("This time", "detail-this-time") {
+    if (recur != null) {
+      ActionField(if (current != null) "This time" else "", "detail-this-time") {
         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-          listOf("Done" to OccurrenceState.DONE, "Skip" to OccurrenceState.SKIPPED)
-            .forEach { (label, handled) ->
-              OutlinedButton(
-                onClick = {
-                  model.perform { it.handleOccurrence(note.id, occurrence.date, handled, today) }
-                },
-                colors = neutralButtonColors(),
-                contentPadding = PaddingValues(horizontal = 12.dp)
-              ) { Text(label) }
-            }
+          current?.let { occurrence ->
+            listOf("Done" to OccurrenceState.DONE, "Skip" to OccurrenceState.SKIPPED)
+              .forEach { (label, handled) ->
+                OutlinedButton(
+                  onClick = {
+                    model.perform { it.handleOccurrence(note.id, occurrence.date, handled, today) }
+                  },
+                  colors = neutralButtonColors(),
+                  contentPadding = PaddingValues(horizontal = 12.dp)
+                ) { Text(label) }
+              }
+          }
           OutlinedButton(
             onClick = { showHistory = true },
             colors = neutralButtonColors(),

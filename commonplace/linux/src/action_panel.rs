@@ -741,8 +741,13 @@ impl ActionPanel {
             self.missed.set_selected(missed.unwrap_or(1) as u32);
             self.days_off.show(settings.days_off);
         }
-        self.this_time.set_visible(current.is_some());
+        self.this_time.set_visible(recurring);
         self.this_time_label.set_visible(current.is_some());
+        for button in
+            std::iter::successors(self.this_time.first_child(), |b| b.next_sibling()).take(2)
+        {
+            button.set_visible(current.is_some());
+        }
         let mut notes = Vec::new();
         if recurring {
             match current {
@@ -1554,4 +1559,50 @@ fn new_settings(action: &Action, rule: Rule) -> RecurrenceSettings {
         _ => {}
     }
     settings
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[ignore = "needs an isolated GTK Broadway display and temporary sample library"]
+    fn finished_actions_keep_history_and_nested_steps_hide_it() {
+        assert_eq!(std::env::var("GDK_BACKEND").as_deref(), Ok("broadway"));
+        adw::init().unwrap();
+        let dir = std::path::PathBuf::from(std::env::var_os("COMMONPLACE_LIBRARY").unwrap());
+        assert!(dir.starts_with(std::env::temp_dir()));
+        let mut spaces = Spaces::in_memory(&["test"]);
+        let day = today();
+        let library = spaces.library_mut("test").unwrap();
+        let finished = library.create_task("Finished", None).unwrap();
+        let rule = Rule { count: Some(1), ..Rule::default() };
+        library.set_recurrence(finished, Some(RecurrenceSettings::new(rule, day)), day).unwrap();
+        library.check_action(finished, true, day).unwrap();
+        let state = Rc::new(State::new(spaces, crate::device::Device::open(&dir)));
+        let parent = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        let picker = LinkPicker::new(state.clone(), &parent);
+        let panel = ActionPanel::new(state.clone(), picker);
+        panel.show(state.read(|spaces| spaces.note(finished)).as_ref(), true);
+        assert!(panel.this_time.is_visible());
+        let buttons: Vec<_> =
+            std::iter::successors(panel.this_time.first_child(), |b| b.next_sibling()).collect();
+        assert!(!buttons[0].is_visible());
+        assert!(!buttons[1].is_visible());
+        assert!(buttons[2].is_visible());
+        let nested = state
+            .write(|spaces| {
+                let library = spaces.library_mut("test")?;
+                let outer = library.create_task("Outer", None)?;
+                let inner = library.create_task("Inner", Some(outer))?;
+                for id in [outer, inner] {
+                    let settings = RecurrenceSettings::new(Rule::default(), day);
+                    library.set_recurrence(id, Some(settings), day)?;
+                }
+                Ok(inner)
+            })
+            .unwrap();
+        panel.show(state.read(|spaces| spaces.note(nested)).as_ref(), true);
+        assert!(!panel.this_time.is_visible());
+    }
 }

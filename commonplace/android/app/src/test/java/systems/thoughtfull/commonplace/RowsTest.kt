@@ -144,9 +144,14 @@ class RowsTest {
         "1 more waiting",
       occurrenceSummary(OccurrenceSummary(current, 1u, 1u))
     )
-    val onTheDay = current.copy(on = "2026-10-26", due = null, moved = false)
+    val onTheDay = current.copy(
+      on = "2026-10-26",
+      defer = "2026-10-26",
+      due = null,
+      moved = false
+    )
     assertEquals(
-      "On ${formatDate("2026-10-26")}",
+      "Starts ${formatDate("2026-10-26")}",
       occurrenceSummary(OccurrenceSummary(onTheDay, 0u, 0u))
     )
     assertEquals("Finished repeating", occurrenceSummary(OccurrenceSummary(null, 0u, 0u)))

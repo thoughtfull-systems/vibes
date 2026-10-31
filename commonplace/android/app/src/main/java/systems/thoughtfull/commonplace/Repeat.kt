@@ -4,6 +4,7 @@
 
 package systems.thoughtfull.commonplace
 
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -362,7 +363,10 @@ internal fun RepeatEditorDialog(
         }
         if (frequency == Frequency.WEEKLY) {
           EditorRow("On") {
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(
+              Modifier.horizontalScroll(rememberScrollState()),
+              horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
               week.forEach { index ->
                 FilterChip(
                   index in weekdays,

@@ -320,6 +320,13 @@ fn recurring(library: &mut Library, today: Date) -> Result<(), Error> {
         Some(OccurrenceState::Done),
         today.add_days(-3),
     )?;
+    let supplies = library.create_task("Review emergency supplies", None)?;
+    let settings = repeat("FREQ=WEEKLY;COUNT=2", today.add_days(-7), Missed::All);
+    library.set_recurrence(supplies, Some(settings), today)?;
+    for day in [today.add_days(-7), today] {
+        library.handle_occurrence(supplies, day, Some(OccurrenceState::Done), day)?;
+    }
+    library.write_occurrence_note(supplies, today)?;
     Ok(())
 }
 /// A journal of structured answers, with a week of entries to chart.

@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use loro::{LoroMap, LoroMapValue, LoroValue, ValueOrContainer};
 
 use crate::actions::{ACTION, Action, ActionState, CLOSED, Date, Hierarchy, STATE as ACTION_STATE};
-use crate::days_off::{DaysOffSet, DaysOffUse};
+use crate::days_off::{DaysOffSet, DaysOffUse, MAX_MOVE};
 use crate::library::{MODIFIED, integer, loro_error, string};
 use crate::recur::{End, Rule};
 use crate::{Error, Library, Note, NoteId, wikilink};
@@ -25,6 +25,7 @@ const HANDLED: &str = "handled";
 const MISSED: &str = "missed";
 const MOVED: &str = "moved";
 const NOTES: &str = "notes";
+const REACH: &str = "reach";
 const RULE: &str = "rule";
 const START: &str = "start";
 const STATE: &str = "state";
@@ -149,6 +150,64 @@ pub struct Recurrence {
     pub handled: Vec<HandledOccurrence>,
     pub moved: Vec<MovedOccurrence>,
     pub notes: Vec<OccurrenceNote>,
+    pub reaches: Vec<OccurrenceReach>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "mobile", derive(uniffi::Record))]
+pub struct OccurrenceReach {
+    pub date: Date,
+    pub extra: Vec<Date>,
+    pub on: Date,
+    pub pending: Vec<Date>,
+    pub through: Date,
+}
+
+impl OccurrenceReach {
+    fn from_value(date: Date, value: &LoroValue) -> Option<Self> {
+        let LoroValue::Map(handled) = value else { return None };
+        let LoroValue::Map(map) = handled.get(REACH)? else { return None };
+        let day = |key| string(map.get(key)?.clone())?.parse().ok();
+        let dates = |key| {
+            let mut dates: Vec<Date> = match map.get(key) {
+                Some(LoroValue::List(values)) => {
+                    values.iter().filter_map(|value| string(value.clone())?.parse().ok()).collect()
+                }
+                _ => Vec::new(),
+            };
+            dates.sort_unstable();
+            dates.dedup();
+            dates
+        };
+        Some(Self {
+            date,
+            extra: dates("extra"),
+            on: day("on")?,
+            pending: dates("pending"),
+            through: day("through")?,
+        })
+    }
+
+    fn to_value(&self) -> LoroValue {
+        let dates = |days: &[Date]| -> LoroValue {
+            LoroValue::List(days.iter().map(|day| day.to_string().into()).collect())
+        };
+        LoroValue::Map(
+            vec![
+                ("extra".into(), dates(&self.extra)),
+                ("on".into(), self.on.to_string().into()),
+                ("pending".into(), dates(&self.pending)),
+                ("through".into(), self.through.to_string().into()),
+            ]
+            .into(),
+        )
+    }
+
+    fn misses(&self, date: Date) -> bool {
+        date < self.date
+            && ((date <= self.through && self.pending.binary_search(&date).is_err())
+                || self.extra.binary_search(&date).is_ok())
+    }
 }
 
 impl Recurrence {
@@ -192,7 +251,8 @@ impl Recurrence {
             let note = string(value.clone())?.parse().ok()?;
             Some(OccurrenceNote { date, note })
         });
-        Some(Self { settings, handled, moved, notes })
+        let reaches = entries(map, HANDLED, OccurrenceReach::from_value);
+        Some(Self { settings, handled, moved, notes, reaches })
     }
 
     fn latest_handled(&self) -> Option<&HandledOccurrence> {
@@ -280,9 +340,7 @@ pub(crate) struct Occurrences<'a> {
 struct Cutoff {
     /// Every unhandled occurrence before it.
     from: Date,
-    /// For each counted handled occurrence, in order of date, its date and the latest reach among
-    /// it and those after it: an unhandled occurrence before it that came into view by then.
-    reaches: Vec<(Date, Date)>,
+    reaches: Vec<OccurrenceReach>,
 }
 
 impl<'a> Occurrences<'a> {
@@ -312,7 +370,9 @@ impl<'a> Occurrences<'a> {
         let uses = settings.days_off;
         let days_off = self.days_off;
         if DaysOffSet::applies(&uses) {
-            let skip = Box::new(move |date| days_off.skips(&uses, date));
+            let skip = Box::new(move |date| {
+                !self.moved.contains_key(&date) && days_off.skips(&uses, date)
+            });
             settings.rule.iterate(settings.start, from, skip, self.end)
         } else {
             settings.rule.all_dates(settings.start, from)
@@ -363,50 +423,57 @@ impl<'a> Occurrences<'a> {
         Self::view(&self.occurrence(date, OccurrenceStatus::Upcoming))
     }
 
-    /// The day by which an occurrence must have come into view for `entry` to miss it, if `entry`
-    /// misses any. Handling an occurrence misses the unhandled ones before it that had come into
-    /// view by the day its owner handled it. One handled early misses nothing under `all`, and
-    /// under `latest` misses those in view on the day it started, once that day has come.
-    fn reach(&self, entry: &HandledOccurrence) -> Option<Date> {
-        if !entry.early {
-            return Some(entry.day);
-        }
-        let started = self.started(entry.date);
-        (self.settings().missed != Missed::All && started <= self.today).then_some(started)
+    fn reach(&self, date: Date, day: Date, early: bool) -> OccurrenceReach {
+        let settings = self.settings();
+        let on = if early { self.started(date) } else { day };
+        let through = on.add_days(-settings.defer.unwrap_or(0)).min(date.add_days(-1));
+        let window = through.add_days(-MAX_MOVE).max(settings.start);
+        let walked = self.dates(window).take_while(|&date| date <= through);
+        let moved = self
+            .moved
+            .keys()
+            .copied()
+            .filter(|&date| date >= settings.start && date < window && self.gives(date));
+        let mut pending: Vec<Date> =
+            walked.chain(moved).filter(|&date| self.started(date) > on).collect();
+        pending.sort_unstable();
+        let mut extra: Vec<Date> = self
+            .moved
+            .keys()
+            .copied()
+            .filter(|&candidate| {
+                candidate > through
+                    && candidate < date
+                    && self.started(candidate) <= on
+                    && self.gives(candidate)
+            })
+            .collect();
+        extra.sort_unstable();
+        OccurrenceReach { date, extra, on, pending, through }
     }
 
     fn cutoff(&self) -> &Cutoff {
         self.cutoff.get_or_init(|| {
             let settings = self.settings();
-            let mut reaches: Vec<(Date, Date)> = self
+            let reaches: Vec<OccurrenceReach> = self
                 .recur
                 .handled
                 .iter()
-                .filter_map(|entry| Some((entry.date, self.reach(entry)?)))
+                .filter_map(|entry| {
+                    let reach = self
+                        .recur
+                        .reaches
+                        .binary_search_by_key(&entry.date, |reach| reach.date)
+                        .ok()
+                        .map(|index| self.recur.reaches[index].clone())
+                        .unwrap_or_else(|| self.reach(entry.date, entry.day, entry.early));
+                    (!entry.early || (settings.missed != Missed::All && reach.on <= self.today))
+                        .then_some(reach)
+                })
                 .collect();
-            for i in (0..reaches.len().saturating_sub(1)).rev() {
-                reaches[i].1 = reaches[i].1.max(reaches[i + 1].1);
-            }
             let mut from = settings.start;
-            for entry in self.recur.handled.iter().rev() {
-                if entry.date.add_days(1) <= from {
-                    break;
-                }
-                let Some(reach) = self.reach(entry) else { continue };
-                let unseen = |date: Date| {
-                    date < entry.date
-                        && !self.handled.contains_key(&date)
-                        && self.started(date) > reach
-                };
-                // Dates this far before `reach` came into view by then, unless days off moved them
-                // more than a month, so only the occurrences their owner moved need checking.
-                let walk = reach.add_days(-settings.defer.unwrap_or(0) - 31).max(settings.start);
-                let walked =
-                    self.dates(walk).take_while(|&date| date < entry.date).find(|&d| unseen(d));
-                let moved = self.moved.keys().copied().filter(|&date| {
-                    date >= settings.start && date < walk && unseen(date) && self.gives(date)
-                });
-                let after = walked.into_iter().chain(moved).min().unwrap_or(entry.date.add_days(1));
+            for reach in &reaches {
+                let after = reach.pending.first().copied().unwrap_or(reach.through.add_days(1));
                 from = from.max(after);
             }
             Cutoff { from, reaches }
@@ -420,8 +487,8 @@ impl<'a> Occurrences<'a> {
         if date < cutoff.from {
             return true;
         }
-        let later = cutoff.reaches.partition_point(|&(handled, _)| handled <= date);
-        cutoff.reaches.get(later).is_some_and(|&(_, reach)| self.started(date) <= reach)
+        let later = cutoff.reaches.partition_point(|reach| reach.date <= date);
+        cutoff.reaches[later..].iter().any(|reach| reach.misses(date))
     }
 
     /// Whether the unhandled occurrence named by `date` is past when `current` stands: missed, or,
@@ -724,6 +791,9 @@ impl Library {
         let note = self.note_map(id)?;
         let action = self.action_map(id)?;
         let before = self.note(id).and_then(|note| note.action).ok_or(Error::NotAnAction(id))?;
+        if settings.is_none() && before.recur.is_none() {
+            return Ok(());
+        }
         let steps: Vec<(LoroMap, Action)> = self
             .hierarchy()
             .descendants(id)
@@ -735,6 +805,7 @@ impl Library {
                 if !settings.rule.is_valid() {
                     return Err(Error::InvalidRule);
                 }
+                self.preserve_occurrence_reaches(id)?;
                 let recur = child_map(&action, RECUR)?;
                 // Two devices that each create one of these maps for their first entry would
                 // each make a container under the same key, and sync keeps only one.
@@ -852,15 +923,48 @@ impl Library {
             (AT.into(), at.into()),
             (DAY.into(), today.to_string().into()),
         ];
-        // Recorded now, so later changes to the start offset or days off don't turn a timely
-        // completion into an early one and bring back occurrences already missed.
         let recur = self.note(id).and_then(|note| note.action?.recur);
         let days_off = self.days_off_set();
-        if recur.is_some_and(|recur| Occurrences::new(&recur, &days_off, today).early(date, today))
-        {
-            entry.push((EARLY.into(), true.into()));
+        if let Some(recur) = recur {
+            let occurrences = Occurrences::new(&recur, &days_off, today);
+            let early = occurrences.early(date, today);
+            if early {
+                entry.push((EARLY.into(), true.into()));
+            }
+            entry.push((REACH.into(), occurrences.reach(date, today, early).to_value()));
         }
         LoroValue::Map(entry.into())
+    }
+
+    pub(crate) fn preserve_occurrence_reaches(&self, id: NoteId) -> Result<(), Error> {
+        let Some(recur) = self.note(id).and_then(|note| note.action?.recur) else {
+            return Ok(());
+        };
+        let missing: Vec<_> = recur
+            .handled
+            .iter()
+            .filter(|entry| recur.reaches.binary_search_by_key(&entry.date, |r| r.date).is_err())
+            .collect();
+        if missing.is_empty() {
+            return Ok(());
+        }
+        let days_off = self.days_off_set();
+        let occurrences = Occurrences::new(&recur, &days_off, Date::EPOCH);
+        let handled = child_map(&self.recur_map(id)?, HANDLED)?;
+        let LoroValue::Map(values) = handled.get_value() else { return Ok(()) };
+        for entry in missing {
+            let key = entry.date.to_string();
+            let Some(LoroValue::Map(value)) = values.get(&key) else { continue };
+            let mut fields: Vec<_> = value
+                .iter()
+                .filter(|(key, _)| key.as_str() != REACH)
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect();
+            let reach = occurrences.reach(entry.date, entry.day, entry.early);
+            fields.push((REACH.into(), reach.to_value()));
+            handled.insert(&key, LoroValue::Map(fields.into())).map_err(loro_error)?;
+        }
+        Ok(())
     }
 
     /// Moves the occurrence named by `date` to `to`, or, with nothing, back to its own date.
@@ -871,9 +975,10 @@ impl Library {
         to: Option<Date>,
     ) -> Result<(), Error> {
         self.check_writable()?;
+        self.preserve_occurrence_reaches(id)?;
         let moved = child_map(&self.recur_map(id)?, MOVED)?;
         match to {
-            Some(to) if to != date => moved.insert(&date.to_string(), to.to_string()),
+            Some(to) => moved.insert(&date.to_string(), to.to_string()),
             _ => moved.delete(&date.to_string()),
         }
         .map_err(loro_error)?;
@@ -973,6 +1078,7 @@ impl Library {
             handled: Vec::new(),
             moved: Vec::new(),
             notes: Vec::new(),
+            reaches: Vec::new(),
         };
         let days_off = self.days_off_set();
         let occurrences = Occurrences::new(&recur, &days_off, from);
@@ -1721,5 +1827,34 @@ mod tests {
         assert_eq!(next.defer, Some(date("2026-10-12")));
         let scheduled = library.action_view(ActionView::Scheduled, date("2026-10-06"));
         assert!(scheduled.iter().any(|entry| entry.note.id == id));
+    }
+
+    #[test]
+    fn legacy_handled_entries_keep_their_boundary_and_unknown_fields_before_an_edit() {
+        let mut library = Library::in_memory();
+        let id = weekly(&mut library, Missed::All);
+        let mut settings = library.note(id).unwrap().action.unwrap().recur.unwrap().settings;
+        settings.defer = Some(-14);
+        let today = date("2026-10-05");
+        library.set_recurrence(id, Some(settings.clone()), today).unwrap();
+        let key = "2026-10-19";
+        library.handle_occurrence(id, date(key), Some(OccurrenceState::Done), today).unwrap();
+        let handled = child_map(&library.recur_map(id).unwrap(), HANDLED).unwrap();
+        let LoroValue::Map(values) = handled.get_value() else { panic!() };
+        let LoroValue::Map(value) = &values[key] else { panic!() };
+        let mut legacy: Vec<_> = value
+            .iter()
+            .filter(|(key, _)| key.as_str() != "reach")
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect();
+        legacy.push(("future".into(), "preserved".into()));
+        handled.insert(key, LoroValue::Map(legacy.into())).unwrap();
+        library.commit().unwrap();
+        settings.defer = Some(0);
+        library.set_recurrence(id, Some(settings), date("2026-10-06")).unwrap();
+        assert_eq!(current(&library, id, "2026-10-06").as_deref(), Some("2026-10-26"));
+        let LoroValue::Map(values) = handled.get_value() else { panic!() };
+        let LoroValue::Map(value) = &values[key] else { panic!() };
+        assert_eq!(value.get("future"), Some(&LoroValue::from("preserved")));
     }
 }

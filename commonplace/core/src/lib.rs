@@ -52,8 +52,9 @@ pub use recur::{
     describe_rule, ordinal_word, repeat_presets,
 };
 pub use recurring::{
-    HandledOccurrence, Missed, MovedOccurrence, Occurrence, OccurrenceNote, OccurrenceState,
-    OccurrenceStatus, OccurrenceSummary, Recurrence, RecurrenceSettings, StepOccurrence,
+    HandledOccurrence, Missed, MovedOccurrence, Occurrence, OccurrenceNote, OccurrenceReach,
+    OccurrenceState, OccurrenceStatus, OccurrenceSummary, Recurrence, RecurrenceSettings,
+    StepOccurrence,
 };
 pub use spaces::Spaces;
 #[cfg(feature = "sync")]

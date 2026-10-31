@@ -52,7 +52,7 @@ class ChartsTest {
         }
         Triple(
           journal.journal!!.questions,
-          core.notes("").filter { it.entry?.journal == journal.id },
+          core.notes("", LocalDate.now().toString()).filter { it.entry?.journal == journal.id },
           journal.journal.color
         )
       }
@@ -127,7 +127,7 @@ class ChartsTest {
         }
         Triple(
           journal.journal!!.questions.first { it.kind == QuestionKind.YesNo },
-          core.notes("").filter { it.entry?.journal == journal.id },
+          core.notes("", LocalDate.now().toString()).filter { it.entry?.journal == journal.id },
           journal.journal.color
         )
       }

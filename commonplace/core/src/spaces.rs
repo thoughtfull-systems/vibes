@@ -599,9 +599,12 @@ impl Spaces {
 
     /// The days off of every library that shows, each with its library's key.
     pub fn days_off(&self) -> Vec<(String, DaysOff)> {
+        self.all_days_off().into_iter().filter(|(key, _)| self.is_shown(key)).collect()
+    }
+
+    pub fn all_days_off(&self) -> Vec<(String, DaysOff)> {
         self.spaces
             .iter()
-            .filter(|space| self.is_shown(&space.key))
             .flat_map(|space| {
                 space.library.days_off().into_iter().map(|days| (space.key.clone(), days))
             })
@@ -846,6 +849,16 @@ mod tests {
         single.create_memo("only", "x").unwrap();
         single.set_shown("only", false);
         assert_eq!(single.notes().len(), 1);
+    }
+
+    #[test]
+    fn hidden_libraries_keep_their_days_off_available_to_notifications() {
+        let mut spaces = Spaces::in_memory(&["a", "b"]);
+        let holiday = DaysOff::new(DaysOffKind::Holidays, "Holiday", today());
+        spaces.set_days_off("b", &holiday).unwrap();
+        spaces.set_shown("b", false);
+        assert!(spaces.days_off().is_empty());
+        assert_eq!(spaces.all_days_off(), [("b".to_owned(), holiday)]);
     }
 
     #[test]

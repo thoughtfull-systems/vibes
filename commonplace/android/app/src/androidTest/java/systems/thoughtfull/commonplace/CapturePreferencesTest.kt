@@ -15,6 +15,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.test.platform.app.InstrumentationRegistry
+import java.time.LocalDate
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -97,7 +98,12 @@ class CapturePreferencesTest {
     assertEquals("Action", repository.preferences.getString("capture.kind", null))
     assertEquals(second, repository.preferences.getString("capture.space", null))
     val captured = runBlocking {
-      repository.use { core -> core.notes("").single { it.body == "Remember these choices" } }
+      repository.use { core ->
+        core.notes("", LocalDate.now().toString()).single {
+          it.body ==
+            "Remember these choices"
+        }
+      }
     }
     assertEquals(second, captured.space)
     check(captured.action != null)

@@ -20,6 +20,7 @@ const RULE: &str = "rule";
 
 /// How many days after its last day a schedule of days off drops out of the lists.
 const HIDE_AFTER: i32 = 7;
+pub(crate) const MAX_MOVE: i32 = 366;
 
 /// The kinds of days off, each a category of schedules.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -271,7 +272,10 @@ impl DaysOffSet {
         if !moves {
             return date;
         }
-        (1..=366).map(|n| date.add_days(n)).find(|&day| !self.avoids(uses, day)).unwrap_or(date)
+        (1..=MAX_MOVE)
+            .map(|n| date.add_days(n))
+            .find(|&day| !self.avoids(uses, day))
+            .unwrap_or(date)
     }
 
     /// Whether `date` is a day off of a kind that a rule using days off as `uses` skips or moves
@@ -307,6 +311,9 @@ impl Library {
     /// Adds a schedule of days off, or replaces the one with the same identifier and kind.
     pub fn set_days_off(&mut self, days: &DaysOff) -> Result<(), Error> {
         self.check_writable()?;
+        for note in self.notes() {
+            self.preserve_occurrence_reaches(note.id)?;
+        }
         // Each schedule sits in the root map, not a map per kind: two devices that each made the
         // first map of a kind would make two containers under one key, and sync keeps only one.
         self.doc.get_map(DAYS_OFF).insert(&days.id, days.to_value()).map_err(loro_error)?;

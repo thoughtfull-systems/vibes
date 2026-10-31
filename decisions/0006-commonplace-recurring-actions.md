@@ -94,7 +94,10 @@ format adds them.
   and handling an occurrence early leaves the ones before it waiting: for good under `all`, since
   bills stay owed, and until it starts under `latest`. Each handled occurrence records whether it
   came early when its owner handled it, so a later edit can't change that, and it misses only the
-  occurrences that had started by the day its owner handled it.
+  occurrences that had started by the day its owner handled it. Each handled entry also records the
+  boundary of those earlier dates, with exceptions for dates that moves postponed or brought into
+  view early. Readers keep this boundary after edits to the rule, offsets, moves, or days off, so an
+  edit can't undo which occurrences a completion missed.
 - **Days off.** A library holds two kinds of days off: holidays, and vacations. Each holds named
   schedules, such as Christmas or a trip: a span of days that a rule can bring back, such as every
   year. A recurring action says, for each kind, whether a day off removes an occurrence, moves it to

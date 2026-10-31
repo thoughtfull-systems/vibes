@@ -27,8 +27,11 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
+import systems.thoughtfull.commonplace.core.DayOffEffect
+import systems.thoughtfull.commonplace.core.DaysOffUse
 import systems.thoughtfull.commonplace.core.Schedule
 import systems.thoughtfull.commonplace.core.Times
+import systems.thoughtfull.commonplace.core.parseRule
 
 class JournalInterfaceTest {
   @get:Rule
@@ -80,11 +83,23 @@ class JournalInterfaceTest {
         core.setJournalColor(journal, "purple")
         core.setSchedule(
           journal,
-          Schedule("fixed", "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR", Times.Fixed(listOf(540u)))
+          Schedule(
+            "fixed",
+            checkNotNull(parseRule("FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR")),
+            LocalDate.now().toString(),
+            DaysOffUse(DayOffEffect.IGNORE, DayOffEffect.IGNORE),
+            Times.Fixed(listOf(540u))
+          )
         )
         core.setSchedule(
           journal,
-          Schedule("random", "FREQ=DAILY", Times.Random(540u, 1020u, 60u, 15u))
+          Schedule(
+            "random",
+            checkNotNull(parseRule("FREQ=DAILY")),
+            LocalDate.now().toString(),
+            DaysOffUse(DayOffEffect.IGNORE, DayOffEffect.IGNORE),
+            Times.Random(540u, 1020u, 60u, 15u)
+          )
         )
         val entry = core.createEntry(
           journal,
@@ -132,9 +147,9 @@ class JournalInterfaceTest {
       runCatching { compose.onNodeWithTag("note-editor").assertExists() }.isSuccess
     }
     compose.onNodeWithText("Details").performClick()
-    compose.onNodeWithText("Workdays").performScrollTo().assertExists()
+    compose.onNodeWithText("Every workday").performScrollTo().assertExists()
     compose.onNodeWithText("At 09:00").performScrollTo().assertExists()
-    compose.onNodeWithText("Every day").performScrollTo().assertExists()
+    compose.onNodeWithText("Daily").performScrollTo().assertExists()
     compose.onNodeWithText("About every 60 minutes from 09:00 until 17:00")
       .performScrollTo().assertExists()
     compose.onNodeWithTag("journal-color").performScrollTo().performClick()

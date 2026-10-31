@@ -110,7 +110,9 @@ impl Rule {
                 }
                 "BYMONTHDAY" => {
                     rule.month_days = list()
-                        .map(|day| day.parse().ok().filter(|d: &i8| (1..=31).contains(&d.abs())))
+                        .map(|day| {
+                            day.parse().ok().filter(|d: &i8| (1..=31).contains(&d.unsigned_abs()))
+                        })
                         .collect::<Option<_>>()?;
                 }
                 "BYMONTH" => {
@@ -120,7 +122,9 @@ impl Rule {
                 }
                 "BYSETPOS" => {
                     rule.positions = list()
-                        .map(|p| p.parse().ok().filter(|p: &i16| (1..=366).contains(&p.abs())))
+                        .map(|p| {
+                            p.parse().ok().filter(|p: &i16| (1..=366).contains(&p.unsigned_abs()))
+                        })
                         .collect::<Option<_>>()?;
                 }
                 "UNTIL" => rule.until = Some(parse_compact_date(value)?),
@@ -143,7 +147,10 @@ impl Rule {
         self.interval > 0
             && !(self.until.is_some() && self.count.is_some())
             && self.week_start < 7
-            && self.weekdays.iter().all(|day| day.weekday < 7 && day.ordinal.abs() <= ordinal_limit)
+            && self
+                .weekdays
+                .iter()
+                .all(|day| day.weekday < 7 && day.ordinal.unsigned_abs() <= ordinal_limit)
             && !(ordinals && matches!(self.frequency, Frequency::Daily | Frequency::Weekly))
             && !(ordinals && !self.month_days.is_empty())
             && !(self.frequency == Frequency::Weekly && !self.month_days.is_empty())

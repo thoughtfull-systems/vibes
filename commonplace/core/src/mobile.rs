@@ -823,6 +823,11 @@ impl MobileNotebook {
         Ok(days.into_iter().map(|(space, days)| MobileDaysOff { days, space }).collect())
     }
 
+    pub fn all_days_off(&self) -> Result<Vec<MobileDaysOff>> {
+        let days = self.state()?.spaces.all_days_off();
+        Ok(days.into_iter().map(|(space, days)| MobileDaysOff { days, space }).collect())
+    }
+
     /// The days off that apply to a note.
     pub fn days_off_of(&self, id: NoteId) -> Result<Vec<DaysOff>> {
         Ok(self.state()?.spaces.days_off_of(id))

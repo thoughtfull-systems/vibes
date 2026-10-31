@@ -134,9 +134,29 @@ among a period's dates. With `move`, an occurrence on a day off falls on the nex
 day off of a kind the action skips or moves past. An occurrence its owner moved falls on the date in
 `moved`, whatever the days off.
 
+An explicit move to an occurrence's original date still overrides days off. Removing the entry from
+`moved` restores the rule's days-off behavior.
+
 Each value in `handled` is a map value with a `state` of `done` or `skipped`, the timestamp of the
 write in `at`, in `day` the local date on which its owner handled it, and `early` set to `true` if
 `day` came before the occurrence's start date at the time of the write.
+
+Each handled value also holds a `reach` map that preserves which earlier occurrences it makes
+missed:
+
+| Key       | Type   | Value                                                                  |
+| --------- | ------ | ---------------------------------------------------------------------- |
+| `extra`   | List   | Dates after `through` that moved earlier and had started by `on`.      |
+| `on`      | String | The handling day, or the occurrence's start date if it came early.     |
+| `pending` | List   | Dates through `through` that hadn't started by `on` after moves.       |
+| `through` | String | `on` minus the start offset, capped at the day before this occurrence. |
+
+The lists hold dates in ascending order. A handled occurrence makes an earlier date missed if it
+comes on or before `through` and isn't in `pending`, or if it's in `extra`. An early completion
+applies this boundary only under `latest` and once `on` has come. Readers use these recorded dates
+even after edits to the rule, offsets, moves, or days off. For a handled value without `reach`,
+readers derive it from the current settings. Writers add the missing boundaries before they change
+those settings, moves, or days off, and preserve the other fields in each handled value.
 
 The current occurrence comes from the rule and `handled`, and nothing writes it. Handling an
 occurrence makes the unhandled ones before it missed if their start date came by its `day`. An

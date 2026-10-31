@@ -10,7 +10,9 @@ use adw::prelude::*;
 use commonplace_core::{DaysOff, DaysOffKind, DaysOffUse, RecurrenceSettings, Rule};
 use gtk::{gio, glib};
 
-use crate::repeat::{RepeatChoice, RepeatEditor, RepeatMenu, present_repeat_dialog};
+use crate::repeat::{
+    RepeatChoice, RepeatEditor, RepeatMenu, present_repeat_dialog, show_on_calendar,
+};
 use crate::rows::{connect_day_clicked, day_picker, format_date, today};
 use crate::state::State;
 
@@ -228,6 +230,8 @@ impl DaysOffDialog {
         let (first_button, first_calendar) = day_picker(&format_date(days.borrow().first), None);
         let same = gtk::Button::builder().label("Same day").css_classes(["flat"]).build();
         let (last_button, last_calendar) = day_picker("", Some(same.upcast_ref()));
+        show_on_calendar(&first_calendar, days.borrow().first);
+        show_on_calendar(&last_calendar, days.borrow().last);
         let repeat = RepeatMenu::new(true);
         let library = gtk::DropDown::from_strings(
             &spaces.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(),
@@ -253,11 +257,15 @@ impl DaysOffDialog {
         let refresh = {
             let days = days.clone();
             let first_button = first_button.clone();
+            let first_calendar = first_calendar.clone();
             let last_button = last_button.clone();
+            let last_calendar = last_calendar.clone();
             let repeat = repeat.clone();
             Rc::new(move || {
                 let days = days.borrow();
                 first_button.set_label(&format_date(days.first));
+                show_on_calendar(&first_calendar, days.first);
+                show_on_calendar(&last_calendar, days.last);
                 let last = if days.last == days.first {
                     "Same day".to_owned()
                 } else {
