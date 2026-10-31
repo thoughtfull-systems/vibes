@@ -151,14 +151,25 @@ impl Rule {
 
     /// The dates the rule produces on or after `from`, counting from `start`, without the days for
     /// which `skip` is true. Skipped days drop out before `positions` picks among a period's dates,
-    /// but still count toward `count`, as excluded dates do in iCalendar.
+    /// but still count toward `count`, as excluded dates do in iCalendar, so the rule never runs
+    /// past the period of its last date, nor picks more dates in that period.
     pub(crate) fn dates<'a>(
         &'a self,
         start: Date,
         from: Date,
         skip: impl Fn(Date) -> bool + 'a,
     ) -> Dates<'a> {
-        let end = self.count.and_then(|_| self.all_dates(start, start).last());
+        let end = self.count.and_then(|_| {
+            let all: Vec<Date> = self.all_dates(start, start).collect();
+            let last = *all.last()?;
+            if self.positions.is_empty() {
+                return Some(End::Date(last));
+            }
+            let period = self.period_of(last);
+            let picked = all.iter().rev().take_while(|&&d| self.period_of(d) == period).count();
+            let index = (period - self.period_of(start)) / i64::from(self.interval);
+            Some(End::Period { index, picked })
+        });
         self.iterate(start, from, Box::new(skip), end)
     }
 
@@ -167,13 +178,13 @@ impl Rule {
         self.iterate(start, from, Box::new(|_| false), None)
     }
 
-    /// The dates as `dates` gives them, ending after `end` if given, or else after `count` dates.
+    /// The dates as `dates` gives them, ending at `end` if given, or else after `count` dates.
     fn iterate<'a>(
         &'a self,
         start: Date,
         from: Date,
         skip: Box<dyn Fn(Date) -> bool + 'a>,
-        end: Option<Date>,
+        end: Option<End>,
     ) -> Dates<'a> {
         let period = if self.count.is_some() || from <= start {
             0
@@ -335,13 +346,23 @@ impl fmt::Display for Rule {
     }
 }
 
+/// Where a rule with a `count` ends, worked out without skipping any days.
+#[derive(Clone, Copy)]
+enum End {
+    /// The last date, for a rule that skipped days can only drop dates from.
+    Date(Date),
+    /// For a rule whose `positions` pick among what skipping leaves, the last period, numbered as
+    /// `Dates::period` counts them, and how many dates it picks there.
+    Period { index: i64, picked: usize },
+}
+
 pub(crate) struct Dates<'a> {
     rule: &'a Rule,
     start: Date,
     from: Date,
     skip: Box<dyn Fn(Date) -> bool + 'a>,
-    /// The last date the rule can give, which ends it in place of `count`.
-    end: Option<Date>,
+    /// Where the rule ends in place of `count`.
+    end: Option<End>,
     period: i64,
     pending: VecDeque<Date>,
     /// How many dates the rule has produced since `start`, for `count`.
@@ -361,7 +382,7 @@ impl Iterator for Dates<'_> {
             }
             if let Some(date) = self.pending.pop_front() {
                 if self.rule.until.is_some_and(|until| date > until)
-                    || self.end.is_some_and(|end| date > end)
+                    || matches!(self.end, Some(End::Date(end)) if date > end)
                     || (self.end.is_none() && self.rule.count.is_some_and(|n| self.produced >= n))
                 {
                     self.finished = true;
@@ -372,6 +393,12 @@ impl Iterator for Dates<'_> {
                     return Some(date);
                 }
                 continue;
+            }
+            if let Some(End::Period { index, .. }) = self.end
+                && self.period > index
+            {
+                self.finished = true;
+                return None;
             }
             let Some(mut dates) = self.rule.candidates(self.start, self.period) else {
                 self.finished = true;
@@ -398,6 +425,11 @@ impl Iterator for Dates<'_> {
                 dates = picked;
             }
             dates.retain(|&date| date >= self.start);
+            if let Some(End::Period { index, picked }) = self.end
+                && self.period - 1 == index
+            {
+                dates.truncate(picked);
+            }
             if dates.is_empty() {
                 self.empty += 1;
                 if self.empty >= MAX_EMPTY_PERIODS {
@@ -657,7 +689,7 @@ impl RepeatForm {
 fn month_pick(rule: &Rule, start: Date) -> Option<MonthlyOn> {
     let days: Vec<u8> = rule.weekdays.iter().map(|day| day.weekday).collect();
     match (rule.month_days.as_slice(), rule.weekdays.as_slice(), rule.positions.as_slice()) {
-        ([day], [], []) => Some(MonthlyOn::Day { day: *day }),
+        ([day], [], []) if *day > 0 || *day == -1 => Some(MonthlyOn::Day { day: *day }),
         ([], [day], []) if day.ordinal != 0 && (day.ordinal == -1 || day.ordinal > 0) => {
             Some(MonthlyOn::Nth {
                 ordinal: day.ordinal,
@@ -924,6 +956,7 @@ mod tests {
             "Yearly on the fourth Thursday of November, 3 times"
         );
         assert_eq!(describe("FREQ=MONTHLY;BYMONTHDAY=1,15"), "Custom repeat");
+        assert_eq!(describe("FREQ=MONTHLY;BYMONTHDAY=-2"), "Custom repeat");
         let presets: Vec<String> =
             repeat_presets(start).iter().map(|rule| describe_rule(rule, start)).collect();
         assert_eq!(
@@ -947,6 +980,14 @@ mod tests {
             .map(|d| d.to_string())
             .collect();
         assert_eq!(dates, ["2026-10-01", "2026-10-03"]);
+        let first_workday =
+            Rule::parse("FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=1;COUNT=2").unwrap();
+        let start = date("2026-11-01");
+        let dates: Vec<String> = first_workday
+            .dates(start, start, |day| day == date("2026-12-01"))
+            .map(|d| d.to_string())
+            .collect();
+        assert_eq!(dates, ["2026-11-02", "2026-12-02"]);
     }
 
     #[test]

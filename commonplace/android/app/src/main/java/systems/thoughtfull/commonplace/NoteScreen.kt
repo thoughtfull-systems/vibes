@@ -502,10 +502,10 @@ internal fun ActionDetails(model: NotebookModel, note: MobileNote, open: (String
     // Match the field order and control column in the Linux details panel.
     ActionField("Done?", "detail-done") {
       Switch(action.state == ActionState.DONE, { done ->
-        // A recurring action's switch stops it. Any other action's ticks it, which for a step of
-        // a recurring action ticks it in the current occurrence only.
-        if (recur != null) {
-          change(ActionChange.State(if (done) ActionState.DONE else ActionState.OPEN))
+        // Turning on a recurring action's switch stops it. Anything else ticks or unticks the
+        // action as its checkbox does.
+        if (recur != null && done) {
+          change(ActionChange.State(ActionState.DONE))
         } else {
           model.perform { it.checkAction(note.id, done, today) }
         }

@@ -265,12 +265,15 @@ impl DaysOffSet {
         if !moves {
             return date;
         }
-        let off = |day: Date| {
-            DaysOffKind::ALL
-                .into_iter()
-                .any(|kind| uses.effect(kind) != DayOffEffect::Ignore && self.is_off(kind, day))
-        };
-        (1..=366).map(|n| date.add_days(n)).find(|&day| !off(day)).unwrap_or(date)
+        (1..=366).map(|n| date.add_days(n)).find(|&day| !self.avoids(uses, day)).unwrap_or(date)
+    }
+
+    /// Whether `date` is a day off of a kind that a rule using days off as `uses` skips or moves
+    /// past.
+    pub(crate) fn avoids(&self, uses: &DaysOffUse, date: Date) -> bool {
+        DaysOffKind::ALL
+            .into_iter()
+            .any(|kind| uses.effect(kind) != DayOffEffect::Ignore && self.is_off(kind, date))
     }
 
     pub(crate) fn applies(uses: &DaysOffUse) -> bool {

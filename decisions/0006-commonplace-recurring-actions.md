@@ -89,19 +89,21 @@ format adds them.
   so missed ones pile up, as bills do. `latest` shows only the latest occurrence that has come into
   view, and counts earlier unhandled ones as missed, as a weekly review does. `after` starts the
   rule again from the day its owner handled the last occurrence, as watering plants does. Under
-  every behavior, unhandled occurrences before the latest handled one count as missed, so editing a
-  rule or its days off never brings old occurrences back as overdue.
+  every behavior, unhandled occurrences before the latest one handled on or after its start date
+  count as missed, so editing a rule or its days off never brings old occurrences back as overdue,
+  and handling an occurrence early leaves the ones before it waiting.
 - **Days off.** A library holds two kinds of days off: holidays, and vacations. Each holds named
   schedules, such as Christmas or a trip: a span of days that a rule can bring back, such as every
   year. A recurring action says, for each kind, whether a day off removes an occurrence, moves it to
   the next day that isn't a day off, or doesn't affect it, which is the default. Days off that
   remove occurrences filter the candidate days before `BYSETPOS` picks among them, so "the last
   weekday of the month" with holidays removed means the last workday. Removed days still count
-  toward `COUNT`, as excluded dates do in iCalendar, so a rule ends on the same date whatever the
-  days off. Every reader computes occurrences from the days off as they stand, so archiving a
-  schedule early brings its later occurrences back. Schedules are never deleted, only archived, and
-  an archived schedule keeps applying through the day its owner archived it, so the past doesn't
-  change. The apps hide a schedule once it's archived or a week after its last day.
+  toward `COUNT`, as excluded dates do in iCalendar, so days off never add a period to the end of a
+  rule, nor another date to its last period. Every reader computes occurrences from the days off as
+  they stand, so archiving a schedule early brings its later occurrences back. Schedules are never
+  deleted, only archived, and an archived schedule keeps applying through the day its owner archived
+  it, so the past doesn't change. The apps hide a schedule once it's archived or a week after its
+  last day.
 - **Steps.** The steps of a recurring action record their completion in the same way, keyed by the
   occurrence of the recurring action they belong to, so each occurrence starts with every step open
   and nothing resets them. Readers ignore `recur` on an action inside the subtree of another
@@ -124,8 +126,8 @@ Against the criteria:
   other occurrence, as they were.
 - **Exclusions stay live:** readers compute occurrences from the days off on every read, so a
   vacation ended early stops shaping the dates after it. Archived schedules keep shaping the dates
-  before, and unhandled occurrences before the latest handled one count as missed, so the past
-  doesn't change.
+  before, and unhandled occurrences before the latest one handled once started count as missed, so
+  the past doesn't change.
 - **Fits GTD:** the current occurrence has a due date, a start date, and open steps like any other
   action, so the list order, the next tasks, and the review questions in decision 0004 apply
   unchanged.

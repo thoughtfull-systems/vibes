@@ -138,7 +138,8 @@ Each value in `handled` is a map value with a `state` of `done` or `skipped`, th
 write in `at`, and in `day` the local date on which its owner handled it.
 
 The current occurrence comes from the rule and `handled`, and nothing writes it. Unhandled
-occurrences before the latest handled occurrence count as missed. After that:
+occurrences before the latest occurrence handled on or after its start date count as missed, so
+handling an occurrence early leaves the ones before it waiting. After that:
 
 - **`all`:** the current occurrence is the first unhandled one, and later ones that have fallen due
   wait behind it.
@@ -387,9 +388,9 @@ Readers ignore a tombstone for a note that `notes` still holds.
 - **Make maps before their first entry.** Make an action's `occurrences` map when you make the
   action, and the `handled`, `moved`, and `notes` maps when you make `recur`. Two devices that each
   made one for their first entry would each make a container under the same key, and sync would keep
-  only one, losing the other's entries.- **Stop recurring with the current dates.** When an owner
-  stops an action recurring, set its `due` and `defer` to its current occurrence's in the commit
-  that removes `recur`.
+  only one, losing the other's entries.
+- **Stop recurring with the current dates.** When an owner stops an action recurring, set its `due`
+  and `defer` to its current occurrence's in the commit that removes `recur`.
 - **Archive days off.** Never delete a schedule of days off. Set its `archived` instead.
 - **Preserve what you don't understand.** Never remove or overwrite a key or a root container that
   this spec doesn't define. A later version may define it.
@@ -458,7 +459,8 @@ A rule produces the dates that RFC 5545 gives, with three differences. The start
 the rule produces it. A date that doesn't exist, such as February 30, produces nothing. Days off
 that the rule skips drop out before `BYSETPOS` picks among a period's dates, so the last weekday of
 the month with holidays skipped means the last workday. Skipped days still count toward `COUNT`, as
-excluded dates do in RFC 5545, so the rule ends on the same date whatever the days off.
+excluded dates do in RFC 5545, so days off never add a period to the end of a rule, nor another date
+to its last period.
 
 ## Timestamps
 

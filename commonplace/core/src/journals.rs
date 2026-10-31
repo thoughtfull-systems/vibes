@@ -468,7 +468,7 @@ impl Schedule {
         }
         (1..=366)
             .map(|n| date.add_days(-n))
-            .take_while(|&day| days_off.moved(uses, day) != day)
+            .take_while(|&day| days_off.avoids(uses, day))
             .any(|day| given(day) && days_off.moved(uses, day) == date)
     }
 
@@ -1163,6 +1163,26 @@ mod tests {
         assert_eq!(read, [schedule.clone()]);
         assert!(minutes(&library, &schedule, "2026-10-26").is_empty());
         assert_eq!(minutes(&library, &schedule, "2026-10-27"), [600]);
+    }
+
+    #[test]
+    fn moved_prompts_pass_days_off_they_skip() {
+        let mut library = Library::in_memory();
+        let journal = library.create_journal("Log").unwrap();
+        let mondays = Rule::parse("FREQ=WEEKLY;BYDAY=MO").unwrap();
+        let mut schedule = Schedule::new(mondays, Date::EPOCH, Times::Fixed(vec![600]));
+        schedule.days_off.holidays = crate::DayOffEffect::Move;
+        schedule.days_off.vacations = crate::DayOffEffect::Skip;
+        // 2026-10-26 is a Monday.
+        let holiday = crate::DaysOff::new(DaysOffKind::Holidays, "Holiday", date("2026-10-26"));
+        library.set_days_off(&holiday).unwrap();
+        let mut trip = crate::DaysOff::new(DaysOffKind::Vacations, "Trip", date("2026-10-27"));
+        trip.last = date("2026-10-28");
+        library.set_days_off(&trip).unwrap();
+        let minutes = |day: &str| library.schedule_minutes(journal, &schedule, date(day));
+        assert!(minutes("2026-10-26").is_empty());
+        assert!(minutes("2026-10-27").is_empty());
+        assert_eq!(minutes("2026-10-29"), [600]);
     }
 
     #[test]

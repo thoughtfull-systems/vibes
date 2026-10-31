@@ -294,13 +294,7 @@ impl<'a> Occurrences<'a> {
     fn occurrence(&self, date: Date, status: OccurrenceStatus) -> Occurrence {
         let settings = self.settings();
         let moved = self.moved.get(&date).copied();
-        let on = moved.unwrap_or_else(|| {
-            if DaysOffSet::applies(&settings.days_off) {
-                self.days_off.moved(&settings.days_off, date)
-            } else {
-                date
-            }
-        });
+        let on = self.on(date);
         let handled = self.recur.handled_on(date).copied();
         let status = match handled.map(|entry| entry.state) {
             Some(OccurrenceState::Done) => OccurrenceStatus::Done,
@@ -319,31 +313,56 @@ impl<'a> Occurrences<'a> {
         }
     }
 
+    /// The date the occurrence named by `date` falls on, after its owner or days off moved it.
+    fn on(&self, date: Date) -> Date {
+        let uses = &self.settings().days_off;
+        self.moved.get(&date).copied().unwrap_or_else(|| {
+            if DaysOffSet::applies(uses) { self.days_off.moved(uses, date) } else { date }
+        })
+    }
+
     /// The day an occurrence comes into view: its start date, or the date it falls on.
     fn view(occurrence: &Occurrence) -> Date {
         occurrence.defer.unwrap_or(occurrence.on)
     }
 
-    /// The latest handled occurrence. Unhandled occurrences before it count as missed.
+    /// The latest handled occurrence.
     fn latest_handled(&self) -> Option<&HandledOccurrence> {
         self.recur.handled.iter().max_by_key(|entry| entry.date)
+    }
+
+    /// The day after the latest occurrence its owner handled on or after its start date, or the
+    /// rule's start. Unhandled occurrences before it count as missed, but one handled before it
+    /// started leaves those before it to wait their turn.
+    fn cutoff(&self) -> Date {
+        let settings = self.settings();
+        let started = |entry: &HandledOccurrence| {
+            entry.day >= self.on(entry.date).add_days(settings.defer.unwrap_or(0))
+        };
+        self.recur
+            .handled
+            .iter()
+            .filter(|entry| started(entry))
+            .map(|entry| entry.date.add_days(1))
+            .max()
+            .map_or(settings.start, |after| after.max(settings.start))
     }
 
     /// The occurrence the action stands for on `today`, or nothing once the rule has ended.
     pub(crate) fn current(&self, today: Date) -> Option<Occurrence> {
         let settings = self.settings();
-        let latest = self.latest_handled();
-        let from =
-            latest.map_or(settings.start, |entry| entry.date.add_days(1)).max(settings.start);
+        let from = self.cutoff();
         let date = match settings.missed {
-            Missed::After => self.next_after(latest, 0)?,
+            Missed::After => self.next_after(self.latest_handled(), 0)?,
             Missed::All => self.dates(settings.start, from).find(|d| !self.handled.contains(d))?,
             Missed::Latest => {
                 let lookahead =
                     today.add_days(settings.defer.unwrap_or(0).unsigned_abs() as i32 + 31);
                 let mut first = None;
                 let mut latest_in_view = None;
-                for date in self.dates(settings.start, from) {
+                let unhandled =
+                    self.dates(settings.start, from).filter(|date| !self.handled.contains(date));
+                for date in unhandled {
                     if date > lookahead {
                         break;
                     }
@@ -354,7 +373,7 @@ impl<'a> Occurrences<'a> {
                 }
                 match latest_in_view.or(first) {
                     Some(date) => date,
-                    None => self.dates(settings.start, from).next()?,
+                    None => self.dates(settings.start, from).find(|d| !self.handled.contains(d))?,
                 }
             }
         };
@@ -406,19 +425,15 @@ impl<'a> Occurrences<'a> {
         count
     }
 
-    /// How many unhandled occurrences after the latest handled one count as missed: those before
+    /// How many unhandled occurrences after the cutoff count as missed: those before
     /// `current`, or, once the rule has ended, those up to `today`.
     fn missed(&self, current: Option<&Occurrence>, today: Date) -> u32 {
         let settings = self.settings();
         if settings.missed == Missed::After {
             return 0;
         }
-        let from = self
-            .latest_handled()
-            .map_or(settings.start, |entry| entry.date.add_days(1))
-            .max(settings.start);
         let end = current.map_or(today.add_days(1), |current| current.date);
-        let missed = self.dates(settings.start, from).take_while(|date| *date < end);
+        let missed = self.dates(settings.start, self.cutoff()).take_while(|date| *date < end);
         missed.filter(|date| !self.handled.contains(date)).count() as u32
     }
 
@@ -713,9 +728,9 @@ impl Library {
     }
 
     /// Ticks or unticks an action's checkbox. For a recurring action, ticking closes its current
-    /// occurrence. For a step of a recurring action, it ticks the step for the current occurrence
-    /// only, so the next occurrence starts with every step open. Otherwise it marks the action done
-    /// or open.
+    /// occurrence, and unticking one whose rule has ended reopens its last occurrence. For a step
+    /// of a recurring action, it ticks the step for the current occurrence only, so the next
+    /// occurrence starts with every step open. Otherwise it marks the action done or open.
     pub fn check_action(&mut self, id: NoteId, done: bool, today: Date) -> Result<(), Error> {
         let note = self.note(id).ok_or(Error::NotFound(id))?;
         let action = note.action.ok_or(Error::NotAnAction(id))?;
@@ -736,12 +751,23 @@ impl Library {
             return self.commit();
         }
         if recurring_ancestor.is_none()
-            && action.recur.is_some()
+            && let Some(recur) = &action.recur
             && action.state == ActionState::Open
-            && done
-            && let Some(current) = self.current_occurrence(id, today)
         {
-            return self.handle_occurrence(id, current.date, Some(OccurrenceState::Done), today);
+            match self.current_occurrence(id, today) {
+                Some(current) if done => {
+                    let done = Some(OccurrenceState::Done);
+                    return self.handle_occurrence(id, current.date, done, today);
+                }
+                // A finished rule shows the action done, so unticking it reopens the last
+                // occurrence its owner handled.
+                None if !done => {
+                    if let Some(last) = recur.handled.iter().max_by_key(|entry| entry.date) {
+                        return self.handle_occurrence(id, last.date, None, today);
+                    }
+                }
+                _ => {}
+            }
         }
         let state = if done { ActionState::Done } else { ActionState::Open };
         self.change_action(id, crate::ActionChange::State(state))
@@ -934,14 +960,17 @@ mod tests {
         assert_eq!(dates[0].note.action.as_ref().unwrap().due, Some(date("2026-10-05")));
         library.check_action(id, true, date("2026-10-21")).unwrap();
         assert_eq!(current(&library, id, "2026-10-21").as_deref(), Some("2026-10-12"));
-        library
-            .handle_occurrence(
-                id,
-                date("2026-10-26"),
-                Some(OccurrenceState::Skipped),
-                date("2026-10-21"),
-            )
-            .unwrap();
+        let handle = |library: &mut Library, day: &str| {
+            let skipped = Some(OccurrenceState::Skipped);
+            library.handle_occurrence(id, date(day), skipped, date("2026-10-21")).unwrap();
+        };
+        // Handled before it starts, so the ones before it still wait their turn.
+        handle(&mut library, "2026-10-26");
+        assert_eq!(current(&library, id, "2026-10-21").as_deref(), Some("2026-10-12"));
+        let summary = library.occurrence_summary(id, date("2026-10-21")).unwrap();
+        assert_eq!((summary.missed, summary.waiting), (0, 1));
+        handle(&mut library, "2026-10-12");
+        handle(&mut library, "2026-10-19");
         assert_eq!(current(&library, id, "2026-10-21").as_deref(), Some("2026-11-02"));
     }
 
@@ -1074,6 +1103,26 @@ mod tests {
         let notes = library.notes_on(vec![raw.clone(), raw], today);
         assert_eq!(notes.len(), 2);
         assert!(notes.iter().all(|note| note.action.as_ref().unwrap().state == ActionState::Done));
+    }
+
+    #[test]
+    fn unticking_a_finished_action_reopens_its_last_occurrence() {
+        let mut library = Library::in_memory();
+        let id = library.create_task("Two reviews", None).unwrap();
+        let settings = RecurrenceSettings::new(
+            Rule::parse("FREQ=WEEKLY;BYDAY=MO;COUNT=2").unwrap(),
+            date("2026-10-05"),
+        );
+        library.set_recurrence(id, Some(settings), date("2026-10-05")).unwrap();
+        let today = date("2026-10-12");
+        // Only the latest counts, so this closes the second and last occurrence.
+        library.check_action(id, true, today).unwrap();
+        assert_eq!(current(&library, id, "2026-10-12"), None);
+        let state = |library: &Library| library.note_on(id, today).unwrap().action.unwrap().state;
+        assert_eq!(state(&library), ActionState::Done);
+        library.check_action(id, false, today).unwrap();
+        assert_eq!(current(&library, id, "2026-10-12").as_deref(), Some("2026-10-12"));
+        assert_eq!(state(&library), ActionState::Open);
     }
 
     #[test]

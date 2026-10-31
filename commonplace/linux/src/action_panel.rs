@@ -802,8 +802,8 @@ impl ActionPanel {
         }
     }
 
-    /// Marks a recurring action done, which stops it, or ticks any other action, which for a step
-    /// of a recurring action ticks it in the current occurrence only.
+    /// Marks a recurring action done, which stops it, or otherwise ticks or unticks the action as
+    /// its checkbox does.
     fn set_done(&self, done: bool) {
         if self.loading.get() {
             return;
@@ -814,9 +814,8 @@ impl ActionPanel {
             .read(|spaces| spaces.note_on(id, today()))
             .and_then(|note| note.action)
             .is_some_and(|action| action.recur.is_some());
-        if recurring {
-            let state = if done { ActionState::Done } else { ActionState::Open };
-            self.change(ActionChange::State(state));
+        if recurring && done {
+            self.change(ActionChange::State(ActionState::Done));
         } else {
             self.report(self.state.write(|spaces| spaces.check_action(id, done, today())));
         }
