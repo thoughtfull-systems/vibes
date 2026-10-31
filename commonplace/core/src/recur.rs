@@ -162,18 +162,6 @@ impl Rule {
         self.iterate(start, from, Box::new(skip), self.end(start))
     }
 
-    /// The dates as `dates` gives them, with `end` from `end(start)`, for a caller that asks many
-    /// times and works the end out once.
-    pub(crate) fn dates_ending<'a>(
-        &'a self,
-        start: Date,
-        from: Date,
-        skip: Box<dyn Fn(Date) -> bool + 'a>,
-        end: Option<End>,
-    ) -> Dates<'a> {
-        self.iterate(start, from, skip, end)
-    }
-
     /// Where the rule ends when it has a `count`, counting from `start`.
     pub(crate) fn end(&self, start: Date) -> Option<End> {
         self.count?;
@@ -193,8 +181,9 @@ impl Rule {
         self.iterate(start, from, Box::new(|_| false), None)
     }
 
-    /// The dates as `dates` gives them, ending at `end` if given, or else after `count` dates.
-    fn iterate<'a>(
+    /// The dates as `dates` gives them, ending at `end` if given, or else after `count` dates. A
+    /// caller that asks many times works `end` out once with `end(start)`.
+    pub(crate) fn iterate<'a>(
         &'a self,
         start: Date,
         from: Date,

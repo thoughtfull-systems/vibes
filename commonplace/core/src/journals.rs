@@ -465,7 +465,7 @@ impl Schedule {
         let end = self.rule.end(self.start);
         let given = |day: Date| {
             let skip = Box::new(|d| days_off.skips(uses, d));
-            self.rule.dates_ending(self.start, day, skip, end).next() == Some(day)
+            self.rule.iterate(self.start, day, skip, end).next() == Some(day)
         };
         if given(date) && days_off.moved(uses, date) == date {
             return true;

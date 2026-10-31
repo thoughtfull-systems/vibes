@@ -138,11 +138,12 @@ Each value in `handled` is a map value with a `state` of `done` or `skipped`, th
 write in `at`, in `day` the local date on which its owner handled it, and `early` set to `true` if
 `day` came before the occurrence's start date at the time of the write.
 
-The current occurrence comes from the rule and `handled`, and nothing writes it. Unhandled
-occurrences before the latest handled occurrence that isn't `early` count as missed, so handling an
-occurrence early leaves the ones before it waiting, and a later change to the start offset or the
-days off doesn't bring missed ones back. An occurrence its owner moved counts from the date it falls
-on. After that:
+The current occurrence comes from the rule and `handled`, and nothing writes it. Handling an
+occurrence makes the unhandled ones before it missed if their start date came by its `day`, or, for
+an `early` one, by its own start date, once that date has come. Handling an occurrence early thus
+leaves the ones before it waiting until it starts, handling one that its owner moved in from weeks
+ahead doesn't miss the weeks between, and a later change to the start offset or the days off doesn't
+bring missed ones back. After that:
 
 - **`all`:** the current occurrence is the first unhandled one, and later ones that have fallen due
   wait behind it.
