@@ -448,30 +448,59 @@ impl<'a> Occurrences<'a> {
         self.dates(from).filter(|date| !self.handled.contains_key(date))
     }
 
-    /// The open occurrences that might stand for the action, in order of date: those up to a
-    /// month past both `today` and the first open one's start, and any moved there from later.
-    fn candidates(&self) -> Vec<Date> {
-        let defer = self.settings().defer.unwrap_or(0).unsigned_abs() as i32;
-        let Some(first) = self.open(self.settings().start).next() else {
-            return Vec::new();
+    /// The open occurrences after `by` that their owner moved, which a walk of the rule's dates
+    /// that stops at `by` doesn't reach, however early they now fall.
+    fn moved_beyond(&self, by: Date) -> impl Iterator<Item = Date> + '_ {
+        self.moved.keys().copied().filter(move |&date| {
+            date > by
+                && date >= self.cutoff().from
+                && !self.handled.contains_key(&date)
+                && !self.is_missed(date)
+                && self.gives(date)
+        })
+    }
+
+    /// The open occurrence, from `first` on, that starts soonest, the earliest by date among ties.
+    fn soonest(&self, first: Date) -> Option<Date> {
+        let defer = self.settings().defer.unwrap_or(0);
+        let mut best: Option<(Date, Date)> = None;
+        let mut last = first;
+        for date in self.open(first) {
+            // Days off only move occurrences later, so no later date can start sooner, unless its
+            // owner moved it, which `moved_beyond` finds.
+            if best.is_some_and(|(started, _)| date.add_days(defer) > started) {
+                break;
+            }
+            last = date;
+            let candidate = (self.started(date), date);
+            best = Some(best.map_or(candidate, |best| best.min(candidate)));
+        }
+        for date in self.moved_beyond(last) {
+            let candidate = (self.started(date), date);
+            best = Some(best.map_or(candidate, |best| best.min(candidate)));
+        }
+        best.map(|(_, date)| date)
+    }
+
+    /// The latest open occurrence, from `first` on, that has started.
+    fn latest_started(&self, first: Date) -> Option<Date> {
+        let today = self.today;
+        // Days off only move occurrences later, so none after this has started, unless its owner
+        // moved it, which `moved_beyond` finds.
+        let last = today.add_days(-self.settings().defer.unwrap_or(0));
+        let scan = |from: Date| {
+            self.open(from).take_while(|&date| date <= last).filter(|&d| self.started(d) <= today)
         };
-        let lookahead = self.today.max(first).max(self.started(first)).add_days(defer + 31);
-        let mut dates: Vec<Date> = self.open(first).take_while(|date| *date <= lookahead).collect();
-        dates.extend(
-            self.moved
-                .iter()
-                .filter(|&(&date, &to)| date > lookahead && to <= lookahead)
-                .map(|(&date, _)| date)
-                .filter(|&date| {
-                    !self.handled.contains_key(&date) && !self.is_missed(date) && self.gives(date)
-                }),
-        );
-        dates.sort_unstable();
-        dates
+        // Most often one has started in the last month, so look there before the whole backlog.
+        let window = first.max(last.add_days(-31));
+        let walked =
+            scan(window).last().or_else(|| (window > first).then(|| scan(first).last())?);
+        let moved = self.moved_beyond(last).filter(|&date| self.started(date) <= today).max();
+        walked.max(moved)
     }
 
     /// The occurrence the action stands for, or nothing once the rule has ended: under `all`, the
-    /// open one that started first, and under `latest`, the latest open one that has started, or
+    /// open one that starts first, and under `latest`, the latest open one that has started, or
     /// else the one that starts soonest. Neither is the first by date when its owner postponed
     /// that one.
     pub(crate) fn current(&self) -> Option<Occurrence> {
@@ -479,15 +508,11 @@ impl<'a> Occurrences<'a> {
         let date = match settings.missed {
             Missed::After => self.next_after(self.recur.latest_handled(), 0)?,
             Missed::All | Missed::Latest => {
-                let candidates = self.candidates();
-                let soonest = candidates.iter().copied().min_by_key(|&date| self.started(date));
-                let latest_in_view = (settings.missed == Missed::Latest)
-                    .then(|| {
-                        candidates.iter().rev().find(|&&date| self.started(date) <= self.today)
-                    })
-                    .flatten()
-                    .copied();
-                latest_in_view.or(soonest)?
+                let first = self.open(settings.start).next()?;
+                let latest = (settings.missed == Missed::Latest)
+                    .then(|| self.latest_started(first))
+                    .flatten();
+                latest.or_else(|| self.soonest(first))?
             }
         };
         Some(self.occurrence(date, OccurrenceStatus::Current))
@@ -526,12 +551,8 @@ impl<'a> Occurrences<'a> {
         }
         let today = self.today;
         let mut count = self
-            .moved
-            .iter()
-            .filter(|&(&date, &to)| date > today && to <= today)
-            .filter(|&(&date, _)| {
-                !self.handled.contains_key(&date) && !self.is_missed(date) && self.gives(date)
-            })
+            .moved_beyond(today)
+            .filter(|&date| date != current.date && self.on(date) <= today)
             .count() as u32;
         for date in self.open(self.settings().start) {
             if date > today || count >= MAX_WAITING {
@@ -1413,6 +1434,32 @@ mod tests {
         let history = library.occurrences(id, today, 5, 0);
         let postponed = history.iter().find(|o| o.date == date("2026-10-05")).unwrap();
         assert_eq!(postponed.status, OccurrenceStatus::Upcoming);
+    }
+
+    #[test]
+    fn an_occurrence_moved_in_can_be_current_without_waiting_behind_itself() {
+        let mut library = Library::in_memory();
+        let id = weekly(&mut library, Missed::All);
+        for day in ["2026-10-05", "2026-10-12", "2026-10-19"] {
+            library.check_action(id, true, date(day)).unwrap();
+        }
+        library.move_occurrence(id, date("2026-11-30"), Some(date("2026-10-20"))).unwrap();
+        let summary = library.occurrence_summary(id, date("2026-10-21")).unwrap();
+        assert_eq!(summary.current.map(|o| o.date), Some(date("2026-11-30")));
+        assert_eq!(summary.waiting, 0);
+    }
+
+    #[test]
+    fn a_long_backlog_keeps_its_oldest_occurrence_current() {
+        let mut library = Library::in_memory();
+        let id = library.create_task("Log the day", None).unwrap();
+        let mut daily =
+            RecurrenceSettings::new(Rule::parse("FREQ=DAILY").unwrap(), date("2024-01-01"));
+        daily.missed = Missed::All;
+        library.set_recurrence(id, Some(daily), date("2024-01-01")).unwrap();
+        let summary = library.occurrence_summary(id, date("2026-10-21")).unwrap();
+        assert_eq!(summary.current.map(|o| o.date), Some(date("2024-01-01")));
+        assert_eq!(summary.waiting, MAX_WAITING);
     }
 
     #[test]
