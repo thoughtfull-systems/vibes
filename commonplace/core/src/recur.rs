@@ -159,18 +159,33 @@ impl Rule {
         from: Date,
         skip: impl Fn(Date) -> bool + 'a,
     ) -> Dates<'a> {
-        let end = self.count.and_then(|_| {
-            let all: Vec<Date> = self.all_dates(start, start).collect();
-            let last = *all.last()?;
-            if self.positions.is_empty() {
-                return Some(End::Date(last));
-            }
-            let period = self.period_of(last);
-            let picked = all.iter().rev().take_while(|&&d| self.period_of(d) == period).count();
-            let index = (period - self.period_of(start)) / i64::from(self.interval);
-            Some(End::Period { index, picked })
-        });
-        self.iterate(start, from, Box::new(skip), end)
+        self.iterate(start, from, Box::new(skip), self.end(start))
+    }
+
+    /// The dates as `dates` gives them, with `end` from `end(start)`, for a caller that asks many
+    /// times and works the end out once.
+    pub(crate) fn dates_ending<'a>(
+        &'a self,
+        start: Date,
+        from: Date,
+        skip: Box<dyn Fn(Date) -> bool + 'a>,
+        end: Option<End>,
+    ) -> Dates<'a> {
+        self.iterate(start, from, skip, end)
+    }
+
+    /// Where the rule ends when it has a `count`, counting from `start`.
+    pub(crate) fn end(&self, start: Date) -> Option<End> {
+        self.count?;
+        let all: Vec<Date> = self.all_dates(start, start).collect();
+        let last = *all.last()?;
+        if self.positions.is_empty() {
+            return Some(End::Date(last));
+        }
+        let period = self.period_of(last);
+        let picked = all.iter().rev().take_while(|&&d| self.period_of(d) == period).count();
+        let index = (period - self.period_of(start)) / i64::from(self.interval);
+        Some(End::Period { index, picked })
     }
 
     /// The dates the rule produces on or after `from`, counting from `start`, skipping none.
@@ -203,11 +218,6 @@ impl Rule {
             empty: 0,
             finished: false,
         }
-    }
-
-    /// Whether the rule produces `date`, counting from `start`.
-    pub(crate) fn includes(&self, start: Date, date: Date, skip: impl Fn(Date) -> bool) -> bool {
-        self.dates(start, date, skip).next() == Some(date)
     }
 
     /// A number for the period that holds `date`, which grows by one from each period to the next.
@@ -348,7 +358,7 @@ impl fmt::Display for Rule {
 
 /// Where a rule with a `count` ends, worked out without skipping any days.
 #[derive(Clone, Copy)]
-enum End {
+pub(crate) enum End {
     /// The last date, for a rule that skipped days can only drop dates from.
     Date(Date),
     /// For a rule whose `positions` pick among what skipping leaves, the last period, numbered as
@@ -988,6 +998,13 @@ mod tests {
             .map(|d| d.to_string())
             .collect();
         assert_eq!(dates, ["2026-11-02", "2026-12-02"]);
+        let first_and_last =
+            Rule::parse("FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=1,-1;COUNT=3").unwrap();
+        let dates: Vec<String> = first_and_last
+            .dates(start, start, |day| day == date("2026-12-01"))
+            .map(|d| d.to_string())
+            .collect();
+        assert_eq!(dates, ["2026-11-02", "2026-11-30", "2026-12-02"]);
     }
 
     #[test]

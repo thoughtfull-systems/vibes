@@ -135,11 +135,14 @@ day off of a kind the action skips or moves past. An occurrence its owner moved 
 `moved`, whatever the days off.
 
 Each value in `handled` is a map value with a `state` of `done` or `skipped`, the timestamp of the
-write in `at`, and in `day` the local date on which its owner handled it.
+write in `at`, in `day` the local date on which its owner handled it, and `early` set to `true` if
+`day` came before the occurrence's start date at the time of the write.
 
 The current occurrence comes from the rule and `handled`, and nothing writes it. Unhandled
-occurrences before the latest occurrence handled on or after its start date count as missed, so
-handling an occurrence early leaves the ones before it waiting. After that:
+occurrences before the latest handled occurrence that isn't `early` count as missed, so handling an
+occurrence early leaves the ones before it waiting, and a later change to the start offset or the
+days off doesn't bring missed ones back. An occurrence its owner moved counts from the date it falls
+on. After that:
 
 - **`all`:** the current occurrence is the first unhandled one, and later ones that have fallen due
   wait behind it.

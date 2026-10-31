@@ -67,9 +67,8 @@ internal fun HistoryDialog(
     occurrences =
       model.read { it.occurrences(id, today, past.toUInt(), UPCOMING.toUInt()) }.orEmpty()
   }
-  val (upcoming, earlier) = occurrences.partition {
-    it.status == OccurrenceStatus.CURRENT || it.status == OccurrenceStatus.UPCOMING
-  }
+  val current = occurrences.firstOrNull { it.status == OccurrenceStatus.CURRENT }?.date
+  val (upcoming, earlier) = occurrences.partition { current != null && it.date >= current }
   Dialog(dismiss, DialogProperties(usePlatformDefaultWidth = false)) {
     Scaffold(
       topBar = {
