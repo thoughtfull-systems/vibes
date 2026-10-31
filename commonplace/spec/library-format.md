@@ -145,10 +145,10 @@ own, once that date has come. Handling one that its owner moved in from weeks ah
 miss the weeks between, one its owner postponed stays pending until its new start date, and a later
 change to the start offset or the days off doesn't bring missed ones back. After that:
 
-- **`all`:** the current occurrence is the first unhandled one, and later ones that have fallen due
-  wait behind it.
+- **`all`:** the current occurrence is the unhandled one whose start date comes first, and others
+  that have fallen due wait behind it.
 - **`latest`:** the current occurrence is the latest unhandled one whose start date has come, or
-  else the first unhandled one. Earlier ones count as missed.
+  else the one whose start date comes first. Earlier ones whose start date has come count as missed.
 - **`after`:** the rule counts again from the `day` of the latest handled occurrence, and the
   current occurrence is its first date after that day. Without a handled occurrence, it's the rule's
   first date. A `COUNT` counts handled occurrences.
