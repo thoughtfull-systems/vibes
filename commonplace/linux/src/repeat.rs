@@ -458,7 +458,7 @@ pub struct OffsetRow {
 impl OffsetRow {
     pub fn new(sign: i32, after: &str, optional: bool) -> Self {
         let on = gtk::CheckButton::builder().active(true).visible(optional).build();
-        let days = gtk::SpinButton::with_range(0.0, 365.0, 1.0);
+        let days = gtk::SpinButton::with_range(-999.0, 999.0, 1.0);
         let widget = gtk::Box::builder().spacing(6).build();
         widget.append(&on);
         widget.append(&days);
@@ -470,7 +470,7 @@ impl OffsetRow {
     pub fn show(&self, offset: Option<i32>) {
         let on = offset.is_some() || !self.on.is_visible();
         self.on.set_active(on);
-        self.days.set_value(f64::from(offset.map_or(0, |days| days * self.sign).max(0)));
+        self.days.set_value(f64::from(offset.map_or(0, |days| days * self.sign)));
         self.days.set_sensitive(on);
     }
 

@@ -8,7 +8,7 @@ use std::collections::HashMap;
 
 use loro::{LoroMap, LoroMapValue, LoroValue, ValueOrContainer};
 
-use crate::actions::{ACTION, ActionState, Date, Hierarchy};
+use crate::actions::{ACTION, Action, ActionState, CLOSED, Date, Hierarchy, STATE as ACTION_STATE};
 use crate::days_off::{DaysOffSet, DaysOffUse};
 use crate::library::{MODIFIED, integer, loro_error, string};
 use crate::recur::{End, Rule};
@@ -708,8 +708,12 @@ pub struct OccurrenceSummary {
 }
 
 impl Library {
-    /// Makes an action recur with `settings`, or, with nothing, stops it recurring. An action that
-    /// stops recurring keeps the dates of its current occurrence as its own.
+    /// Makes an action recur with `settings`, or, with nothing, stops it recurring.
+    ///
+    /// An action that starts recurring while done counts its first occurrence as done, and its
+    /// done steps as done in that occurrence only. An action that stops recurring keeps the dates
+    /// of its current occurrence as its own, and its steps' states in it, or, once its rule has
+    /// ended, counts as done.
     pub fn set_recurrence(
         &mut self,
         id: NoteId,
@@ -719,6 +723,13 @@ impl Library {
         self.check_writable()?;
         let note = self.note_map(id)?;
         let action = self.action_map(id)?;
+        let before = self.note(id).and_then(|note| note.action).ok_or(Error::NotAnAction(id))?;
+        let steps: Vec<(LoroMap, Action)> = self
+            .hierarchy()
+            .descendants(id)
+            .into_iter()
+            .filter_map(|step| Some((self.action_map(step).ok()?, self.note(step)?.action?)))
+            .collect();
         match settings {
             Some(settings) => {
                 if !settings.rule.is_valid() {
@@ -730,10 +741,8 @@ impl Library {
                 for key in [HANDLED, MOVED, NOTES] {
                     child_map(&recur, key)?;
                 }
-                for step in self.hierarchy().descendants(id) {
-                    if let Ok(step) = self.action_map(step) {
-                        child_map(&step, OCCURRENCES)?;
-                    }
+                for (step, _) in &steps {
+                    child_map(step, OCCURRENCES)?;
                 }
                 recur.insert(RULE, settings.rule.to_string()).map_err(loro_error)?;
                 recur.insert(START, settings.start.to_string()).map_err(loro_error)?;
@@ -746,16 +755,53 @@ impl Library {
                     .map_err(loro_error)?;
                 }
                 settings.days_off.write(&recur)?;
+                if before.recur.is_none()
+                    && let Some(current) = self.current_occurrence(id, today)
+                {
+                    let key = current.date.to_string();
+                    for (step, fields) in &steps {
+                        if fields.state == ActionState::Done {
+                            let at = fields.closed.unwrap_or_else(|| self.now());
+                            child_map(step, OCCURRENCES)?.insert(&key, at).map_err(loro_error)?;
+                            set_state(step, None)?;
+                        }
+                    }
+                    if before.state == ActionState::Done {
+                        let at = before.closed.unwrap_or_else(|| self.now());
+                        let entry =
+                            self.handled_entry(id, current.date, OccurrenceState::Done, at, today);
+                        child_map(&recur, HANDLED)?.insert(&key, entry).map_err(loro_error)?;
+                        set_state(&action, None)?;
+                    }
+                }
             }
             None => {
-                if let Some(current) = self.current_occurrence(id, today) {
-                    for (key, date) in [(DUE, current.due), (DEFER, current.defer)] {
-                        match date {
-                            Some(date) => action.insert(key, date.to_string()),
-                            None => action.delete(key),
+                match self.current_occurrence(id, today) {
+                    Some(current) => {
+                        for (key, date) in [(DUE, current.due), (DEFER, current.defer)] {
+                            match date {
+                                Some(date) => action.insert(key, date.to_string()),
+                                None => action.delete(key),
+                            }
+                            .map_err(loro_error)?;
                         }
-                        .map_err(loro_error)?;
+                        for (step, fields) in &steps {
+                            let done = fields.occurrences.iter().find(|o| o.date == current.date);
+                            if fields.state == ActionState::Open
+                                && let Some(done) = done
+                            {
+                                set_state(step, Some(done.at))?;
+                            }
+                        }
                     }
+                    None if before.state == ActionState::Open => {
+                        let last = before
+                            .recur
+                            .as_ref()
+                            .and_then(|recur| recur.handled.iter().map(|entry| entry.at).max());
+                        set_state(&action, Some(last.unwrap_or_else(|| self.now())))?;
+                    }
+                    None => {}
                 }
                 action.delete(RECUR).map_err(loro_error)?;
             }
@@ -777,31 +823,44 @@ impl Library {
         let handled = child_map(&self.recur_map(id)?, HANDLED)?;
         match state {
             Some(state) => {
-                let state = match state {
-                    OccurrenceState::Done => "done",
-                    OccurrenceState::Skipped => "skipped",
-                };
-                let mut entry: Vec<(String, LoroValue)> = vec![
-                    (STATE.into(), state.into()),
-                    (AT.into(), self.now().into()),
-                    (DAY.into(), today.to_string().into()),
-                ];
-                // Recorded now, so later changes to the start offset or days off don't turn a
-                // timely completion into an early one and bring back occurrences already missed.
-                let recur = self.note(id).and_then(|note| note.action?.recur);
-                let days_off = self.days_off_set();
-                if recur.is_some_and(|recur| {
-                    Occurrences::new(&recur, &days_off, today).early(date, today)
-                }) {
-                    entry.push((EARLY.into(), true.into()));
-                }
-                handled.insert(&date.to_string(), LoroValue::Map(entry.into()))
+                let entry = self.handled_entry(id, date, state, self.now(), today);
+                handled.insert(&date.to_string(), entry)
             }
             None => handled.delete(&date.to_string()),
         }
         .map_err(loro_error)?;
         self.note_map(id)?.insert(MODIFIED, self.now()).map_err(loro_error)?;
         self.commit()
+    }
+
+    /// The record of the recurring action `id`'s occurrence named by `date`, handled as `state` at
+    /// `at` on `today`.
+    fn handled_entry(
+        &self,
+        id: NoteId,
+        date: Date,
+        state: OccurrenceState,
+        at: i64,
+        today: Date,
+    ) -> LoroValue {
+        let state = match state {
+            OccurrenceState::Done => "done",
+            OccurrenceState::Skipped => "skipped",
+        };
+        let mut entry: Vec<(String, LoroValue)> = vec![
+            (STATE.into(), state.into()),
+            (AT.into(), at.into()),
+            (DAY.into(), today.to_string().into()),
+        ];
+        // Recorded now, so later changes to the start offset or days off don't turn a timely
+        // completion into an early one and bring back occurrences already missed.
+        let recur = self.note(id).and_then(|note| note.action?.recur);
+        let days_off = self.days_off_set();
+        if recur.is_some_and(|recur| Occurrences::new(&recur, &days_off, today).early(date, today))
+        {
+            entry.push((EARLY.into(), true.into()));
+        }
+        LoroValue::Map(entry.into())
     }
 
     /// Moves the occurrence named by `date` to `to`, or, with nothing, back to its own date.
@@ -1086,6 +1145,21 @@ impl Library {
         }
         .ok_or(Error::NotRecurring(id))
     }
+}
+
+/// Marks the action whose map is `action` done at `closed`, or, with nothing, open.
+fn set_state(action: &LoroMap, closed: Option<i64>) -> Result<(), Error> {
+    match closed {
+        Some(at) => {
+            action.insert(ACTION_STATE, ActionState::Done.as_str()).map_err(loro_error)?;
+            action.insert(CLOSED, at)
+        }
+        None => {
+            action.insert(ACTION_STATE, ActionState::Open.as_str()).map_err(loro_error)?;
+            action.delete(CLOSED)
+        }
+    }
+    .map_err(loro_error)
 }
 
 fn child_map(parent: &LoroMap, key: &str) -> Result<LoroMap, Error> {
@@ -1511,6 +1585,44 @@ mod tests {
         let summary = library.occurrence_summary(id, date("2026-10-31")).unwrap();
         assert_eq!(summary.current.map(|o| o.date), Some(date("2026-10-31")));
         assert_eq!(summary.missed, MAX_COUNT);
+    }
+
+    #[test]
+    fn stopping_keeps_this_times_steps_and_a_finished_rule_done() {
+        let mut library = Library::in_memory();
+        let id = weekly(&mut library, Missed::Latest);
+        let step = library.create_task("Empty the inbox", Some(id)).unwrap();
+        let today = date("2026-10-05");
+        library.check_action(step, true, today).unwrap();
+        library.set_recurrence(id, None, today).unwrap();
+        assert_eq!(library.note(step).unwrap().action.unwrap().state, ActionState::Done);
+
+        let twice = library.create_task("Two reviews", None).unwrap();
+        let settings = RecurrenceSettings::new(
+            Rule::parse("FREQ=WEEKLY;BYDAY=MO;COUNT=2").unwrap(),
+            date("2026-10-05"),
+        );
+        library.set_recurrence(twice, Some(settings), today).unwrap();
+        library.check_action(twice, true, date("2026-10-12")).unwrap();
+        library.set_recurrence(twice, None, date("2026-10-12")).unwrap();
+        assert_eq!(library.note(twice).unwrap().action.unwrap().state, ActionState::Done);
+    }
+
+    #[test]
+    fn starting_counts_a_done_action_and_its_done_steps_in_the_first_occurrence() {
+        let mut library = Library::in_memory();
+        let id = library.create_task("Renew passport", None).unwrap();
+        let step = library.create_task("Fill in the form", Some(id)).unwrap();
+        library.change_action(step, crate::ActionChange::State(ActionState::Done)).unwrap();
+        library.change_action(id, crate::ActionChange::State(ActionState::Done)).unwrap();
+        let today = date("2026-10-05");
+        let yearly = RecurrenceSettings::new(Rule::parse("FREQ=YEARLY").unwrap(), today);
+        library.set_recurrence(id, Some(yearly), today).unwrap();
+        assert_eq!(library.note(id).unwrap().action.unwrap().state, ActionState::Open);
+        assert_eq!(current(&library, id, "2026-10-05").as_deref(), Some("2027-10-05"));
+        assert_eq!(library.note(step).unwrap().action.unwrap().state, ActionState::Open);
+        let later = date("2027-10-05");
+        assert_eq!(library.note_on(step, later).unwrap().action.unwrap().state, ActionState::Open);
     }
 
     #[test]

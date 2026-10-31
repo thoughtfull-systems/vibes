@@ -15,14 +15,14 @@ use crate::{Error, Library, Note, NoteId};
 
 pub(crate) const ACTION: &str = "action";
 const ACTIONS: &str = "actions";
-const CLOSED: &str = "closed";
+pub(crate) const CLOSED: &str = "closed";
 const DEFER: &str = "defer";
 const DUE: &str = "due";
 const LIST: &str = "list";
 const NOTE: &str = "note";
 const PLANNING: &str = "planning";
 const PROJECT: &str = "project";
-const STATE: &str = "state";
+pub(crate) const STATE: &str = "state";
 const WAITING_FOR: &str = "waiting_for";
 
 /// A calendar day, with no time of day and no time zone.

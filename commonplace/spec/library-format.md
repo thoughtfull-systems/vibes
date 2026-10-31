@@ -317,11 +317,13 @@ without either, the list hides them. Writing `steps.show_done` removes `linux.st
 ### `days_off`
 
 Days off are holidays and vacations, which recurring actions and journal schedules can skip or move
-past. The map holds two maps, `holidays` and `vacations`. Each holds schedules of days off, each a
-map value keyed by an identifier in the form of a note identifier.
+past. The map holds schedules of days off, each a map value keyed by an identifier in the form of a
+note identifier. Schedules of both kinds share the one map, since two devices that each made a map
+for a kind would make two containers under one key, and sync would keep only one.
 
 | Key        | Type   | Value                                                              |
 | ---------- | ------ | ------------------------------------------------------------------ |
+| `kind`     | String | `holidays` or `vacations`.                                         |
 | `name`     | String | The name its owner gives the days off, such as "Christmas."        |
 | `first`    | String | The first day off.                                                 |
 | `last`     | String | The last day off in each span. Absent for a span of one day.       |
@@ -330,9 +332,9 @@ map value keyed by an identifier in the form of a note identifier.
 
 Without `rule`, the schedule is one span, from `first` to `last`. With one, each date the rule
 produces starts a span as long as the one from `first` to `last`. Readers skip a schedule whose
-`first` they can't read, and treat a `last` before `first` as absent. A reader that can't read a
-schedule's `rule` treats it as the first span alone, still lists it, and keeps the `rule` when it
-writes the schedule.
+`kind` or `first` they can't read, and treat a `last` before `first` as absent. A reader that can't
+read a schedule's `rule` treats it as the first span alone, still lists it, and keeps the `rule`
+when it writes the schedule.
 
 Days off shape past dates as well as future ones, so writers never delete a schedule. Archiving it
 keeps it applying to the days before `archived`, which apps set to the day after the owner archives
@@ -393,8 +395,12 @@ Readers ignore a tombstone for a note that `notes` still holds.
   action, and the `handled`, `moved`, and `notes` maps when you make `recur`. Two devices that each
   made one for their first entry would each make a container under the same key, and sync would keep
   only one, losing the other's entries.
-- **Stop recurring with the current dates.** When an owner stops an action recurring, set its `due`
-  and `defer` to its current occurrence's in the commit that removes `recur`.
+- **Start recurring from where the action stands.** When an owner makes a done action recur, open it
+  and add its current occurrence to `handled` as `done`. Add the current occurrence's date to the
+  `occurrences` of each done step, and open the step.
+- **Stop recurring with the current occurrence.** When an owner stops an action recurring, set its
+  `due` and `defer` to its current occurrence's, and close each open step done in that occurrence,
+  in the commit that removes `recur`. If the rule has ended, close the action instead.
 - **Archive days off.** Never delete a schedule of days off. Set its `archived` instead.
 - **Preserve what you don't understand.** Never remove or overwrite a key or a root container that
   this spec doesn't define. A later version may define it.

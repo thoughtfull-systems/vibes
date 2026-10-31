@@ -751,9 +751,6 @@ impl ActionPanel {
                         .into_iter()
                         .filter_map(|(word, date)| Some(format!("{word} {}", format_date(date?))))
                         .collect();
-                    if dates.is_empty() {
-                        notes.push(format!("On {}", format_date(current.on)));
-                    }
                     notes.extend(dates);
                     if current.on != current.date {
                         notes.push(format!("Moved from {}", format_date(current.date)));

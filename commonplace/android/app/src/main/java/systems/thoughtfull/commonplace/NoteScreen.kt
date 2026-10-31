@@ -626,7 +626,7 @@ internal fun ActionDetails(model: NotebookModel, note: MobileNote, open: (String
             onClick = { showHistory = true },
             colors = neutralButtonColors(),
             contentPadding = PaddingValues(horizontal = 12.dp)
-          ) { Text("History") }
+          ) { Text("History…") }
         }
       }
     }
@@ -692,7 +692,7 @@ internal fun occurrenceSummary(summary: OccurrenceSummary): String {
       current.defer?.let { "Starts ${formatDate(it)}" },
       current.due?.let { "Due ${formatDate(it)}" }
     )
-    dates.ifEmpty { listOf("On ${formatDate(current.on)}") } +
+    dates +
       listOfNotNull("Moved from ${formatDate(current.date)}".takeIf { current.on != current.date })
   }
   return (

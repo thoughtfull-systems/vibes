@@ -172,12 +172,20 @@ internal fun EditorRow(label: String, control: @Composable () -> Unit) {
   }
 }
 
-/** A number field for whole numbers, empty while the owner types a new one. */
+/** A whole-number field, signed if `signed` is set, empty while the owner types a new one. */
 @Composable
-private fun NumberField(value: String, change: (String) -> Unit, modifier: Modifier = Modifier) {
+private fun NumberField(
+  value: String,
+  change: (String) -> Unit,
+  modifier: Modifier = Modifier,
+  signed: Boolean = false
+) {
   CompactTextField(
     value,
-    { text -> change(text.filter(Char::isDigit).take(3)) },
+    { text ->
+      val minus = if (signed && text.startsWith("-")) "-" else ""
+      change(minus + text.filter(Char::isDigit).take(3))
+    },
     "1",
     modifier.width(72.dp),
     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
@@ -201,7 +209,7 @@ internal fun OffsetRow(
 ) {
   val on = offset != null || !optional
   var text by remember(key, on) {
-    mutableStateOf(((offset ?: 0) * sign).coerceAtLeast(0).toString())
+    mutableStateOf(((offset ?: 0) * sign).toString())
   }
   Row(verticalAlignment = Alignment.CenterVertically) {
     if (optional) {
@@ -210,7 +218,7 @@ internal fun OffsetRow(
     NumberField(text, { typed ->
       text = typed
       typed.toIntOrNull()?.let { if (on) change(it * sign) }
-    })
+    }, signed = true)
     Text(" $after")
   }
 }

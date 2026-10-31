@@ -3,7 +3,7 @@
 //! Days off: holidays and vacations, which recurring actions and journal schedules can skip or move
 //! past, as the library format spec defines them.
 
-use loro::{LoroMap, LoroValue, ValueOrContainer};
+use loro::{LoroMap, LoroValue};
 
 use crate::actions::Date;
 use crate::library::{loro_error, string};
@@ -13,6 +13,7 @@ use crate::{Error, Library, NoteId};
 const DAYS_OFF: &str = "days_off";
 const ARCHIVED: &str = "archived";
 const FIRST: &str = "first";
+const KIND: &str = "kind";
 const LAST: &str = "last";
 const NAME: &str = "name";
 const RULE: &str = "rule";
@@ -145,11 +146,13 @@ impl DaysOff {
         }
     }
 
-    fn from_value(kind: DaysOffKind, id: &str, value: &LoroValue) -> Option<Self> {
+    fn from_value(id: &str, value: &LoroValue) -> Option<Self> {
         let LoroValue::Map(map) = value else {
             return None;
         };
         let text = |key: &str| map.get(key).and_then(|v| string(v.clone()));
+        let kind =
+            DaysOffKind::ALL.into_iter().find(|kind| text(KIND).as_deref() == Some(kind.key()))?;
         let date = |key: &str| text(key).and_then(|t| t.parse::<Date>().ok());
         let first = date(FIRST)?;
         let last = date(LAST).filter(|last| *last >= first).unwrap_or(first);
@@ -170,10 +173,13 @@ impl DaysOff {
 
     fn to_value(&self) -> LoroValue {
         let mut fields: Vec<(String, LoroValue)> = vec![
+            (KIND.into(), self.kind.key().into()),
             (NAME.into(), self.name.trim().into()),
             (FIRST.into(), self.first.to_string().into()),
-            (LAST.into(), self.last.max(self.first).to_string().into()),
         ];
+        if self.last > self.first {
+            fields.push((LAST.into(), self.last.to_string().into()));
+        }
         let rule = self.rule.as_ref().map(Rule::to_string).or_else(|| self.unread_rule.clone());
         if let Some(rule) = rule {
             fields.push((RULE.into(), rule.into()));
@@ -284,21 +290,13 @@ impl DaysOffSet {
 impl Library {
     /// Every schedule of days off, hidden or not, holidays first, each kind in order of first day.
     pub fn days_off(&self) -> Vec<DaysOff> {
-        let mut all = Vec::new();
-        let root = self.doc.get_map(DAYS_OFF);
-        for kind in DaysOffKind::ALL {
-            if let Some(ValueOrContainer::Container(container)) = root.get(kind.key())
-                && let Ok(map) = container.into_map()
-                && let LoroValue::Map(entries) = map.get_value()
-            {
-                let mut schedules: Vec<DaysOff> = entries
-                    .iter()
-                    .filter_map(|(id, value)| DaysOff::from_value(kind, id, value))
-                    .collect();
-                schedules.sort_by(|a, b| a.first.cmp(&b.first).then(a.id.cmp(&b.id)));
-                all.extend(schedules);
-            }
-        }
+        let LoroValue::Map(entries) = self.doc.get_map(DAYS_OFF).get_value() else {
+            return Vec::new();
+        };
+        let mut all: Vec<DaysOff> =
+            entries.iter().filter_map(|(id, value)| DaysOff::from_value(id, value)).collect();
+        let kind = |days: &DaysOff| DaysOffKind::ALL.iter().position(|kind| *kind == days.kind);
+        all.sort_by(|a, b| kind(a).cmp(&kind(b)).then(a.first.cmp(&b.first)).then(a.id.cmp(&b.id)));
         all
     }
 
@@ -309,14 +307,9 @@ impl Library {
     /// Adds a schedule of days off, or replaces the one with the same identifier and kind.
     pub fn set_days_off(&mut self, days: &DaysOff) -> Result<(), Error> {
         self.check_writable()?;
-        let root = self.doc.get_map(DAYS_OFF);
-        let kind = match root.get(days.kind.key()) {
-            Some(ValueOrContainer::Container(container)) => {
-                container.into_map().map_err(|_| Error::Loro("days off isn't a map".into()))?
-            }
-            _ => root.insert_container(days.kind.key(), LoroMap::new()).map_err(loro_error)?,
-        };
-        kind.insert(&days.id, days.to_value()).map_err(loro_error)?;
+        // Each schedule sits in the root map, not a map per kind: two devices that each made the
+        // first map of a kind would make two containers under one key, and sync keeps only one.
+        self.doc.get_map(DAYS_OFF).insert(&days.id, days.to_value()).map_err(loro_error)?;
         self.commit()
     }
 
@@ -397,6 +390,21 @@ mod tests {
         let set = library.days_off_set();
         assert_eq!(set.moved(&holidays, date("2027-12-25")), date("2027-12-25"));
         assert_eq!(set.moved(&holidays, date("2026-12-25")), date("2026-12-26"));
+    }
+
+    #[test]
+    fn first_schedules_added_on_two_devices_both_survive_sync() {
+        let mut laptop = Library::in_memory();
+        let mut phone = Library::in_memory();
+        phone.merge_updates(&laptop.export_snapshot().unwrap(), false).unwrap();
+        let christmas = DaysOff::new(DaysOffKind::Holidays, "Christmas", date("2026-12-25"));
+        laptop.set_days_off(&christmas).unwrap();
+        let thanksgiving = DaysOff::new(DaysOffKind::Holidays, "Thanksgiving", date("2026-11-26"));
+        phone.set_days_off(&thanksgiving).unwrap();
+        let updates = phone.updates_since(&laptop.version()).unwrap().unwrap();
+        laptop.merge_updates(&updates, false).unwrap();
+        let names: Vec<String> = laptop.days_off().into_iter().map(|days| days.name).collect();
+        assert_eq!(names, ["Thanksgiving", "Christmas"]);
     }
 
     #[test]
