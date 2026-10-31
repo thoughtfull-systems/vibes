@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use loro::{LoroMap, LoroMapValue, LoroValue, ValueOrContainer};
 
 use crate::actions::{ACTION, Action, ActionState, CLOSED, Date, Hierarchy, STATE as ACTION_STATE};
-use crate::days_off::{DaysOffSet, DaysOffUse, MAX_MOVE};
+use crate::days_off::{DaysOffSet, DaysOffUse};
 use crate::library::{MODIFIED, integer, loro_error, string};
 use crate::recur::{End, Rule};
 use crate::{Error, Library, Note, NoteId, wikilink};
@@ -427,7 +427,7 @@ impl<'a> Occurrences<'a> {
         let settings = self.settings();
         let on = if early { self.started(date) } else { day };
         let through = on.add_days(-settings.defer.unwrap_or(0)).min(date.add_days(-1));
-        let window = through.add_days(-MAX_MOVE).max(settings.start);
+        let window = self.days_off.before(&settings.days_off, through).max(settings.start);
         let walked = self.dates(window).take_while(|&date| date <= through);
         let moved = self
             .moved
@@ -571,7 +571,11 @@ impl<'a> Occurrences<'a> {
     pub(crate) fn current(&self) -> Option<Occurrence> {
         let settings = self.settings();
         let date = match settings.missed {
-            Missed::After => self.next_after(self.recur.latest_handled(), 0)?,
+            Missed::After => {
+                let latest =
+                    self.recur.handled.iter().max_by_key(|entry| (entry.at, entry.day, entry.date));
+                self.next_after(latest, 0)?
+            }
             Missed::All | Missed::Latest => {
                 let first = self.open(settings.start).next()?;
                 let latest = (settings.missed == Missed::Latest)
@@ -598,7 +602,8 @@ impl<'a> Occurrences<'a> {
         let uses = settings.days_off;
         let skips = DaysOffSet::applies(&uses);
         let days_off = self.days_off;
-        let skip = move |date| skips && days_off.skips(&uses, date);
+        let skip =
+            move |date| skips && !self.moved.contains_key(&date) && days_off.skips(&uses, date);
         match latest {
             Some(entry) => {
                 let day = entry.day.max(settings.start);
@@ -732,10 +737,11 @@ impl<'a> Occurrences<'a> {
             if settings.missed != Missed::After {
                 // Occurrences before the current one by date that aren't past, such as postponed
                 // ones, can still become current.
-                // Days off move an occurrence at most a year, so one dated earlier than that can
-                // only start after the current one if its owner moved it.
                 let from = self.cutoff().from;
-                let window = from.max(current.date.add_days(-366));
+                let window = self
+                    .days_off
+                    .before(&settings.days_off, current.on.min(current.date))
+                    .max(from);
                 let walked = self.unhandled(window).take_while(|date| *date < current.date);
                 let moved = self.moved.keys().copied().filter(|&date| {
                     date >= from

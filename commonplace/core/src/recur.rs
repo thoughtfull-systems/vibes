@@ -389,7 +389,7 @@ impl Iterator for Dates<'_> {
             if let Some(date) = self.pending.pop_front() {
                 if self.rule.until.is_some_and(|until| date > until)
                     || matches!(self.end, Some(End::Date(end)) if date > end)
-                    || (self.end.is_none() && self.rule.count.is_some_and(|n| self.produced >= n))
+                    || self.rule.count.is_some_and(|n| self.produced >= n)
                 {
                     self.finished = true;
                     return None;

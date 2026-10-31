@@ -193,6 +193,22 @@ private fun NumberField(
   )
 }
 
+internal data class OffsetInput(
+  val value: Int?,
+  val text: String,
+  val pending: List<Int> = emptyList()
+) {
+  fun receive(offset: Int?, sign: Int): OffsetInput {
+    if (offset == value) return this
+    val saved = pending.indexOf(offset)
+    return if (saved >= 0) {
+      copy(value = offset, pending = pending.drop(saved + 1))
+    } else {
+      OffsetInput(offset, ((offset ?: 0) * sign).toString())
+    }
+  }
+}
+
 /**
  * A number of days before or after an occurrence's date, with a checkbox that turns it off if
  * `optional` is set, as the Linux app's row shows them. `sign` is -1 for days before. A row that
@@ -209,16 +225,20 @@ internal fun OffsetRow(
   change: (Int?) -> Unit
 ) {
   val on = offset != null || !optional
-  var text by remember(key, on) {
-    mutableStateOf(((offset ?: 0) * sign).toString())
+  var input by remember(key, on) {
+    mutableStateOf(OffsetInput(offset, ((offset ?: 0) * sign).toString()))
   }
+  LaunchedEffect(offset) { input = input.receive(offset, sign) }
   Row(verticalAlignment = Alignment.CenterVertically) {
     if (optional) {
-      Checkbox(on, { checked -> change(if (checked) (text.toIntOrNull() ?: 0) * sign else null) })
+      Checkbox(on, { checked ->
+        change(if (checked) (input.text.toIntOrNull() ?: 0) * sign else null)
+      })
     }
-    NumberField(text, { typed ->
-      text = typed
-      typed.toIntOrNull()?.let { if (on) change(it * sign) }
+    NumberField(input.text, { typed ->
+      val value = typed.toIntOrNull()?.times(sign)?.takeIf { on }
+      input = input.copy(text = typed, pending = input.pending + listOfNotNull(value))
+      value?.let(change)
     }, signed = true)
     Text(" $after")
   }

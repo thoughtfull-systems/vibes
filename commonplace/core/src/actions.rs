@@ -504,6 +504,14 @@ impl Library {
         {
             return Err(Error::CyclicMove(id));
         }
+        // Version 3 actions lack this map. Moving them into a repeat must create it before two
+        // devices can record their first completions in competing containers.
+        for step in std::iter::once(id).chain(hierarchy.descendants(id)) {
+            let action = self.action_map(step)?;
+            if action.get(OCCURRENCES).is_none() {
+                action.insert_container(OCCURRENCES, LoroMap::new()).map_err(loro_error)?;
+            }
+        }
         let siblings: Vec<NoteId> =
             hierarchy.children(parent).iter().copied().filter(|&sibling| sibling != id).collect();
         let index = index.unwrap_or(siblings.len()).min(siblings.len());

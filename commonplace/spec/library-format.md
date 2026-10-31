@@ -169,9 +169,10 @@ change to the start offset or the days off doesn't bring missed ones back. After
   that have fallen due wait behind it.
 - **`latest`:** the current occurrence is the latest unhandled one whose start date has come, or
   else the one whose start date comes first. Earlier ones whose start date has come count as missed.
-- **`after`:** the rule counts again from the `day` of the latest handled occurrence, and the
-  current occurrence is its first date after that day. Without a handled occurrence, it's the rule's
-  first date. A `COUNT` counts handled occurrences.
+- **`after`:** the rule counts again from the `day` of the most recent handling event, ordered by
+  `at`, then `day`, then occurrence date to break ties. The current occurrence is its first date
+  after that day. Without a handled occurrence, it's the rule's first date. A `COUNT` counts handled
+  occurrences.
 
 While an action recurs, its current occurrence's due and start dates replace its own `due` and
 `defer`. An action whose rule has no current occurrence counts as done, closed at the latest `at` in
@@ -414,7 +415,9 @@ Readers ignore a tombstone for a note that `notes` still holds.
 - **Make maps before their first entry.** Make an action's `occurrences` map when you make the
   action, and the `handled`, `moved`, and `notes` maps when you make `recur`. Two devices that each
   made one for their first entry would each make a container under the same key, and sync would keep
-  only one, losing the other's entries.
+  only one, losing the other's entries. Before moving an action, make any missing `occurrences` maps
+  in its subtree, since actions from version 3 lack them and the move can place them under a
+  recurring action.
 - **Start recurring from where the action stands.** When an owner makes a done action recur, open it
   and add its current occurrence to `handled` as `done`. Add the current occurrence's date to the
   `occurrences` of each done step, and open the step.

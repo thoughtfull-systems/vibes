@@ -7,7 +7,7 @@ use loro::{LoroMap, LoroValue};
 
 use crate::actions::Date;
 use crate::library::{loro_error, string};
-use crate::recur::{MONTH_NAMES, Rule, describe_rule};
+use crate::recur::{Frequency, MONTH_NAMES, Rule, describe_rule};
 use crate::{Error, Library, NoteId};
 
 const DAYS_OFF: &str = "days_off";
@@ -20,7 +20,6 @@ const RULE: &str = "rule";
 
 /// How many days after its last day a schedule of days off drops out of the lists.
 const HIDE_AFTER: i32 = 7;
-pub(crate) const MAX_MOVE: i32 = 366;
 
 /// The kinds of days off, each a category of schedules.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -192,21 +191,48 @@ impl DaysOff {
     }
 
     fn span(&self) -> i32 {
-        (self.last.days() - self.first.days()).clamp(0, 366) as i32
+        self.last.days_since(self.first).max(0)
     }
 
     /// Whether `date` is one of these days off.
     pub fn covers(&self, date: Date) -> bool {
+        self.span_at(date).is_some()
+    }
+
+    fn span_at(&self, date: Date) -> Option<(Date, Date)> {
         if self.archived.is_some_and(|archived| date >= archived) || date < self.first {
-            return false;
+            return None;
         }
-        match &self.rule {
-            None => date <= self.last,
-            Some(rule) => rule
-                .all_dates(self.first, date.add_days(-self.span()))
-                .next()
-                .is_some_and(|start| start <= date),
-        }
+        let (first, last) = match &self.rule {
+            None => (self.first, self.last),
+            Some(rule)
+                if rule.frequency == Frequency::Daily
+                    && rule.interval <= self.span() as u32 + 1
+                    && rule.weekdays.is_empty()
+                    && rule.month_days.is_empty()
+                    && rule.months.is_empty()
+                    && rule.positions.is_empty() =>
+            {
+                let limit = Date::new(9998, 12, 31)?;
+                let end = rule.until.unwrap_or(limit).min(limit);
+                if end < self.first {
+                    return None;
+                }
+                let index = (end.days_since(self.first) as u32 / rule.interval)
+                    .min(rule.count.map_or(u32::MAX, |count| count - 1));
+                let last = self.first.add_days((index * rule.interval) as i32);
+                (self.first, last.add_days(self.span()))
+            }
+            Some(rule) => {
+                let first = rule
+                    .all_dates(self.first, date.add_days(-self.span()).max(self.first))
+                    .take_while(|&start| start <= date)
+                    .last()?;
+                (first, first.add_days(self.span()))
+            }
+        };
+        let last = self.archived.map_or(last, |archived| last.min(archived.add_days(-1)));
+        (date <= last).then_some((first, last))
     }
 
     /// The last day off, or nothing if the schedule comes back forever.
@@ -272,18 +298,35 @@ impl DaysOffSet {
         if !moves {
             return date;
         }
-        (1..=MAX_MOVE)
-            .map(|n| date.add_days(n))
-            .find(|&day| !self.avoids(uses, day))
-            .unwrap_or(date)
+        let mut day = date;
+        while let Some(last) = self
+            .schedules
+            .iter()
+            .filter(|days| uses.effect(days.kind) != DayOffEffect::Ignore)
+            .filter_map(|days| days.span_at(day).map(|(_, last)| last))
+            .max()
+        {
+            if last.year() >= 9999 {
+                return date;
+            }
+            day = last.add_days(1);
+        }
+        day
     }
 
-    /// Whether `date` is a day off of a kind that a rule using days off as `uses` skips or moves
-    /// past.
-    pub(crate) fn avoids(&self, uses: &DaysOffUse, date: Date) -> bool {
-        DaysOffKind::ALL
-            .into_iter()
-            .any(|kind| uses.effect(kind) != DayOffEffect::Ignore && self.is_off(kind, date))
+    /// The beginning of the uninterrupted days off immediately before `date`, or `date` itself.
+    pub(crate) fn before(&self, uses: &DaysOffUse, date: Date) -> Date {
+        let mut day = date;
+        while let Some(first) = self
+            .schedules
+            .iter()
+            .filter(|days| uses.effect(days.kind) != DayOffEffect::Ignore)
+            .filter_map(|days| days.span_at(day.add_days(-1)).map(|(first, _)| first))
+            .min()
+        {
+            day = first;
+        }
+        day
     }
 
     pub(crate) fn applies(uses: &DaysOffUse) -> bool {
@@ -371,6 +414,23 @@ mod tests {
         assert!(thanksgiving.covers(date("2026-11-26")));
         assert!(!thanksgiving.covers(date("2027-11-25")));
         assert!(thanksgiving.is_hidden(date("2027-01-01")));
+    }
+
+    #[test]
+    fn touching_daily_spans_respect_count_until_and_archive_boundaries() {
+        let mut days = DaysOff::new(DaysOffKind::Vacations, "Trip", date("2026-01-01"));
+        days.last = date("2026-01-03");
+        for rule in ["FREQ=DAILY;INTERVAL=3;COUNT=2", "FREQ=DAILY;INTERVAL=3;UNTIL=20260105"] {
+            days.rule = Rule::parse(rule);
+            assert!(days.covers(date("2026-01-01")));
+            assert!(days.covers(date("2026-01-06")));
+            assert!(!days.covers(date("2026-01-07")));
+            assert_eq!(days.end(), Some(date("2026-01-06")));
+            days.archived = Some(date("2026-01-05"));
+            assert!(days.covers(date("2026-01-04")));
+            assert!(!days.covers(date("2026-01-05")));
+            days.archived = None;
+        }
     }
 
     #[test]

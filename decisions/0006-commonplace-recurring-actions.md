@@ -88,16 +88,17 @@ format adds them.
 - **Missed occurrences.** The rule names one of three behaviors. `all` makes every occurrence count,
   so missed ones pile up, as bills do. `latest` shows only the latest occurrence that has come into
   view, and counts earlier unhandled ones as missed, as a weekly review does. `after` starts the
-  rule again from the day its owner handled the last occurrence, as watering plants does. Under
-  every behavior, unhandled occurrences before the latest one handled on or after its start date
-  count as missed, so editing a rule or its days off never brings old occurrences back as overdue,
-  and handling an occurrence early leaves the ones before it waiting: for good under `all`, since
-  bills stay owed, and until it starts under `latest`. Each handled occurrence records whether it
-  came early when its owner handled it, so a later edit can't change that, and it misses only the
-  occurrences that had started by the day its owner handled it. Each handled entry also records the
-  boundary of those earlier dates, with exceptions for dates that moves postponed or brought into
-  view early. Readers keep this boundary after edits to the rule, offsets, moves, or days off, so an
-  edit can't undo which occurrences a completion missed.
+  rule again from the day its owner most recently handled an occurrence, as watering plants does,
+  even if that occurrence's date comes before another handled one's. Under every behavior, unhandled
+  occurrences before the latest one handled on or after its start date count as missed, so editing a
+  rule or its days off never brings old occurrences back as overdue, and handling an occurrence
+  early leaves the ones before it waiting: for good under `all`, since bills stay owed, and until it
+  starts under `latest`. Each handled occurrence records whether it came early when its owner
+  handled it, so a later edit can't change that, and it misses only the occurrences that had started
+  by the day its owner handled it. Each handled entry also records the boundary of those earlier
+  dates, with exceptions for dates that moves postponed or brought into view early. Readers keep
+  this boundary after edits to the rule, offsets, moves, or days off, so an edit can't undo which
+  occurrences a completion missed.
 - **Days off.** A library holds two kinds of days off: holidays, and vacations. Each holds named
   schedules, such as Christmas or a trip: a span of days that a rule can bring back, such as every
   year. A recurring action says, for each kind, whether a day off removes an occurrence, moves it to

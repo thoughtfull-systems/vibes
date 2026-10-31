@@ -298,4 +298,19 @@ class DetailsTest {
     compose.onNodeWithText("Sa").performScrollTo().assertIsDisplayed().performClick()
     compose.onNodeWithText("Su").performScrollTo().assertIsDisplayed().performClick()
   }
+
+  @Test
+  fun syncedOffsetsReplaceTheDisplayedValue() {
+    space("Synced offset")
+    val offset = mutableStateOf<Int?>(-3)
+    compose.setContent {
+      CommonplaceTheme {
+        OffsetRow("synced", offset.value, -1, "days before", false) { offset.value = it }
+      }
+    }
+    compose.onNodeWithText("3").assertExists()
+    compose.runOnIdle { offset.value = -8 }
+    compose.onNodeWithText("8").assertExists()
+    compose.onNodeWithText("3").assertDoesNotExist()
+  }
 }

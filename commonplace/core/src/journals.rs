@@ -470,10 +470,12 @@ impl Schedule {
         if given(date) && days_off.moved(uses, date) == date {
             return true;
         }
-        (1..=366)
-            .map(|n| date.add_days(-n))
-            .take_while(|&day| days_off.avoids(uses, day))
-            .any(|day| given(day) && days_off.moved(uses, day) == date)
+        let first = days_off.before(uses, date).max(self.start);
+        let skip = Box::new(|day| days_off.skips(uses, day));
+        self.rule
+            .iterate(self.start, first, skip, end)
+            .take_while(|&day| day < date)
+            .any(|day| days_off.moved(uses, day) == date)
     }
 
     /// The local times, in minutes since midnight, at which the schedule prompts on `date`.
