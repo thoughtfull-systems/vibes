@@ -139,11 +139,11 @@ write in `at`, in `day` the local date on which its owner handled it, and `early
 `day` came before the occurrence's start date at the time of the write.
 
 The current occurrence comes from the rule and `handled`, and nothing writes it. Handling an
-occurrence makes the unhandled ones before it missed if their start date came by its `day`, or, for
-an `early` one, by its own start date, once that date has come. Handling an occurrence early thus
-leaves the ones before it waiting until it starts, handling one that its owner moved in from weeks
-ahead doesn't miss the weeks between, and a later change to the start offset or the days off doesn't
-bring missed ones back. After that:
+occurrence makes the unhandled ones before it missed if their start date came by its `day`. An
+`early` one misses nothing under `all`, and under `latest` misses those whose start date came by its
+own, once that date has come. Handling one that its owner moved in from weeks ahead thus doesn't
+miss the weeks between, one its owner postponed stays pending until its new start date, and a later
+change to the start offset or the days off doesn't bring missed ones back. After that:
 
 - **`all`:** the current occurrence is the first unhandled one, and later ones that have fallen due
   wait behind it.

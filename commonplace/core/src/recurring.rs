@@ -3,6 +3,7 @@
 //! Recurring actions: one action whose rule produces occurrences, with a record of the occurrences
 //! its owner handled, as decision 0006 and the library format spec define them.
 
+use std::cell::{Ref, RefCell};
 use std::collections::HashMap;
 
 use loro::{LoroMap, LoroMapValue, LoroValue, ValueOrContainer};
@@ -271,6 +272,17 @@ pub(crate) struct Occurrences<'a> {
     notes: HashMap<Date, NoteId>,
     /// Where a rule with a `count` ends, when days off can skip some of its dates.
     end: Option<End>,
+    cutoff: RefCell<Option<Cutoff>>,
+}
+
+/// Which unhandled occurrences count as missed on `today`.
+struct Cutoff {
+    today: Date,
+    /// Every unhandled occurrence before it.
+    from: Date,
+    /// For each counted handled occurrence, in order of date, its date and the latest reach among
+    /// it and those after it: an unhandled occurrence before it that came into view by then.
+    reaches: Vec<(Date, Date)>,
 }
 
 impl<'a> Occurrences<'a> {
@@ -285,6 +297,7 @@ impl<'a> Occurrences<'a> {
             end: DaysOffSet::applies(&settings.days_off)
                 .then(|| settings.rule.end(settings.start))
                 .flatten(),
+            cutoff: RefCell::new(None),
         }
     }
 
@@ -342,45 +355,88 @@ impl<'a> Occurrences<'a> {
 
     /// Whether an occurrence named by `date` and handled on `day` is handled before its start date.
     fn early(&self, date: Date, day: Date) -> bool {
-        day < Self::view(&self.occurrence(date, OccurrenceStatus::Upcoming))
+        day < self.started(date)
     }
 
-    /// The first date that can still be current on `today`, or the rule's start: unhandled
-    /// occurrences before it count as missed. Handling an occurrence misses the unhandled ones
-    /// before it that had come into view by the day its owner handled it, or, for one handled
-    /// early, by the day it started, which only counts once that day has come.
-    fn cutoff(&self, today: Date) -> Date {
+    fn started(&self, date: Date) -> Date {
+        Self::view(&self.occurrence(date, OccurrenceStatus::Upcoming))
+    }
+
+    /// The day by which an occurrence must have come into view for `entry` to miss it, if `entry`
+    /// misses any on `today`. Handling an occurrence misses the unhandled ones before it that had
+    /// come into view by the day its owner handled it. One handled early misses nothing under
+    /// `all`, and under `latest` misses those in view on the day it started, once that day has
+    /// come.
+    fn reach(&self, entry: &HandledOccurrence, today: Date) -> Option<Date> {
+        if !entry.early {
+            return Some(entry.day);
+        }
+        let started = self.started(entry.date);
+        (self.settings().missed != Missed::All && started <= today).then_some(started)
+    }
+
+    /// Works out which occurrences count as missed on `today`, once for each day asked about.
+    fn cutoff(&self, today: Date) -> Ref<'_, Cutoff> {
+        if self.cutoff.borrow().as_ref().is_none_or(|cutoff| cutoff.today != today) {
+            let cutoff = self.work_out_cutoff(today);
+            *self.cutoff.borrow_mut() = Some(cutoff);
+        }
+        Ref::map(self.cutoff.borrow(), |cutoff| cutoff.as_ref().expect("set just above"))
+    }
+
+    fn work_out_cutoff(&self, today: Date) -> Cutoff {
         let settings = self.settings();
-        let mut entries: Vec<&HandledOccurrence> = self.recur.handled.iter().collect();
-        entries.sort_by_key(|entry| std::cmp::Reverse(entry.date));
-        let mut cutoff = settings.start;
-        for entry in entries {
-            if entry.date.add_days(1) <= cutoff {
+        let mut reaches: Vec<(Date, Date)> = self
+            .recur
+            .handled
+            .iter()
+            .filter_map(|entry| Some((entry.date, self.reach(entry, today)?)))
+            .collect();
+        for i in (0..reaches.len().saturating_sub(1)).rev() {
+            reaches[i].1 = reaches[i].1.max(reaches[i + 1].1);
+        }
+        let mut from = settings.start;
+        for entry in self.recur.handled.iter().rev() {
+            if entry.date.add_days(1) <= from {
                 break;
             }
-            let reach = if entry.early {
-                let started = Self::view(&self.occurrence(entry.date, OccurrenceStatus::Upcoming));
-                if started > today {
-                    continue;
-                }
-                started
-            } else {
-                entry.day
+            let Some(reach) = self.reach(entry, today) else { continue };
+            let unseen = |date: Date| {
+                date < entry.date && !self.handled.contains_key(&date) && self.started(date) > reach
             };
             // Dates this far before `reach` came into view by then, unless days off moved them
-            // more than a month.
-            let from = reach.add_days(-settings.defer.unwrap_or(0) - 31).max(settings.start);
-            let unseen = self.dates(from).find(|&date| {
-                date >= entry.date
-                    || Self::view(&self.occurrence(date, OccurrenceStatus::Upcoming)) > reach
+            // more than a month, so only the occurrences their owner moved need checking.
+            let walk = reach.add_days(-settings.defer.unwrap_or(0) - 31).max(settings.start);
+            let walked =
+                self.dates(walk).take_while(|&date| date < entry.date).find(|&d| unseen(d));
+            let moved = self.moved.keys().copied().filter(|&date| {
+                date >= settings.start && date < walk && unseen(date) && self.gives(date)
             });
-            let after = match unseen {
-                Some(date) if date < entry.date => date,
-                _ => entry.date.add_days(1),
-            };
-            cutoff = cutoff.max(after);
+            let after = walked.into_iter().chain(moved).min().unwrap_or(entry.date.add_days(1));
+            from = from.max(after);
         }
-        cutoff
+        Cutoff { today, from, reaches }
+    }
+
+    /// Whether the unhandled occurrence named by `date` counts as missed on `today`.
+    fn is_missed(&self, date: Date, today: Date) -> bool {
+        let cutoff = self.cutoff(today);
+        if date < cutoff.from {
+            return true;
+        }
+        let later = cutoff.reaches.partition_point(|&(handled, _)| handled <= date);
+        cutoff.reaches.get(later).is_some_and(|&(_, reach)| self.started(date) <= reach)
+    }
+
+    /// The unhandled occurrences on or after `from` that don't count as missed on `today`.
+    fn open(&self, from: Date, today: Date) -> impl Iterator<Item = Date> + '_ {
+        let from = from.max(self.cutoff(today).from);
+        self.unhandled(from).filter(move |&date| !self.is_missed(date, today))
+    }
+
+    /// Whether the rule gives an occurrence named by `date`.
+    fn gives(&self, date: Date) -> bool {
+        self.dates(date).next() == Some(date)
     }
 
     fn unhandled(&self, from: Date) -> impl Iterator<Item = Date> + '_ {
@@ -395,9 +451,7 @@ impl<'a> Occurrences<'a> {
             .iter()
             .filter(|&(&date, &to)| date >= from && date > by && to <= by)
             .map(|(&date, _)| date)
-            .filter(|&date| {
-                !self.handled.contains_key(&date) && self.dates(date).next() == Some(date)
-            })
+            .filter(|&date| !self.handled.contains_key(&date) && self.gives(date))
             .collect();
         dates.sort_unstable();
         dates
@@ -406,25 +460,32 @@ impl<'a> Occurrences<'a> {
     /// The occurrence the action stands for on `today`, or nothing once the rule has ended.
     pub(crate) fn current(&self, today: Date) -> Option<Occurrence> {
         let settings = self.settings();
-        let from = self.cutoff(today);
+        let start = settings.start;
         let date = match settings.missed {
             Missed::After => self.next_after(self.recur.latest_handled(), 0)?,
-            Missed::All => self.unhandled(from).next()?,
+            Missed::All => self.open(start, today).next()?,
             Missed::Latest => {
                 let lookahead =
                     today.add_days(settings.defer.unwrap_or(0).unsigned_abs() as i32 + 31);
-                let mut first = None;
+                // The one that comes into view soonest, which isn't the first by date when its
+                // owner postponed that one.
+                let mut soonest: Option<(Date, Date)> = None;
                 let mut latest_in_view = None;
-                let near = self.unhandled(from).take_while(|date| *date <= lookahead);
-                for date in near.chain(self.moved_in(from, lookahead)) {
-                    first.get_or_insert(date);
-                    if Self::view(&self.occurrence(date, OccurrenceStatus::Current)) <= today {
+                let near = self.open(start, today).take_while(|date| *date <= lookahead);
+                let moved_in = self.moved_in(start, lookahead);
+                let moved_in = moved_in.into_iter().filter(|&date| !self.is_missed(date, today));
+                for date in near.chain(moved_in) {
+                    let started = self.started(date);
+                    if soonest.is_none_or(|(_, soonest)| started < soonest) {
+                        soonest = Some((date, started));
+                    }
+                    if started <= today {
                         latest_in_view = Some(date);
                     }
                 }
-                match latest_in_view.or(first) {
+                match latest_in_view.or(soonest.map(|(date, _)| date)) {
                     Some(date) => date,
-                    None => self.unhandled(from).next()?,
+                    None => self.open(start, today).next()?,
                 }
             }
         };
@@ -463,8 +524,10 @@ impl<'a> Occurrences<'a> {
             return 0;
         }
         let after = current.date.add_days(1);
-        let mut count = self.moved_in(after, today).len() as u32;
-        for date in self.unhandled(after) {
+        let moved_in = self.moved_in(after, today);
+        let mut count =
+            moved_in.iter().filter(|&&date| !self.is_missed(date, today)).count() as u32;
+        for date in self.open(after, today) {
             if date > today || count >= MAX_WAITING {
                 break;
             }
@@ -483,14 +546,16 @@ impl<'a> Occurrences<'a> {
             return 0;
         }
         let end = current.map_or(today.add_days(1), |current| current.date);
-        self.unhandled(self.cutoff(today))
+        let from = self.cutoff(today).from;
+        self.unhandled(from)
             .take_while(|date| *date < end)
             .filter(|&date| Self::view(&self.occurrence(date, OccurrenceStatus::Missed)) <= today)
             .count() as u32
     }
 
-    /// The latest `past` unhandled occurrences on or before `end`, latest first.
-    fn latest_unhandled(&self, end: Date, past: usize) -> Vec<Date> {
+    /// The latest `past` unhandled occurrences on or before `end` that have started by `today`,
+    /// latest first.
+    fn latest_unhandled(&self, end: Date, today: Date, past: usize) -> Vec<Date> {
         let start = self.settings().start;
         // Walks back in growing spans, so a rule that started long ago doesn't walk every date.
         let mut span: i32 = 64;
@@ -500,8 +565,11 @@ impl<'a> Occurrences<'a> {
             } else {
                 end.add_days(-span)
             };
-            let mut found: Vec<Date> =
-                self.unhandled(from).take_while(|date| *date <= end).collect();
+            let mut found: Vec<Date> = self
+                .unhandled(from)
+                .take_while(|date| *date <= end)
+                .filter(|&date| self.started(date) <= today)
+                .collect();
             if found.len() >= past || from <= start {
                 found.reverse();
                 found.truncate(past);
@@ -511,8 +579,9 @@ impl<'a> Occurrences<'a> {
         }
     }
 
-    /// The current occurrence and `upcoming` more after it, in order, with any handled ahead of
-    /// time among them, then the latest `past` occurrences before it, latest first.
+    /// The current occurrence, then `upcoming` more after it, any handled ahead of time among them,
+    /// and any postponed past it, in the order they fall, then the latest `past` occurrences before
+    /// it, latest first.
     pub(crate) fn history(&self, today: Date, past: usize, upcoming: usize) -> Vec<Occurrence> {
         let settings = self.settings();
         let current = self.current(today);
@@ -525,7 +594,7 @@ impl<'a> Occurrences<'a> {
             .collect();
         if settings.missed != Missed::After {
             let end = current.map_or(today, |current| current.date.add_days(-1)).min(today);
-            let missed = self.latest_unhandled(end, past);
+            let missed = self.latest_unhandled(end, today, past);
             earlier.extend(
                 missed.into_iter().map(|date| self.occurrence(date, OccurrenceStatus::Missed)),
             );
@@ -568,7 +637,20 @@ impl<'a> Occurrences<'a> {
                     .filter(|entry| last.is_none_or(|last| entry.date < last))
                     .map(|entry| self.occurrence(entry.date, OccurrenceStatus::Upcoming)),
             );
-            later.sort_by_key(|occurrence| occurrence.date);
+            if settings.missed != Missed::After {
+                // Postponed occurrences that come before the current one by date but haven't
+                // started can still become current, so they aren't missed.
+                let postponed = self
+                    .unhandled(self.cutoff(today).from)
+                    .take_while(|date| *date < current.date)
+                    .filter(|&date| self.started(date) > today);
+                later.extend(
+                    postponed.map(|date| self.occurrence(date, OccurrenceStatus::Upcoming)),
+                );
+            }
+            later.sort_by_key(|occurrence| {
+                (occurrence.status != OccurrenceStatus::Current, occurrence.on, occurrence.date)
+            });
         }
         later.extend(earlier);
         later
@@ -1274,8 +1356,8 @@ mod tests {
     }
 
     #[test]
-    fn early_handling_counts_once_its_start_has_come() {
-        for missed in [Missed::All, Missed::Latest] {
+    fn early_handling_misses_nothing_under_all_and_counts_once_started_under_latest() {
+        for (missed, then) in [(Missed::All, "2026-10-05"), (Missed::Latest, "2026-10-26")] {
             let mut library = Library::in_memory();
             let id = weekly(&mut library, missed);
             // 2026-10-05 is forgotten, and each later week is handled the day before.
@@ -1283,8 +1365,51 @@ mod tests {
             library.handle_occurrence(id, date("2026-10-12"), done, date("2026-10-11")).unwrap();
             library.handle_occurrence(id, date("2026-10-19"), done, date("2026-10-18")).unwrap();
             assert_eq!(current(&library, id, "2026-10-11").as_deref(), Some("2026-10-05"));
-            assert_eq!(current(&library, id, "2026-10-21").as_deref(), Some("2026-10-26"));
+            assert_eq!(current(&library, id, "2026-10-21").as_deref(), Some(then));
         }
+    }
+
+    #[test]
+    fn postponed_occurrences_stay_pending_behind_nearer_ones() {
+        let mut library = Library::in_memory();
+        let id = weekly(&mut library, Missed::Latest);
+        library.move_occurrence(id, date("2026-10-12"), Some(date("2026-12-01"))).unwrap();
+        let today = date("2026-10-27");
+        let summary = library.occurrence_summary(id, today).unwrap();
+        assert_eq!(
+            (summary.current.map(|o| o.date), summary.missed),
+            (Some(date("2026-10-26")), 2)
+        );
+        let history = library.occurrences(id, today, 5, 1);
+        let statuses: Vec<(String, OccurrenceStatus)> =
+            history.iter().map(|o| (o.date.to_string(), o.status)).collect();
+        assert_eq!(
+            statuses,
+            [
+                ("2026-10-26".into(), OccurrenceStatus::Current),
+                ("2026-11-02".into(), OccurrenceStatus::Upcoming),
+                ("2026-10-12".into(), OccurrenceStatus::Upcoming),
+                ("2026-10-19".into(), OccurrenceStatus::Missed),
+                ("2026-10-05".into(), OccurrenceStatus::Missed),
+            ]
+        );
+        library.check_action(id, true, today).unwrap();
+        assert_eq!(current(&library, id, "2026-10-27").as_deref(), Some("2026-11-02"));
+    }
+
+    #[test]
+    fn occurrences_postponed_over_a_month_stay_pending() {
+        let mut library = Library::in_memory();
+        let id = library.create_task("Pay rent", None).unwrap();
+        let mut monthly =
+            RecurrenceSettings::new(Rule::parse("FREQ=MONTHLY").unwrap(), date("2026-07-01"));
+        monthly.missed = Missed::Latest;
+        library.set_recurrence(id, Some(monthly), date("2026-07-01")).unwrap();
+        library.move_occurrence(id, date("2026-08-01"), Some(date("2026-12-15"))).unwrap();
+        library.check_action(id, true, date("2026-10-02")).unwrap();
+        let history = library.occurrences(id, date("2026-10-02"), 5, 0);
+        let august = history.iter().find(|o| o.date == date("2026-08-01")).unwrap();
+        assert_eq!(august.status, OccurrenceStatus::Upcoming);
     }
 
     #[test]

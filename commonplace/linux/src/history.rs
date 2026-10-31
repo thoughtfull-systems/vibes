@@ -86,8 +86,10 @@ impl History {
             .read(|spaces| spaces.occurrences(self.id, today(), self.past.get(), UPCOMING));
         let current = occurrences.iter().find(|o| o.status == OccurrenceStatus::Current);
         let current = current.map(|o| o.date);
-        let (upcoming, past): (Vec<_>, Vec<_>) =
-            occurrences.into_iter().partition(|o| current.is_some_and(|current| o.date >= current));
+        let (upcoming, past): (Vec<_>, Vec<_>) = occurrences.into_iter().partition(|o| {
+            matches!(o.status, OccurrenceStatus::Current | OccurrenceStatus::Upcoming)
+                || current.is_some_and(|current| o.date > current)
+        });
         for (title, items) in [("Upcoming", upcoming), ("Past", past.clone())] {
             if items.is_empty() {
                 continue;

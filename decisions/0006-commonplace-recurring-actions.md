@@ -91,9 +91,10 @@ format adds them.
   rule again from the day its owner handled the last occurrence, as watering plants does. Under
   every behavior, unhandled occurrences before the latest one handled on or after its start date
   count as missed, so editing a rule or its days off never brings old occurrences back as overdue,
-  and handling an occurrence early leaves the ones before it waiting until it starts. Each handled
-  occurrence records whether it came early when its owner handled it, so a later edit can't change
-  that, and it misses only the occurrences that had started by the day its owner handled it.
+  and handling an occurrence early leaves the ones before it waiting: for good under `all`, since
+  bills stay owed, and until it starts under `latest`. Each handled occurrence records whether it
+  came early when its owner handled it, so a later edit can't change that, and it misses only the
+  occurrences that had started by the day its owner handled it.
 - **Days off.** A library holds two kinds of days off: holidays, and vacations. Each holds named
   schedules, such as Christmas or a trip: a span of days that a rule can bring back, such as every
   year. A recurring action says, for each kind, whether a day off removes an occurrence, moves it to
