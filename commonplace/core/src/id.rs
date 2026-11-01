@@ -26,6 +26,34 @@ impl NoteId {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct OccurrenceId(NoteId);
+
+impl OccurrenceId {
+    pub(crate) fn derive(series: NoteId, name: &str) -> Self {
+        let mut hash =
+            blake3::Hasher::new_derive_key("systems.thoughtfull.Commonplace.occurrence.v1");
+        hash.update(series.uuid().as_bytes());
+        hash.update(name.as_bytes());
+        let bytes: [u8; 16] = hash.finalize().as_bytes()[..16].try_into().unwrap();
+        Self(NoteId::from_uuid(Uuid::from_bytes(bytes)))
+    }
+}
+
+impl fmt::Display for OccurrenceId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl FromStr for OccurrenceId {
+    type Err = ParseNoteIdError;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        text.parse().map(Self)
+    }
+}
+
 impl fmt::Display for NoteId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut digits = [0u8; LENGTH];

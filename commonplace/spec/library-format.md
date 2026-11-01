@@ -1,12 +1,16 @@
 # Library format
 
-Version 3. This spec defines how a Commonplace library stores its notes, so that every
+Version 5. This spec defines how a Commonplace library stores its notes, so that every
 implementation can read and write the same data.
 [Decision 0002](../../decisions/0002-commonplace-library-storage.md) explains the choice of format,
-and [decision 0004](../../decisions/0004-commonplace-actions.md) explains actions.
+[decision 0004](../../decisions/0004-commonplace-actions.md) explains actions, and
+[decision 0006](../../decisions/0006-commonplace-recurring-actions.md) explains recurring actions
+and days off.
 
 Version 1 covered memos. Version 2 adds actions. Version 3 lets every note go to the archive, and
-adds journals. Later versions add curios, zettels, attachments, and spaced repetition.
+adds journals. Version 4 adds recurring actions and days off, and lets journal schedules use any
+[rule](#rules). Version 5 gives action occurrences stable identifiers and shared record maps. Later
+versions add curios, zettels, attachments, and spaced repetition.
 
 ## Document
 
@@ -20,15 +24,20 @@ its own, and syncs on its own.
 Each running instance of an implementation uses a fresh, random Loro peer identifier, as Loro does
 by default. Two instances that write at the same time must never share one.
 
-The document has five root containers.
+The document has ten root containers.
 
-| Name       | Type | Contents                                                   |
-| ---------- | ---- | ---------------------------------------------------------- |
-| `meta`     | Map  | Facts about the library itself.                            |
-| `notes`    | Map  | Every note, keyed by its identifier.                       |
-| `actions`  | Tree | The hierarchy of actions, as the [tree](#actions) defines. |
-| `settings` | Map  | Preferences that follow the owner across devices.          |
-| `deleted`  | Map  | A [tombstone](#deleted) for each note deleted for good.    |
+| Name                 | Type | Contents                                                     |
+| -------------------- | ---- | ------------------------------------------------------------ |
+| `actions`            | Tree | The [action hierarchy](#actions).                            |
+| `days_off`           | Map  | [Holidays and vacations](#days_off).                         |
+| `deleted`            | Map  | [Tombstones](#deleted) for notes deleted for good.           |
+| `meta`               | Map  | Facts about the library itself.                              |
+| `notes`              | Map  | Every note, keyed by its identifier.                         |
+| `recurrence_handled` | Map  | Completion, skip, and reopen records for action occurrences. |
+| `recurrence_moved`   | Map  | Explicit moves of action occurrences.                        |
+| `recurrence_notes`   | Map  | Links from action occurrences to memos.                      |
+| `settings`           | Map  | Preferences that follow the owner across devices.            |
+| `step_occurrences`   | Map  | Completion records for steps within action occurrences.      |
 
 ### `meta`
 
@@ -74,16 +83,22 @@ another kind.
 
 An action is a project if its `project` is `true`, and a task otherwise.
 
-| Key           | Type    | Value                                                         |
-| ------------- | ------- | ------------------------------------------------------------- |
-| `closed`      | Integer | When the action became done, as a timestamp.                  |
-| `defer`       | String  | The [date](#dates) until which the action stays out of sight. |
-| `due`         | String  | The date the action is due.                                   |
-| `list`        | String  | One of `inbox`, `active`, `waiting`, `someday`, or `maybe`.   |
-| `planning`    | Integer | When the action joined the planning queue, as a timestamp.    |
-| `project`     | Boolean | Whether the action is a project.                              |
-| `state`       | String  | `open` or `done`.                                             |
-| `waiting_for` | String  | Who or what the action waits for, in plain text.              |
+| Key           | Type    | Value                                                       |
+| ------------- | ------- | ----------------------------------------------------------- |
+| `closed`      | Integer | When the action became done, as a timestamp.                |
+| `defer`       | String  | The [date](#dates) the action becomes available.            |
+| `due`         | String  | The date the action is due.                                 |
+| `list`        | String  | One of `inbox`, `active`, `waiting`, `someday`, or `maybe`. |
+| `planning`    | Integer | When the action joined the planning queue, as a timestamp.  |
+| `project`     | Boolean | Whether the action is a project.                            |
+| `state`       | String  | `open` or `done`.                                           |
+| `waiting_for` | String  | Who or what the action waits for, in plain text.            |
+| `recur`       | Map     | For a [recurring action](#recurring-actions), its fields.   |
+
+`recurrence_generation` is an integer that records the last recurrence generation, even after
+removing `recur`. The optional `recurrence_stopped` timestamp stops the series without changing the
+plain action's `state`. It belongs to the action map so concurrent activation can't discard it.
+Removing recurrence clears it and turns a stopped series into a plain done action.
 
 The lists come from Getting Things Done (GTD): inbox, next actions, and waiting for, with the
 someday and maybe list of GTD split in two. The next actions list is `active` here, because it holds
@@ -100,6 +115,165 @@ a missing `project` as `false`.
 A project's list and dates apply to its subtree too. An action counts as deferred if it or any
 ancestor has a `defer` date after today. The list that applies to an action is the latest, among its
 own list and its ancestors' lists, in the order `active`, `waiting`, `someday`, `maybe`, `inbox`.
+
+### Recurring actions
+
+An action with a readable `recur` map recurs. The outermost recurring ancestor governs every step in
+its subtree. A nested repeat keeps its settings and records, but stays ignored until the outer
+repeat ends or the nested action moves outside it.
+
+| Key         | Type      | Value                                              |
+| ----------- | --------- | -------------------------------------------------- |
+| `calendar`  | Map value | The calendar tuple described below.                |
+| `defer`     | Integer   | The start offset in days. Defaults to zero.        |
+| `due`       | Integer   | The due offset in days. Absent without a deadline. |
+| `holidays`  | String    | `skip`, `move`, or absent to ignore holidays.      |
+| `vacations` | String    | `skip`, `move`, or absent to ignore vacations.     |
+
+`calendar` holds `missed`, the policy (`all`, `latest`, or `after`, defaulting to `latest`); `rule`,
+a [recurrence rule](#rules) string; `start`, its origin date; `generation`, an integer; and
+`not_before`, the earliest nominal date to consider. Writers replace this map value atomically so
+concurrent calendar edits can't combine a rule with another edit's origin. Writers change only
+settings that the owner edited. Changing a due offset on one device therefore merges with changing
+the holiday behavior on another.
+
+#### Occurrence identity
+
+An occurrence has an opaque identifier independent of its effective date. Calendar occurrences use
+the nominal slot selected with days off ignored. Applying `skip` before `BYSETPOS` changes the
+slot's effective day within that period, while its identifier stays the same. For example,
+December's last workday remains one obligation when removing a holiday changes December 30 to
+December 31. Separate slots can fall on the same effective date.
+
+An `after` occurrence uses a cycle number, starting at zero, instead of a nominal date for identity.
+Two cycles can reuse a date. Completing a cycle moved early doesn't mark a later cycle on that date
+done. Concurrent handling of the same cycle resolves to one record.
+
+Identifiers use BLAKE3 in derive-key mode with context
+`systems.thoughtfull.Commonplace.occurrence.v1`. The input is the action's 16 identifier bytes
+followed by the UTF-8 name below. Take the first 16 output bytes and encode them with the
+26-character encoding for note identifiers. These identifiers identify occurrences, never notes.
+
+First derive a scope using the name `<generation>|<kind>|<start>|<normalized-rule>`, where kind is
+`after` or `calendar`. Remove `COUNT` and `UNTIL` to normalize a rule. Sort each list and remove
+duplicates. Set `WKST` to Monday unless it changes a weekly interval greater than one. Derive a
+calendar occurrence with `<scope>|<nominal-date>`, or an `after` occurrence with
+`<scope>|cycle:<number>`.
+
+The first activation uses generation zero. Starting again after removing recurrence, changing its
+calendar pattern or origin, or switching between `after` and a calendar policy increments the stored
+generation. A replacement calendar starts no earlier than the later of today and its new origin.
+Earlier completion records remain history. Editing bounds, offsets, days off, or switching between
+`all` and `latest` keeps the scope. Replacing a calendar invalidates commands from its old rows.
+Independent activation of the same settings from shared history derives the same scope.
+
+#### Occurrence records
+
+Each record is a map value in a root map, never a lazily created child container. Its map key is
+`<action-id>/<occurrence-id>`. Step records use the step's identifier before the slash. Different
+keys merge independently even when devices enable recurrence separately. The last Loro write wins
+for concurrent edits to the same record.
+
+Every record includes `origin`, the date its rule counts from; `key`, the occurrence identifier;
+`scope`; `date`, the nominal date; and, for `after`, `cycle`, a nonnegative integer. A command
+carries these fields from the rendered row. Writers reject a target from another scope rather than
+resolving the current occurrence again.
+
+`recurrence_handled` adds these fields:
+
+| Key     | Type           | Value                                                             |
+| ------- | -------------- | ----------------------------------------------------------------- |
+| `at`    | Integer        | The wall-clock timestamp of the handling write.                   |
+| `day`   | String         | The local handling date.                                          |
+| `defer` | String or null | The occurrence's start date when handled.                         |
+| `due`   | String or null | Its due date when handled.                                        |
+| `early` | Boolean        | Whether the handling date preceded its start date.                |
+| `on`    | String         | Its effective occurrence date when handled.                       |
+| `order` | Integer        | A logical sequence greater than every observed handling sequence. |
+| `peer`  | String         | The unsigned decimal Loro peer identifier of the writer.          |
+| `reach` | Map value      | The settlement boundary for `latest`, described below.            |
+| `state` | String         | `done`, `skipped`, or `open`.                                     |
+
+Writers choose `order` as the greater of the document's operation count and one more than the
+largest observed handling sequence for the action. Handling events order by `order`, then numeric
+`peer`, then `at`, `day`, and occurrence identifier. Wall-clock corrections can't reverse causally
+ordered handling events. Reopening writes `open` instead of deleting the record. It overrides older
+settlement of that occurrence, while a later handling can settle it again. A completion's stored
+dates remain history after calendar, offset, move, or days-off edits.
+
+`recurrence_moved` adds `to`, the chosen effective date, and `rule` and `start`, the calendar when
+the owner moved it. Explicit moves override days off, even on the nominal date. Removing a move
+restores days-off behavior. Scope and rule bounds decide whether an override still applies.
+
+`recurrence_notes` adds `note`, a memo identifier. Resolve references across libraries. A memo with
+a deletion record and no live note counts as absent, so the owner can write a replacement.
+
+`step_occurrences` adds `at`, the completion timestamp, and `series`, the governing action's
+identifier. A step counts as done in a projected occurrence only if this record exists for that
+series and occurrence. Its permanent state doesn't complete future cycles. Clearing a checkbox
+removes only that occurrence's step record.
+
+#### Selection and settlement
+
+Readers derive the current occurrence, history, and counts from the same projection. Start dates
+order work, with nominal dates breaking ties; handling sequences order completion events.
+
+| Policy   | Current occurrence            | Effect on other occurrences  |
+| -------- | ----------------------------- | ---------------------------- |
+| `after`  | Reopened cycle or next cycle. | Advance one cycle.           |
+| `all`    | Earliest effective start.     | Keep other obligations open. |
+| `latest` | Latest start through today.   | Settle other started slots.  |
+
+Under `all`, January's unpaid bill stays owed after completing March's bill. Explicitly skipping
+January clears it. Reopening January makes it pending again. The waiting count includes other open
+occurrences due through today, using the due offset, or the effective date without one.
+
+Under `latest`, older started occurrences count as missed. If none has started, select the earliest
+future start. A completion snapshots which slots had started so later edits can't restore them. Its
+`reach` holds `on`, which records the later of the handling day and its start date; `through`, that
+day minus the start offset; `pending`, sorted nominal dates through that boundary whose effective
+starts come later; and `extra`, sorted dates beyond the boundary whose effective starts already
+came. A boundary settles a slot if the slot falls on or before the boundary and isn't in `pending`,
+or if `extra` includes it. The boundary applies once its `on` arrives. A newer explicit `open`
+record exempts that slot. `all` ignores these boundaries. Moving an old slot after a newer nominal
+slot can make the old slot current when its effective start arrives.
+
+Under `after`, count from the later of the configured origin and the most recent handling day. After
+a completion choose the first rule date strictly after its handling day. The configured origin
+itself remains eligible when it comes later than that day. Without a completion, choose the first
+date on or after the origin. `COUNT` limits closed cycles, and `UNTIL` limits nominal rule dates.
+Reopening a cycle makes that cycle current. Preview assumes each shown occurrence completes on the
+later of today and its effective date.
+
+#### Lifecycle
+
+| State     | Meaning                                | Projection                  |
+| --------- | -------------------------------------- | --------------------------- |
+| Active    | An occurrence is available.            | Show its dates and steps.   |
+| Blocked   | Remaining dates have no effective day. | Keep the action open.       |
+| Exhausted | No remaining rule slots.               | Show done; allow reopening. |
+| Ignored   | An outer repeat governs the subtree.   | Use its occurrence records. |
+| Stopped   | The owner stopped the action.          | Show done until reopened.   |
+
+Starting recurrence transfers permanent completions of the action and its steps into its initial
+projected slot and opens their permanent states. If days off block that selection, choose the slot
+with days off ignored for the transfer. A rule with no logical slot keeps the permanent completions.
+Removing recurrence copies the current dates and step completions to plain action fields. It never
+makes permanent completions inside a nested repeat that becomes active. Removing an exhausted repeat
+leaves the action done. A checkbox with no occurrence target can't write a permanent completion
+inside a repeat. Archiving pauses visibility; on return, the selected policy decides which
+occurrences remain pending.
+
+#### Version 4 migration
+
+Before exposing a version 4 library, copy its nested `handled`, `moved`, and `notes` records into
+the root maps and write `calendar` with generation zero. Preserve unknown fields and the legacy
+maps. Convert date-only moves to map values. Match holiday-adjusted position dates to their nominal
+slot. Assign legacy `after` cycles in handling order and preserve matching step completions.
+Migration is idempotent and runs on open and import. Convert a legacy recurring action's
+`state=done` and `closed` into `recurrence_stopped` and open its plain state. Update every device
+before resuming writes and sync: version 4 readers open version 5 read-only. Migration preserves
+available records; it can't recover entries that a version 4 container conflict already discarded.
 
 ### Journal fields
 
@@ -144,9 +318,12 @@ question's `type` never changes, since its answers depend on it.
 
 #### Schedules
 
-Each schedule is a map value. Its `rule` is an `RRULE` of dates: `FREQ=DAILY`, or `FREQ=WEEKLY` with
-a `BYDAY` that names days without ordinals. Its `kind` is `fixed` or `random`. Times are local to
-the device that reads them, written `HH:MM`.
+Each schedule is a map value. Its `rule` is a [rule](#rules), and its optional `from` is the date
+the rule counts from. Without `from`, the rule counts from the start of 1970. Its optional
+`holidays` and `vacations` say what it does on [days off](#days_off), as for a recurring action:
+`skip` drops the day, and `move` prompts on the next day that isn't a day off instead. Its `kind` is
+`fixed` or `random`. Times are local to the device that reads them, written `HH:MM`. Version 3
+allowed only `FREQ=DAILY`, or `FREQ=WEEKLY` with a `BYDAY` that names days without ordinals.
 
 - **Fixed:** `times` is a list of times.
 - **Random:** `start` and `end` bound a window, `mean` is a whole number of minutes, at least 1, and
@@ -251,6 +428,33 @@ action's list of steps shows its done steps under `steps.show_done`: 1 to show t
 them. Without it, apps read `linux.steps.show_done`, where the Linux app kept the choice before, and
 without either, the list hides them. Writing `steps.show_done` removes `linux.steps.show_done`.
 
+### `days_off`
+
+Days off are holidays and vacations, which recurring actions and journal schedules can skip or move
+past. The map holds schedules of days off, each a map value keyed by an identifier in the form of a
+note identifier. Schedules of both kinds share the one map, since two devices that each made a map
+for a kind would make two containers under one key, and sync would keep only one.
+
+| Key        | Type   | Value                                                              |
+| ---------- | ------ | ------------------------------------------------------------------ |
+| `kind`     | String | `holidays` or `vacations`.                                         |
+| `name`     | String | The name its owner gives the days off, such as "Christmas."        |
+| `first`    | String | The first day off.                                                 |
+| `last`     | String | The last day off in each span. Absent for a span of one day.       |
+| `rule`     | String | A [rule](#rules) that brings the span back, counting from `first`. |
+| `archived` | String | The date its owner archived it, from which it no longer applies.   |
+
+Without `rule`, the schedule is one span, from `first` to `last`. With one, each date the rule
+produces starts a span as long as the one from `first` to `last`. Readers skip a schedule whose
+`kind` or `first` they can't read, and treat a `last` before `first` as absent. A reader that can't
+read a schedule's `rule` treats it as the first span alone, still lists it, and keeps the `rule`
+when it writes the schedule.
+
+Days off shape past dates as well as future ones, so writers never delete a schedule. Archiving it
+keeps it applying to the days before `archived`, which apps set to the day after the owner archives
+it, so it still covers that day. Apps leave out of their lists a schedule that's archived or whose
+last day off passed 7 days ago or more.
+
 ### `deleted`
 
 Each key in `deleted` is the identifier of a note deleted for good, and each value is a map with
@@ -296,8 +500,19 @@ Readers ignore a tombstone for a note that `notes` still holds.
   `archived`, all in one commit.
 - **Move a journal with its entries.** Moving a journal to another library moves every entry in it,
   and an entry never moves on its own.
-- **Close and reopen.** Set `closed` when `state` becomes `done`, and remove it when `state` becomes
-  `open`.
+- **Close and reopen.** For a plain action, set `closed` when `state` becomes `done`, and remove it
+  when `state` becomes `open`. For a series, write or clear `recurrence_stopped` instead.
+- **Close an occurrence, not the action.** Write its identifier in the appropriate root record map
+  and leave the action's permanent state open. Carry the displayed occurrence target through every
+  checkbox, move, handling, and note command.
+- **Edit only changed settings.** Write the calendar tuple atomically, and write independent offsets
+  and days-off choices only when the owner changes them.
+- **Move occurrence records with their note.** Copy all four root maps' entries for each transferred
+  action or step in the same commit as the note.
+- **Preserve lifecycle boundaries.** Transfer plain completions when recurrence starts. When it
+  ends, copy only the governing occurrence's dates and plain steps. Leave a newly active nested
+  repeat's subtree free of permanent completions from its former ancestor.
+- **Archive days off.** Never delete a schedule of days off. Set its `archived` instead.
 - **Preserve what you don't understand.** Never remove or overwrite a key or a root container that
   this spec doesn't define. A later version may define it.
 
@@ -349,6 +564,33 @@ keeps it when it closes, until its owner removes `starred`.
 A date is a calendar day, written `YYYY-MM-DD` as in `2026-10-24`. It has no time of day or time
 zone. An implementation compares dates with the current date where it runs.
 
+## Rules
+
+A rule is an iCalendar `RRULE`, as [Request for Comments (RFC) 5545][rfc5545] defines it, with no
+time parts. It produces dates, counting from a start date that its owner stores beside it. Rules use
+these parts, and readers treat a rule with any other part as one they can't read:
+
+- `FREQ`: `DAILY`, `WEEKLY`, `MONTHLY`, or `YEARLY`.
+- `INTERVAL`, `COUNT`, and `UNTIL`, with `UNTIL` written as eight digits, `YYYYMMDD`.
+- `BYDAY`, with ordinals such as `2MO` or `-1FR` only in monthly and yearly rules.
+- `BYMONTHDAY`, from 1 to 31 or -1 to -31, which counts from the end of the month.
+- `BYMONTH`, `BYSETPOS`, and `WKST`.
+
+A rule produces the dates that RFC 5545 gives, with three differences. The start date counts only if
+the rule produces it. In the first partial period, remove candidates before the start before
+applying `BYSETPOS`. A date that doesn't exist, such as February 30, produces nothing. Days off that
+the rule skips drop out before `BYSETPOS` picks among a period's dates, so the last weekday of the
+month with holidays skipped means the last workday. Both `COUNT` and `UNTIL` bound nominal slots
+before days off change their effective dates. Skipped days still count toward `COUNT`, as excluded
+dates do in RFC 5545, so days off never add a period to the end of a rule, nor another date to its
+last period.
+
+Rule dates run from year 1 through year 9998. Readers never end a rule because a fixed number of
+periods produced no date. They can end an impossible calendar pattern after its Gregorian cycle
+repeats, and skip excluded spans without inspecting every date. A move past days off has no
+scheduled date if those days off cover the rest of the supported calendar. Changing or archiving
+those days off can make the occurrence available again.
+
 ## Timestamps
 
 A timestamp is an integer count of milliseconds since 1970-01-01 00:00:00 Coordinated Universal
@@ -384,3 +626,4 @@ An implementation may shorten a long label for display.
 [commonmark]: https://spec.commonmark.org/
 [gfm]: https://github.github.com/gfm/
 [loro]: https://loro.dev/
+[rfc5545]: https://www.rfc-editor.org/rfc/rfc5545

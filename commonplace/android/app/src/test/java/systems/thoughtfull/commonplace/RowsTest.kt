@@ -17,8 +17,13 @@ import systems.thoughtfull.commonplace.core.Dated
 import systems.thoughtfull.commonplace.core.Journal
 import systems.thoughtfull.commonplace.core.MobileEntry
 import systems.thoughtfull.commonplace.core.MobileNote
+import systems.thoughtfull.commonplace.core.Occurrence
+import systems.thoughtfull.commonplace.core.OccurrenceStatus
+import systems.thoughtfull.commonplace.core.OccurrenceSummary
+import systems.thoughtfull.commonplace.core.OccurrenceTarget
 import systems.thoughtfull.commonplace.core.Question
 import systems.thoughtfull.commonplace.core.QuestionKind
+import systems.thoughtfull.commonplace.core.SeriesState
 
 private val today = LocalDate.of(2026, 10, 27)
 
@@ -47,7 +52,11 @@ private fun action(
   list: ActionList = ActionList.ACTIVE,
   state: ActionState = ActionState.OPEN
 ) = note(id).copy(
-  action = Action(null, null, null, list, null, project, state, null),
+  action = Action(
+    closed = null, defer = null, due = null, list = list, occurrence = null,
+    occurrences = emptyList(), planning = null, project = project, recur = null,
+    state = state, waitingFor = null
+  ),
   kind = "action"
 )
 
@@ -121,15 +130,54 @@ class RowsTest {
   }
 
   @Test
-  fun scheduleDaysStartOnSundayAndWriteEveryDayAsTheCoreDoes() {
-    assertEquals(
-      listOf("Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"),
-      scheduleWeekdays.map { it.second }
+  fun occurrenceSummariesMatchLinux() {
+    val current = Occurrence(
+      OccurrenceTarget("2026-10-26", "00000000000000000000000000", "2026-10-26", null),
+      "2026-10-26",
+      "2026-10-27",
+      null,
+      "2026-10-27",
+      true,
+      OccurrenceStatus.CURRENT,
+      null,
+      true,
+      null
     )
-    assertEquals("FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR,SA", toggleWeekday(WORKDAYS, "SA"))
-    assertEquals("FREQ=DAILY", toggleWeekday("FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR,SA", "SU"))
-    assertEquals("FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR,SA", toggleWeekday("FREQ=DAILY", "SU"))
-    assertEquals("FREQ=WEEKLY;BYDAY=MO", toggleWeekday("FREQ=WEEKLY;BYDAY=MO", "MO"))
+    assertEquals(
+      "Due ${formatDate("2026-10-27")} · Moved from ${formatDate("2026-10-26")} · 1 missed",
+      occurrenceSummary(OccurrenceSummary(current, 1u, SeriesState.ACTIVE, 0u))
+    )
+    assertEquals(
+      "Due ${formatDate("2026-10-27")} · Moved from ${formatDate("2026-10-26")} · 1 missed · " +
+        "1 more waiting",
+      occurrenceSummary(OccurrenceSummary(current, 1u, SeriesState.ACTIVE, 1u))
+    )
+    val onTheDay = current.copy(
+      on = "2026-10-26",
+      defer = "2026-10-26",
+      due = null,
+      moved = false
+    )
+    assertEquals(
+      "Starts ${formatDate("2026-10-26")}",
+      occurrenceSummary(OccurrenceSummary(onTheDay, 0u, SeriesState.ACTIVE, 0u))
+    )
+    assertEquals(
+      "Finished repeating",
+      occurrenceSummary(OccurrenceSummary(null, 0u, SeriesState.EXHAUSTED, 0u))
+    )
+    assertEquals(
+      "No available occurrence",
+      occurrenceSummary(OccurrenceSummary(null, 0u, SeriesState.BLOCKED, 0u))
+    )
+    assertEquals(
+      "Repeating stopped",
+      occurrenceSummary(OccurrenceSummary(null, 0u, SeriesState.STOPPED, 0u))
+    )
+    assertEquals(
+      "Repeats with its parent",
+      occurrenceSummary(OccurrenceSummary(null, 0u, SeriesState.IGNORED, 0u))
+    )
   }
 
   @Test

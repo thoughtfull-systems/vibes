@@ -3,6 +3,7 @@
 package systems.thoughtfull.commonplace
 
 import androidx.compose.runtime.saveable.listSaver
+import systems.thoughtfull.commonplace.core.MobileNote
 
 internal data class Location(val tab: String, val note: String? = null)
 
@@ -24,6 +25,21 @@ internal data class Navigation(val current: Location, val history: List<Location
     }
   }
 }
+
+/** The tab that `note` belongs to. */
+internal fun ownTab(note: MobileNote): String = when {
+  note.inTrash -> "Trash"
+  note.action != null -> "Actions"
+  note.journal != null || note.entry != null -> "Journals"
+  else -> "Memos"
+}
+
+/**
+ * The tab to open a note under from `from`: `from` if it lists notes like it, and otherwise `own`,
+ * the note's own, so the tabs say what's open, as the Linux app does.
+ */
+internal fun tabFor(own: String, from: String): String =
+  if (from == own || (from == "All notes" && own != "Trash")) from else own
 
 internal val navigationSaver = listSaver<Navigation, String>(
   save = { navigation ->
