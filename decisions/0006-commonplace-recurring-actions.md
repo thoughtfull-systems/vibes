@@ -60,9 +60,9 @@ format adds them.
 - **Rules.** A rule is an `RRULE` string with no time parts, plus the date it starts from. It
   supports `FREQ` of `DAILY`, `WEEKLY`, `MONTHLY`, or `YEARLY`, and `INTERVAL`, `BYDAY` with
   ordinals such as `-1FR`, `BYMONTHDAY` including negative days, `BYMONTH`, `BYSETPOS`, `UNTIL`, and
-  `COUNT`. A `BYSETPOS` list counts from only one end of its period. Editing a rule keeps the
-  occurrences already handled, and the unhandled occurrences of the old rule give way to those of
-  the new one.
+  `COUNT`. Ordinal weekdays can filter a set of month days, as iCalendar defines. A `BYSETPOS` list
+  counts from only one end of its period. Editing a rule keeps the occurrences already handled, and
+  the unhandled occurrences of the old rule give way to those of the new one.
 - **Times of day.** Rules produce dates only. A note that happens at times of day adds its times to
   each occurrence date, as journal schedules do with a list of times or a window, so the times never
   change which days a rule produces. Journals, and later a calendar, evaluate their rules with the
@@ -78,7 +78,10 @@ format adds them.
   can reuse a calendar date. Deterministic identifiers include the action, calendar scope, and slot
   or cycle. The scope changes when recurrence restarts or its calendar or origin changes. Editing
   bounds, offsets, or days off keeps it. Week starts remain part of a weekly position selector's
-  calendar even with interval 1. The format spec defines the derivation.
+  calendar even with interval 1. A shared allocation history retains every generation, including
+  those of calendars that lose concurrent edits. New calendars use a generation greater than every
+  observed allocation, so a later edit can't reuse a discarded calendar's identifiers. The format
+  spec defines the derivation.
 - **Handled occurrences.** Root maps keyed by action and occurrence identifier hold completion,
   skip, reopen, move, and memo records. Step records use the step identifier and the governing
   occurrence identifier. Root maps avoid competing child containers when devices independently
@@ -86,7 +89,9 @@ format adds them.
   different occurrences survive independently. A handling record snapshots its effective dates.
   Logical sequences order handling events, so a clock correction can't reverse later work. Immutable
   settlement events live in their own root map, so reopening or replacing a handling record doesn't
-  remove another slot's settlement. The format specifies exact rule bytes and test vectors for
+  remove another slot's settlement. Records name their identity algorithm's version. Migration
+  checks an unmarked record's writer in the editing history, so it never treats a legitimate
+  concurrent calendar as legacy data. The format specifies exact rule bytes and test vectors for
   deriving occurrence identifiers.
 - **Overrides.** A move changes the effective date of one stable occurrence. Offsets then give its
   start and due dates. Explicit moves override days off. Replacing a calendar leaves old overrides
@@ -124,6 +129,8 @@ format adds them.
   series' stop record intact. A step's projected completion belongs to its governing occurrence; a
   checkbox without an occurrence can't turn into a permanent completion. Removing an outer repeat
   never makes its temporary step completions permanent inside a nested repeat that becomes active.
+  Removing an exhausted repeat keeps the action done and preserves the step states shown for its
+  last handled occurrence.
 
 The nominal slot identifies an occurrence, its effective start orders scheduled work, and its
 logical handling sequence orders completions. Every command carries the occurrence identifier that
@@ -196,6 +203,12 @@ Against the criteria:
 - **Dates as occurrence identity.** Days off can change a position-selected date, and two
   completion-relative cycles can reuse one date. Date keys then duplicate an obligation or mark a
   new cycle done. This fails the merges well and one occurrence can change criteria.
+- **A last-write-wins generation integer.** A concurrent calendar can replace a higher generation
+  with a lower one. Incrementing that lower value can reuse the discarded calendar's scope and apply
+  its old records to new work. A permanent allocation history prevents this reuse.
+- **Recognizing legacy records by scope alone.** A current calendar can use the same scope that an
+  older identity algorithm would produce for another calendar. Migrating by this match alone moves
+  legitimate records into a competing calendar. The writer's format version supplies provenance.
 - **Positions counted from both ends in one rule.** Two selectors can share a nominal date but
   choose separate dates after days off filter the candidates. Supporting both needs slot identities
   and rules for splitting and combining obligations. Limiting a list to one direction keeps stable
@@ -231,7 +244,7 @@ Against the criteria:
 
 ## Consequences
 
-- The library format becomes version 7. Older versions of Commonplace open a version 7 library
+- The library format becomes version 8. Older versions of Commonplace open a version 8 library
   read-only.
 - Every implementation needs an `RRULE` evaluator for dates, extended with days off, overrides, and
   the `after` behavior.

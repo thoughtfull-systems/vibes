@@ -49,11 +49,19 @@ impl Library {
                 });
                 let previous = action
                     .get("recurrence_generation")
-                    .and_then(|value| integer(value.get_deep_value()));
-                let generation = old.filter(|_| !replaced).map_or_else(
-                    || previous.map_or(0, |generation| generation + 1) as u64,
-                    |old| old.generation,
-                );
+                    .and_then(|value| integer(value.get_deep_value()))
+                    .and_then(|value| u64::try_from(value).ok())
+                    .max(store::last_generation(&self.doc, id));
+                let generation = if let Some(old) = old.filter(|_| !replaced) {
+                    old.generation
+                } else if let Some(previous) = previous {
+                    previous
+                        .checked_add(1)
+                        .filter(|&value| value <= i64::MAX as u64)
+                        .ok_or_else(|| Error::Loro("recurrence generation overflow".into()))?
+                } else {
+                    0
+                };
                 let not_before = if replaced {
                     today.max(settings.start)
                 } else {
@@ -73,6 +81,7 @@ impl Library {
                     )?;
                 }
                 action.insert("recurrence_generation", generation as i64).map_err(loro_error)?;
+                store::remember_generation(&self.doc, id, generation)?;
                 for (key, offset, previous) in [
                     ("defer", settings.defer, old.and_then(|old| old.settings.defer)),
                     ("due", settings.due, old.and_then(|old| old.settings.due)),
@@ -123,7 +132,9 @@ impl Library {
                     return Ok(());
                 }
                 if !ignored {
-                    if let Some(current) = self.current_occurrence(id, today) {
+                    let current = self.current_occurrence(id, today);
+                    let context = self.note_on(id, today).and_then(|note| note.action?.occurrence);
+                    if let Some(current) = current {
                         for (key, date) in [("defer", current.defer), ("due", current.due)] {
                             match date {
                                 Some(date) => action.insert(key, date.to_string()),
@@ -131,6 +142,17 @@ impl Library {
                             }
                             .map_err(loro_error)?;
                         }
+                    } else if before.state == ActionState::Open
+                        && self.occurrence_summary(id, today).is_some_and(|summary| {
+                            matches!(summary.state, SeriesState::Exhausted | SeriesState::Stopped)
+                        })
+                    {
+                        let last = old.and_then(|old| {
+                            old.stopped.or_else(|| old.latest_handling().map(|entry| entry.at))
+                        });
+                        set_state(&action, Some(last.unwrap_or_else(|| self.now())))?;
+                    }
+                    if let Some(context) = context {
                         for step in hierarchy.descendants(id) {
                             // Removing this repeat activates the nested repeat instead.
                             let nested = std::iter::once(step)
@@ -151,21 +173,12 @@ impl Library {
                                 .occurrences
                                 .iter()
                                 .find(|entry| {
-                                    entry.key == Some(current.target.key)
+                                    entry.key == Some(context.target.key)
                                         && entry.series == Some(id)
                                 })
                                 .map(|entry| entry.at);
                             set_state(&self.action_map(step)?, closed)?;
                         }
-                    } else if before.state == ActionState::Open
-                        && self.occurrence_summary(id, today).is_some_and(|summary| {
-                            matches!(summary.state, SeriesState::Exhausted | SeriesState::Stopped)
-                        })
-                    {
-                        let last = old.and_then(|old| {
-                            old.stopped.or_else(|| old.latest_handling().map(|entry| entry.at))
-                        });
-                        set_state(&action, Some(last.unwrap_or_else(|| self.now())))?;
                     }
                 }
                 action.delete(RECUR).map_err(loro_error)?;
@@ -463,9 +476,11 @@ impl Library {
         let recur = Recurrence::new(NoteId::generate(), settings.clone(), 0, settings.start);
         let days_off = self.days_off_set();
         let occurrences = Occurrences::new(&recur, &days_off, from);
+        let first = settings.rule.period_start(days_off.before(&settings.days_off, from));
         occurrences
-            .dates(from.max(settings.start))
+            .dates(first.max(settings.start))
             .filter_map(|date| occurrences.on(date))
+            .filter(|&date| date >= from)
             .take(count as usize)
             .collect()
     }

@@ -135,10 +135,6 @@ impl Rule {
     /// Whether the parts fit together as the spec allows.
     pub fn is_valid(&self) -> bool {
         let ordinals = self.weekdays.iter().any(|day| day.ordinal != 0);
-        let ordinal_limit = match (self.frequency, self.months.is_empty()) {
-            (Frequency::Monthly, _) | (Frequency::Yearly, false) => 5,
-            _ => 53,
-        };
         self.interval > 0
             && self.count.is_none_or(|count| count > 0)
             && !(self.until.is_some() && self.count.is_some())
@@ -148,12 +144,8 @@ impl Rule {
             && !(self.positions.iter().any(|&position| position < 0)
                 && self.positions.iter().any(|&position| position > 0))
             && self.week_start < 7
-            && self
-                .weekdays
-                .iter()
-                .all(|day| day.weekday < 7 && day.ordinal.unsigned_abs() <= ordinal_limit)
+            && self.weekdays.iter().all(|day| day.weekday < 7 && day.ordinal.unsigned_abs() <= 53)
             && !(ordinals && matches!(self.frequency, Frequency::Daily | Frequency::Weekly))
-            && !(ordinals && !self.month_days.is_empty())
             && !(self.frequency == Frequency::Weekly && !self.month_days.is_empty())
     }
 
@@ -416,10 +408,7 @@ impl Rule {
             self.month_days
                 .iter()
                 .filter_map(|&day| Date::new(year, month, month_day(year, month, day)?))
-                .filter(|date| {
-                    self.weekdays.is_empty()
-                        || self.weekdays.iter().any(|d| d.weekday == date.weekday())
-                })
+                .filter(|&date| self.matches_weekday(date))
                 .collect()
         } else if !self.weekdays.is_empty() {
             let (Some(first), Some(last)) = (
@@ -432,6 +421,29 @@ impl Rule {
         } else {
             Date::new(year, month, start.day()).into_iter().collect()
         }
+    }
+
+    fn matches_weekday(&self, date: Date) -> bool {
+        let (first, last) = if self.frequency == Frequency::Yearly && self.months.is_empty() {
+            (Date::new(date.year(), 1, 1).unwrap(), Date::new(date.year(), 12, 31).unwrap())
+        } else {
+            (
+                Date::new(date.year(), date.month(), 1).unwrap(),
+                Date::new(
+                    date.year(),
+                    date.month(),
+                    Date::days_in_month(date.year(), date.month()),
+                )
+                .unwrap(),
+            )
+        };
+        self.weekdays.is_empty()
+            || self.weekdays.iter().any(|day| {
+                day.weekday == date.weekday()
+                    && (day.ordinal == 0
+                        || i32::from(day.ordinal) == date.days_since(first) / 7 + 1
+                        || -i32::from(day.ordinal) == last.days_since(date) / 7 + 1)
+            })
     }
 }
 

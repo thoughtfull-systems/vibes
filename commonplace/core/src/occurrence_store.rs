@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: MPL-2.0-no-copyleft-exception
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
-use loro::{LoroDoc, LoroMap, LoroValue};
+use loro::{
+    ContainerTrait, Frontiers, ID, JsonMapOp, JsonOpContent, LoroDoc, LoroMap, LoroValue,
+    VersionVector,
+};
 
 use crate::library::{VERSION, integer, loro_error, string};
 use crate::recurring::{
@@ -11,11 +14,33 @@ use crate::recurring::{
 };
 use crate::{Date, Error, Library, Note, NoteId, OccurrenceId};
 
+pub(crate) const GENERATIONS: &str = "recurrence_generations";
 pub(crate) const HANDLED: &str = "recurrence_handled";
 pub(crate) const MOVED: &str = "recurrence_moved";
 pub(crate) const NOTES: &str = "recurrence_notes";
 pub(crate) const SETTLED: &str = "recurrence_settled";
 pub(crate) const STEPS: &str = "step_occurrences";
+
+type LegacyRecords = HashSet<(&'static str, String)>;
+
+pub(crate) fn last_generation(doc: &LoroDoc, series: NoteId) -> Option<u64> {
+    let prefix = format!("{series}/");
+    doc.get_map(GENERATIONS).keys().filter_map(|key| key.strip_prefix(&prefix)?.parse().ok()).max()
+}
+
+pub(crate) fn remember_generation(
+    doc: &LoroDoc,
+    series: NoteId,
+    generation: u64,
+) -> Result<bool, Error> {
+    let map = doc.get_map(GENERATIONS);
+    let key = format!("{series}/{generation}");
+    if map.get(&key).is_some() {
+        return Ok(false);
+    }
+    map.insert(&key, true).map_err(loro_error)?;
+    Ok(true)
+}
 
 pub(crate) fn record_key(series: NoteId, key: OccurrenceId) -> String {
     format!("{series}/{key}")
@@ -73,6 +98,7 @@ pub(crate) fn target_fields(
 ) -> Vec<(String, LoroValue)> {
     let mut fields = vec![
         ("date".into(), target.date.to_string().into()),
+        ("identity_version".into(), 7.into()),
         ("key".into(), target.key.to_string().into()),
         ("origin".into(), target.origin.to_string().into()),
         ("scope".into(), scope.to_string().into()),
@@ -100,7 +126,7 @@ pub(crate) fn insert_preserving(
 impl Library {
     pub(crate) fn copy_occurrences(&self, source: &Self, id: NoteId) -> Result<(), Error> {
         let prefix = format!("{id}/");
-        for root in [HANDLED, MOVED, NOTES, SETTLED, STEPS] {
+        for root in [GENERATIONS, HANDLED, MOVED, NOTES, SETTLED, STEPS] {
             let LoroValue::Map(records) = source.doc.get_map(root).get_value() else { continue };
             for (key, value) in records.iter().filter(|(key, _)| key.starts_with(&prefix)) {
                 self.doc.get_map(root).insert(key, value.clone()).map_err(loro_error)?;
@@ -219,7 +245,73 @@ impl Library {
         }
     }
 
-    fn migrate_recurrence_scopes(&self) -> Result<bool, Error> {
+    fn migrate_recurrence_history(
+        &self,
+        since: &VersionVector,
+    ) -> Result<(bool, LegacyRecords), Error> {
+        let actions: HashMap<_, _> = self
+            .notes()
+            .into_iter()
+            .filter_map(|note| Some((self.action_map(note.id).ok()?.id(), note.id)))
+            .collect();
+        let roots: HashMap<_, _> = [HANDLED, MOVED, NOTES, SETTLED, STEPS]
+            .into_iter()
+            .map(|root| (self.doc.get_map(root).id(), root))
+            .collect();
+        let mut changed = false;
+        let mut writes: HashMap<_, ID> = HashMap::new();
+        let history =
+            self.doc.export_json_updates_without_peer_compression(since, &self.doc.oplog_vv());
+        for change in history.changes {
+            for op in change.ops {
+                let JsonOpContent::Map(JsonMapOp::Insert { key, value }) = op.content else {
+                    continue;
+                };
+                if key == "recurrence_generation"
+                    && let Some(&series) = actions.get(&op.container)
+                    && let Some(generation) = integer(value).filter(|&value| value >= 0)
+                {
+                    changed |= remember_generation(&self.doc, series, generation as u64)?;
+                }
+                let Some(&root) = roots.get(&op.container) else { continue };
+                let records = self.doc.get_map(root);
+                let Some(value) = records.get(&key).map(|value| value.get_deep_value()) else {
+                    continue;
+                };
+                let Some(map) = fields(&value) else { continue };
+                if map.contains_key("identity_version")
+                    || records.get_last_editor(&key) != Some(change.id.peer)
+                {
+                    continue;
+                }
+                let id = ID::new(change.id.peer, op.counter);
+                writes
+                    .entry((root, key))
+                    .and_modify(|old| *old = ID::new(id.peer, old.counter.max(id.counter)))
+                    .or_insert(id);
+            }
+        }
+        let mut legacy = HashSet::new();
+        if writes.is_empty() {
+            return Ok((changed, legacy));
+        }
+        let writer = self.doc.fork();
+        for ((root, key), id) in writes {
+            // The merged meta version can't identify the format of a concurrent record's writer.
+            writer.checkout(&Frontiers::from(id)).map_err(loro_error)?;
+            let version = writer
+                .get_map("meta")
+                .get("version")
+                .and_then(|value| integer(value.get_deep_value()))
+                .unwrap_or(0);
+            if version <= 6 {
+                legacy.insert((root, key.clone()));
+            }
+        }
+        Ok((changed, legacy))
+    }
+
+    fn migrate_recurrence_scopes(&self, legacy: &LegacyRecords) -> Result<bool, Error> {
         let series: HashMap<_, _> = self
             .notes()
             .into_iter()
@@ -233,6 +325,9 @@ impl Library {
             let records = self.doc.get_map(root);
             let LoroValue::Map(values) = records.get_value() else { continue };
             for (key, value) in values.iter() {
+                if !legacy.contains(&(root, key.clone())) {
+                    continue;
+                }
                 let Some((owner, tail)) = key.split_once('/') else { continue };
                 let Some(owner) = owner.parse().ok() else { continue };
                 let Some(map) = fields(value) else { continue };
@@ -269,8 +364,9 @@ impl Library {
         Ok(changed)
     }
 
-    pub(crate) fn migrate_recurrence(&self) -> Result<bool, Error> {
-        let mut changed = self.migrate_recurrence_scopes()?;
+    pub(crate) fn migrate_recurrence(&self, since: &VersionVector) -> Result<bool, Error> {
+        let (mut changed, legacy) = self.migrate_recurrence_history(since)?;
+        changed |= self.migrate_recurrence_scopes(&legacy)?;
         let meta = self.doc.get_map("meta");
         if meta.get("version").and_then(|value| integer(value.get_deep_value())) != Some(VERSION) {
             meta.insert("version", VERSION).map_err(loro_error)?;
@@ -409,6 +505,7 @@ impl Library {
             }
             map.insert("calendar", calendar).map_err(loro_error)?;
             self.action_map(note.id)?.insert("recurrence_generation", 0).map_err(loro_error)?;
+            remember_generation(&self.doc, note.id, 0)?;
             changed = true;
         }
         let hierarchy = self.hierarchy();

@@ -17,7 +17,7 @@ use crate::{Error, NoteId, label, parse_links};
 const SETTINGS: &str = "settings";
 
 const FORMAT: &str = "commonplace-library";
-pub(crate) const VERSION: i64 = 7;
+pub(crate) const VERSION: i64 = 8;
 
 pub(crate) const ARCHIVED: &str = "archived";
 const BODY: &str = "body";
@@ -149,7 +149,7 @@ impl Library {
             }
         };
         let archived = self.move_archived_to_notes()?;
-        let recurring = self.migrate_recurrence()?;
+        let recurring = self.migrate_recurrence(&VersionVector::default())?;
         if archived || recurring || upgraded { self.commit() } else { Ok(()) }
     }
 
@@ -541,6 +541,7 @@ impl Library {
     /// the merge lost, as merging libraries does.
     pub fn merge_updates(&mut self, bytes: &[u8], repair: bool) -> Result<(), Error> {
         self.check_writable()?;
+        let since = self.doc.oplog_vv();
         let trial = self.doc.fork();
         trial.import(bytes).map_err(loro_error)?;
         Self::validate(&trial)?;
@@ -554,7 +555,7 @@ impl Library {
             let _ = incoming.import(bytes);
             self.restore_lost(&[before.get_map("notes"), incoming.get_map("notes")])?;
         }
-        self.migrate_recurrence()?;
+        self.migrate_recurrence(&since)?;
         self.commit()
     }
 
@@ -603,9 +604,10 @@ impl Library {
     /// Merges another document's changes into the library, as a sync does.
     pub(crate) fn import(&mut self, bytes: &[u8]) -> Result<(), Error> {
         self.check_writable()?;
+        let since = self.doc.oplog_vv();
         self.doc.import(bytes).map_err(loro_error)?;
         self.move_archived_to_notes()?;
-        self.migrate_recurrence()?;
+        self.migrate_recurrence(&since)?;
         self.commit()
     }
 

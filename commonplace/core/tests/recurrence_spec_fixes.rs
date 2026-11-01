@@ -262,8 +262,11 @@ fn version_six_weekly_records_migrate_together_and_merge_once() {
         let records = legacy.get_map(root);
         let key = records.keys().into_iter().next().unwrap();
         let LoroValue::Map(value) = records.get(&key).unwrap().get_deep_value() else { panic!() };
-        let mut fields: Vec<_> =
-            value.iter().map(|(key, value)| (key.clone(), value.clone())).collect();
+        let mut fields: Vec<_> = value
+            .iter()
+            .filter(|(key, _)| key.as_str() != "identity_version")
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect();
         fields.push(("future".into(), "keep".into()));
         records.insert(&key, LoroValue::Map(fields.into())).unwrap();
     }
@@ -281,7 +284,7 @@ fn version_six_weekly_records_migrate_together_and_merge_once() {
     assert_eq!(recurrence.reaches.len(), 1);
     let doc = LoroDoc::new();
     doc.import(&laptop.export_snapshot().unwrap()).unwrap();
-    assert_eq!(doc.get_map("meta").get("version").unwrap().get_deep_value(), 7.into());
+    assert_eq!(doc.get_map("meta").get("version").unwrap().get_deep_value(), 8.into());
     for root in [
         "recurrence_handled",
         "recurrence_moved",
@@ -305,4 +308,22 @@ fn version_six_weekly_records_migrate_together_and_merge_once() {
     let before = laptop.occurrences(id, start, 10, 3);
     phone.import_snapshot(&laptop.export_snapshot().unwrap()).unwrap();
     assert_eq!(phone.occurrences(id, start, 10, 3), before);
+
+    for index in 0..50 {
+        legacy.get_map("settings").insert("advance", index).unwrap();
+    }
+    let records = legacy.get_map("recurrence_handled");
+    let key = records.keys().into_iter().next().unwrap();
+    let LoroValue::Map(value) = records.get(&key).unwrap().get_deep_value() else { panic!() };
+    let mut fields: Vec<_> =
+        value.iter().map(|(key, value)| (key.clone(), value.clone())).collect();
+    fields.retain(|(key, _)| key != "state");
+    fields.push(("state".into(), "skipped".into()));
+    records.insert(&key, LoroValue::Map(fields.into())).unwrap();
+    legacy.commit();
+    laptop.import_snapshot(&legacy.export(ExportMode::Snapshot).unwrap()).unwrap();
+    let doc = LoroDoc::new();
+    doc.import(&laptop.export_snapshot().unwrap()).unwrap();
+    assert_eq!(doc.get_map("recurrence_handled").len(), 1);
+    assert_eq!(laptop.current_occurrence(id, start).unwrap().target, migrated);
 }
