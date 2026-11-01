@@ -141,7 +141,10 @@ class RowsTest {
       OccurrenceStatus.CURRENT,
       null,
       true,
-      null
+      null,
+      null,
+      null,
+      true
     )
     assertEquals(
       "Due ${formatDate("2026-10-27")} · Moved from ${formatDate("2026-10-26")} · 1 missed",

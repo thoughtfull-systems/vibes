@@ -195,9 +195,7 @@ impl Library {
                             continue;
                         }
                         if !active {
-                            if state != OccurrenceState::Open {
-                                recur.past.push(handled);
-                            }
+                            recur.past.push(handled);
                         } else if state == OccurrenceState::Open {
                             recur.reopened.push(handled);
                         } else {

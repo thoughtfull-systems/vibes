@@ -86,12 +86,8 @@ impl History {
         let occurrences = self
             .state
             .read(|spaces| spaces.occurrences(self.id, today(), self.past.get(), UPCOMING));
-        let current = occurrences.iter().find(|o| o.status == OccurrenceStatus::Current);
-        let current = current.map(|o| o.on);
-        let (upcoming, past): (Vec<_>, Vec<_>) = occurrences.into_iter().partition(|o| {
-            matches!(o.status, OccurrenceStatus::Current | OccurrenceStatus::Upcoming)
-                || current.is_some_and(|current| o.on > current)
-        });
+        let (upcoming, past): (Vec<_>, Vec<_>) =
+            occurrences.into_iter().partition(|occurrence| occurrence.upcoming);
         for (title, items) in [("Upcoming", upcoming), ("Past", past.clone())] {
             if items.is_empty() {
                 continue;
@@ -145,8 +141,15 @@ impl History {
             ),
             OccurrenceStatus::Skipped => (icon!("remove"), Some("skipped".to_owned())),
             OccurrenceStatus::Missed => (icon!("clear-search"), Some("missed".to_owned())),
+            OccurrenceStatus::Reopened => (icon!("plan"), Some("Reopened".to_owned())),
         };
         let mut details: Vec<String> = word.into_iter().collect();
+        if let Some(reason) = occurrence.inactive_reason {
+            details.push(reason.label().to_owned());
+        }
+        if let Some(settled) = occurrence.settled {
+            details.push(format!("Settled {}", format_date(settled)));
+        }
         if occurrence.on != occurrence.date {
             details.push(format!("moved from {}", format_date(occurrence.date)));
         }

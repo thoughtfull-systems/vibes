@@ -4,8 +4,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use commonplace_core::{
     ActionChange, ActionState, Date, DayOffEffect, DaysOff, DaysOffKind, Library, Missed, NoteId,
-    Occurrence, OccurrenceState, OccurrenceStatus, OccurrenceTarget, RecurrenceSettings, Rule,
-    SeriesState,
+    Occurrence, OccurrenceInactiveReason, OccurrenceState, OccurrenceStatus, OccurrenceTarget,
+    RecurrenceSettings, Rule, SeriesState,
 };
 
 fn first() -> Date {
@@ -16,6 +16,8 @@ fn first() -> Date {
 enum Calendar {
     Daily,
     Monthly,
+    MonthlyOrdinal { ordinal: i8, weekday: u8 },
+    MonthlyPosition { position: i8 },
     Weekly,
     Yearly,
 }
@@ -23,10 +25,18 @@ enum Calendar {
 impl Calendar {
     fn rule(self, count: u32) -> Rule {
         let text = match self {
-            Self::Daily => "FREQ=DAILY;INTERVAL=3",
-            Self::Monthly => "FREQ=MONTHLY",
-            Self::Weekly => "FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,TH;WKST=SU",
-            Self::Yearly => "FREQ=YEARLY",
+            Self::Daily => "FREQ=DAILY;INTERVAL=3".to_owned(),
+            Self::Monthly => "FREQ=MONTHLY".to_owned(),
+            Self::MonthlyOrdinal { ordinal, weekday } => {
+                let days = if ordinal > 0 { "1,2,3,4,5,6,7" } else { "-1,-2,-3,-4,-5,-6,-7" };
+                let weekday = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"][weekday as usize];
+                format!("FREQ=MONTHLY;BYMONTHDAY={days};BYDAY={ordinal}{weekday}")
+            }
+            Self::MonthlyPosition { position } => {
+                format!("FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS={position}")
+            }
+            Self::Weekly => "FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,TH;WKST=SU".to_owned(),
+            Self::Yearly => "FREQ=YEARLY".to_owned(),
         };
         Rule::parse(&format!("{text};COUNT={count}")).unwrap()
     }
@@ -34,12 +44,37 @@ impl Calendar {
     fn dates(self, origin: Date, count: usize) -> Vec<Date> {
         match self {
             Self::Daily => (0..count).map(|index| origin.add_days(index as i32 * 3)).collect(),
-            Self::Monthly => {
+            Self::Monthly | Self::MonthlyOrdinal { .. } | Self::MonthlyPosition { .. } => {
                 let month = i32::from(origin.year()) * 12 + i32::from(origin.month()) - 1;
                 (0..count * 2 + 24)
                     .filter_map(|index| {
                         let next = month + index as i32;
-                        Date::new((next / 12) as u16, (next % 12 + 1) as u8, origin.day())
+                        let year = (next / 12) as u16;
+                        let month = (next % 12 + 1) as u8;
+                        match self {
+                            Self::MonthlyOrdinal { ordinal, weekday } => {
+                                let last = Date::days_in_month(year, month);
+                                (1..=last).filter_map(|day| Date::new(year, month, day)).find(
+                                    |day| {
+                                        day.weekday() == weekday
+                                            && *day >= origin
+                                            && if ordinal > 0 {
+                                                day.day() <= 7
+                                            } else {
+                                                day.day() > last - 7
+                                            }
+                                    },
+                                )
+                            }
+                            Self::MonthlyPosition { position } => {
+                                let dates: Vec<_> = (1..=Date::days_in_month(year, month))
+                                    .filter_map(|day| Date::new(year, month, day))
+                                    .filter(|day| day.weekday() < 5 && *day >= origin)
+                                    .collect();
+                                pick(&dates, position)
+                            }
+                            _ => Date::new(year, month, origin.day()),
+                        }
                     })
                     .take(count)
                     .collect()
@@ -63,6 +98,15 @@ impl Calendar {
                 .collect(),
         }
     }
+}
+
+fn pick(dates: &[Date], position: i8) -> Option<Date> {
+    let index = if position > 0 {
+        (position - 1) as usize
+    } else {
+        dates.len().checked_sub(position.unsigned_abs() as usize)?
+    };
+    dates.get(index).copied()
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -155,14 +199,41 @@ impl Reference {
         if let Some((_, to)) = self.moved.get(&slot.key) {
             return Some(*to);
         }
-        if (4..=7).contains(&slot.date.days_since(first())) {
+        let date = if let Calendar::MonthlyPosition { position } = self.calendar
+            && self.effect == DayOffEffect::Skip
+        {
+            let origin = match slot.key {
+                Key::Calendar(_) => self.start,
+                Key::Cycle(_) => self.reopened.get(&slot.key).map_or_else(
+                    || {
+                        self.closed
+                            .values()
+                            .max_by_key(|entry| entry.sequence)
+                            .map_or(self.start, |entry| entry.day.max(self.start))
+                    },
+                    |(_, _, origin)| *origin,
+                ),
+            };
+            let dates: Vec<_> = (1..=Date::days_in_month(slot.date.year(), slot.date.month()))
+                .filter_map(|day| Date::new(slot.date.year(), slot.date.month(), day))
+                .filter(|day| {
+                    *day >= origin
+                        && day.weekday() < 5
+                        && !(4..=7).contains(&day.days_since(first()))
+                })
+                .collect();
+            pick(&dates, position)?
+        } else {
+            slot.date
+        };
+        if (4..=7).contains(&date.days_since(first())) {
             match self.effect {
-                DayOffEffect::Ignore => Some(slot.date),
+                DayOffEffect::Ignore => Some(date),
                 DayOffEffect::Move => Some(first().add_days(8)),
                 DayOffEffect::Skip => None,
             }
         } else {
-            Some(slot.date)
+            Some(date)
         }
     }
 
@@ -171,12 +242,22 @@ impl Reference {
     }
 
     fn missed(&self, slot: Slot, today: Date) -> bool {
-        self.policy == Missed::Latest
-            && self.settlements.iter().any(|entry| {
+        self.settled_on(slot, today).is_some()
+    }
+
+    fn settled_on(&self, slot: Slot, today: Date) -> Option<Date> {
+        if self.policy != Missed::Latest {
+            return None;
+        }
+        self.settlements
+            .iter()
+            .filter(|entry| {
                 entry.activation <= today
                     && entry.settled.contains(&slot.date)
                     && self.reopened.get(&slot.key).is_none_or(|(_, seq, _)| *seq <= entry.sequence)
             })
+            .map(|entry| entry.activation)
+            .min()
     }
 
     fn open(&self, today: Date) -> Vec<Slot> {
@@ -329,6 +410,66 @@ impl Reference {
                     );
                 }
             }
+            let nominal = self.calendar.dates(self.start, self.count as usize);
+            let candidates: BTreeSet<_> = nominal
+                .iter()
+                .copied()
+                .chain(self.settlements.iter().flat_map(|entry| entry.settled.iter().copied()))
+                .collect();
+            let mut expected_missed = BTreeMap::new();
+            for date in candidates {
+                let slot = Slot { key: Key::Calendar(date), date };
+                if self.closed.contains_key(&slot.key) {
+                    continue;
+                }
+                let settled = self.settled_on(slot, today);
+                let superseded = self.policy == Missed::Latest
+                    && date >= self.not_before
+                    && nominal.contains(&date)
+                    && self.started(slot).is_some_and(|start| {
+                        start <= today
+                            && current.is_none_or(|current| {
+                                (start, date) < (self.started(current).unwrap(), current.date)
+                            })
+                    });
+                if settled.is_some() || superseded {
+                    expected_missed.insert(slot.key, settled);
+                }
+            }
+            let actual_missed: BTreeMap<_, _> = history
+                .iter()
+                .filter(|entry| entry.status == OccurrenceStatus::Missed)
+                .map(|entry| {
+                    assert!(!entry.upcoming);
+                    (Slot::of(*entry).key, entry.settled)
+                })
+                .collect();
+            assert_eq!(
+                actual_missed, expected_missed,
+                "missed history on {today}: {:?} {:?}",
+                self.calendar, self.policy
+            );
+            assert_eq!(
+                library.occurrence_summary(id, today).unwrap().missed as usize,
+                expected_missed.len()
+            );
+        }
+        for (key, (slot, _, _)) in &self.reopened {
+            let entry = history
+                .iter()
+                .find(|entry| entry.editable && Slot::of(**entry).key == *key)
+                .unwrap_or_else(|| panic!("missing reopened {key:?} on {today}"));
+            if self.policy == Missed::After {
+                if self.closed.len() >= self.count as usize {
+                    assert_eq!(entry.inactive_reason, Some(OccurrenceInactiveReason::CycleLimit));
+                }
+            } else if self.missed(*slot, today) {
+                assert_eq!(entry.status, OccurrenceStatus::Missed);
+            } else if !self.calendar.dates(self.start, self.count as usize).contains(&slot.date) {
+                assert_eq!(entry.inactive_reason, Some(OccurrenceInactiveReason::Bounds));
+            } else if self.on(*slot).is_none() {
+                assert_eq!(entry.inactive_reason, Some(OccurrenceInactiveReason::DaysOff));
+            }
         }
     }
 }
@@ -370,9 +511,22 @@ fn handled_target(library: &Library, id: NoteId, slot: Slot) -> OccurrenceTarget
 
 #[test]
 fn generated_transitions_match_a_bounded_reference() {
-    for calendar in [Calendar::Daily, Calendar::Monthly, Calendar::Weekly, Calendar::Yearly] {
+    for pattern in 0..6 {
         for policy in [Missed::After, Missed::All, Missed::Latest] {
             for initial_seed in 0..16 {
+                let calendar = match pattern {
+                    0 => Calendar::Daily,
+                    1 => Calendar::Monthly,
+                    2 => Calendar::MonthlyOrdinal {
+                        ordinal: if initial_seed % 2 == 0 { 1 } else { -1 },
+                        weekday: (initial_seed / 2 % 7) as u8,
+                    },
+                    3 => Calendar::MonthlyPosition {
+                        position: [1, 2, -1, -2][initial_seed as usize % 4],
+                    },
+                    4 => Calendar::Weekly,
+                    _ => Calendar::Yearly,
+                };
                 let mut seed = initial_seed;
                 let mut model = Reference::new(calendar, policy);
                 let mut library = Library::in_memory();

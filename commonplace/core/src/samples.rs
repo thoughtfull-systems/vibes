@@ -346,6 +346,23 @@ fn recurring(library: &mut Library, today: Date) -> Result<(), Error> {
         library.handle_occurrence(supplies, day, Some(OccurrenceState::Done), day)?;
     }
     library.write_occurrence_note(supplies, today)?;
+
+    let budget = library.create_task("Review the household budget", None)?;
+    let mut settings = repeat("FREQ=DAILY;COUNT=2", today.add_days(-1), Missed::Latest);
+    library.set_recurrence(budget, Some(settings.clone()), today)?;
+    library.check_action(budget, true, today)?;
+    settings.defer = Some(7);
+    library.set_recurrence(budget, Some(settings), today)?;
+
+    let training = library.create_task("Renew first aid training", None)?;
+    let mut settings = repeat("FREQ=DAILY;COUNT=2", today.add_days(-1), Missed::All);
+    library.set_recurrence(training, Some(settings.clone()), today)?;
+    for day in [today.add_days(-1), today] {
+        library.handle_occurrence(training, day, Some(OccurrenceState::Done), day)?;
+    }
+    settings.rule.count = Some(1);
+    library.set_recurrence(training, Some(settings), today)?;
+    library.handle_occurrence(training, today, None, today)?;
     Ok(())
 }
 /// A journal of structured answers, with a week of entries to chart.

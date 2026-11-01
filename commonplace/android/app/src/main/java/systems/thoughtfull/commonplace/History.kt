@@ -38,6 +38,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import java.time.LocalDate
 import systems.thoughtfull.commonplace.core.Occurrence
+import systems.thoughtfull.commonplace.core.OccurrenceInactiveReason
 import systems.thoughtfull.commonplace.core.OccurrenceState
 import systems.thoughtfull.commonplace.core.OccurrenceStatus
 
@@ -67,11 +68,7 @@ internal fun HistoryDialog(
     occurrences =
       model.read { it.occurrences(id, today, past.toUInt(), UPCOMING.toUInt()) }.orEmpty()
   }
-  val current = occurrences.firstOrNull { it.status == OccurrenceStatus.CURRENT }?.on
-  val (upcoming, earlier) = occurrences.partition {
-    it.status == OccurrenceStatus.CURRENT || it.status == OccurrenceStatus.UPCOMING ||
-      (current != null && it.on > current)
-  }
+  val (upcoming, earlier) = occurrences.partition { it.upcoming }
   Dialog(dismiss, DialogProperties(usePlatformDefaultWidth = false)) {
     Scaffold(
       topBar = {
@@ -164,9 +161,22 @@ private fun OccurrenceRow(occurrence: Occurrence, choose: (String) -> Unit) {
     OccurrenceStatus.SKIPPED -> R.drawable.remove to "skipped"
 
     OccurrenceStatus.MISSED -> R.drawable.clear_search to "missed"
+
+    OccurrenceStatus.REOPENED -> R.drawable.plan to "Reopened"
   }
   val details = listOfNotNull(
     word,
+    occurrence.inactiveReason?.let {
+      when (it) {
+        OccurrenceInactiveReason.BOUNDS -> "Outside repeat bounds"
+        OccurrenceInactiveReason.CYCLE_LIMIT -> "Completion limit reached"
+        OccurrenceInactiveReason.DAYS_OFF -> "Blocked by days off"
+        OccurrenceInactiveReason.IGNORED -> "Repeats with its parent"
+        OccurrenceInactiveReason.PREVIOUS_CALENDAR -> "Previous repeat rule"
+        OccurrenceInactiveReason.STOPPED -> "Repeat stopped"
+      }
+    },
+    occurrence.settled?.let { "Settled ${formatDate(it)}" },
     "moved from ${formatDate(occurrence.date)}".takeIf { occurrence.on != occurrence.date },
     "has a note".takeIf { occurrence.note != null }
   ).joinToString(" · ")

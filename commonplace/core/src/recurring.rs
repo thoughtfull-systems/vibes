@@ -1050,6 +1050,31 @@ pub enum OccurrenceStatus {
     Done,
     Skipped,
     Missed,
+    Reopened,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[cfg_attr(feature = "mobile", derive(uniffi::Enum))]
+pub enum OccurrenceInactiveReason {
+    Bounds,
+    CycleLimit,
+    DaysOff,
+    Ignored,
+    PreviousCalendar,
+    Stopped,
+}
+
+impl OccurrenceInactiveReason {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Bounds => "Outside repeat bounds",
+            Self::CycleLimit => "Completion limit reached",
+            Self::DaysOff => "Blocked by days off",
+            Self::Ignored => "Repeats with its parent",
+            Self::PreviousCalendar => "Previous repeat rule",
+            Self::Stopped => "Repeat stopped",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -1075,6 +1100,9 @@ pub struct Occurrence {
     pub handled: Option<HandledOccurrence>,
     pub moved: bool,
     pub note: Option<NoteId>,
+    pub inactive_reason: Option<OccurrenceInactiveReason>,
+    pub settled: Option<Date>,
+    pub upcoming: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1096,6 +1124,16 @@ struct Cutoff {
     reaches: Vec<OccurrenceReach>,
 }
 
+#[derive(Clone, Copy)]
+enum CalendarState {
+    Blocked,
+    Handled,
+    Pending,
+    Settled(Date),
+    Superseded,
+    Unavailable,
+}
+
 pub(crate) struct Occurrences<'a> {
     recur: &'a Recurrence,
     days_off: &'a DaysOffSet,
@@ -1103,6 +1141,7 @@ pub(crate) struct Occurrences<'a> {
     stopped: bool,
     ignored: bool,
     moved: HashMap<Date, Date>,
+    eligibility: RefCell<HashMap<Date, bool>>,
     handled: HashMap<OccurrenceId, HandledOccurrence>,
     notes: HashMap<OccurrenceId, NoteId>,
     on_cache: RefCell<HashMap<Date, Option<Date>>>,
@@ -1118,6 +1157,7 @@ impl<'a> Occurrences<'a> {
             stopped: recur.stopped.is_some(),
             ignored: false,
             moved: recur.moved.iter().map(|entry| (entry.date, entry.to)).collect(),
+            eligibility: RefCell::default(),
             handled: recur.handled.iter().map(|entry| (entry.key, *entry)).collect(),
             notes: recur.notes.iter().map(|entry| (entry.key, entry.note)).collect(),
             on_cache: RefCell::default(),
@@ -1184,7 +1224,7 @@ impl<'a> Occurrences<'a> {
             .copied()
             .or_else(|| self.recur.past.iter().find(|entry| entry.key == target.key).copied());
         let moved = self.recur.moved.iter().find(|entry| entry.key == target.key);
-        let on = handled
+        let mut on = handled
             .map(|entry| entry.on)
             .or_else(|| moved.map(|entry| entry.to))
             .or_else(|| {
@@ -1200,7 +1240,7 @@ impl<'a> Occurrences<'a> {
                 }
             })
             .unwrap_or(target.date);
-        let (defer, due) = handled.map_or_else(
+        let (mut defer, mut due) = handled.map_or_else(
             || {
                 (
                     Some(on.add_days(self.settings().defer.unwrap_or(0))),
@@ -1214,6 +1254,19 @@ impl<'a> Occurrences<'a> {
             Some(OccurrenceState::Skipped) => OccurrenceStatus::Skipped,
             _ => status,
         };
+        let settled = if status == OccurrenceStatus::Missed {
+            match self.calendar_state(target.date, None) {
+                CalendarState::Settled(on) => Some(on),
+                _ => None,
+            }
+        } else {
+            None
+        };
+        if settled.is_some() {
+            on = target.date;
+            defer = None;
+            due = None;
+        }
         Occurrence {
             target,
             date: target.date,
@@ -1223,8 +1276,13 @@ impl<'a> Occurrences<'a> {
             status,
             handled,
             editable: self.recur.target(target.date, target.cycle).key == target.key,
-            moved: moved.is_some(),
+            moved: settled.is_none() && moved.is_some(),
             note: self.notes.get(&target.key).copied(),
+            inactive_reason: None,
+            settled,
+            upcoming: matches!(status, OccurrenceStatus::Current | OccurrenceStatus::Upcoming)
+                || (matches!(status, OccurrenceStatus::Done | OccurrenceStatus::Skipped)
+                    && on > self.today),
         }
     }
 
@@ -1297,35 +1355,66 @@ impl<'a> Occurrences<'a> {
         })
     }
 
-    fn is_missed(&self, date: Date) -> bool {
+    fn settled_on(&self, date: Date) -> Option<Date> {
         let key = self.recur.target(date, None).key;
         let reopened = self.recur.reopened.iter().find(|entry| entry.key == key);
-        self.cutoff().reaches.iter().any(|reach| {
-            reach.misses(date)
-                && reopened
-                    .is_none_or(|entry| (entry.order, entry.peer) <= (reach.order, reach.peer))
-        })
+        self.cutoff()
+            .reaches
+            .iter()
+            .filter(|reach| {
+                reach.misses(date)
+                    && reopened
+                        .is_none_or(|entry| (entry.order, entry.peer) <= (reach.order, reach.peer))
+            })
+            .map(|reach| reach.on)
+            .min()
     }
 
-    fn unhandled(&self, from: Date) -> impl Iterator<Item = Date> + '_ {
-        self.dates(from)
-            .filter(|&date| !self.handled.contains_key(&self.recur.target(date, None).key))
+    fn calendar_state(&self, date: Date, current: Option<&Occurrence>) -> CalendarState {
+        if self.handled.contains_key(&self.recur.target(date, None).key) {
+            return CalendarState::Handled;
+        }
+        if let Some(on) = self.settled_on(date) {
+            return CalendarState::Settled(on);
+        }
+        if !self.gives(date) {
+            return CalendarState::Unavailable;
+        }
+        let Some(start) = self.started(date) else { return CalendarState::Blocked };
+        if self.settings().missed == Missed::Latest
+            && start <= self.today
+            && current.is_none_or(|current| {
+                (start, date) < (current.defer.unwrap_or(current.on), current.date)
+            })
+        {
+            CalendarState::Superseded
+        } else {
+            CalendarState::Pending
+        }
+    }
+
+    fn pending_slot(&self, date: Date) -> bool {
+        matches!(
+            self.calendar_state(date, None),
+            CalendarState::Blocked | CalendarState::Pending | CalendarState::Superseded
+        )
     }
 
     fn open(&self, from: Date) -> impl Iterator<Item = Date> + '_ {
-        self.unhandled(from.max(self.cutoff().from)).filter(|&date| !self.is_missed(date))
+        self.dates(from.max(self.cutoff().from)).filter(|&date| self.pending_slot(date))
     }
 
     fn gives(&self, date: Date) -> bool {
-        self.dates(date).next() == Some(date)
+        if let Some(&eligible) = self.eligibility.borrow().get(&date) {
+            return eligible;
+        }
+        let eligible = self.dates(date).next() == Some(date);
+        self.eligibility.borrow_mut().insert(date, eligible);
+        eligible
     }
 
     fn moved_open(&self) -> impl Iterator<Item = Date> + '_ {
-        self.moved.keys().copied().filter(|&date| {
-            self.gives(date)
-                && !self.handled.contains_key(&self.recur.target(date, None).key)
-                && !self.is_missed(date)
-        })
+        self.moved.keys().copied().filter(|&date| self.pending_slot(date))
     }
 
     fn soonest(&self) -> Option<Date> {
@@ -1370,33 +1459,58 @@ impl<'a> Occurrences<'a> {
         walked.max(moved).map(|(_, date)| date)
     }
 
+    fn after_reopened_target(&self, entry: &HandledOccurrence) -> Option<OccurrenceTarget> {
+        let mut rule = self.settings().rule.clone();
+        rule.count = None;
+        let from = entry.date.max(self.recur.not_before);
+        if let Some(moved) = self.recur.moved.iter().find(|moved| moved.key == entry.key)
+            && moved.date >= from
+            && rule.all_dates(entry.target.origin, moved.date).next() == Some(moved.date)
+        {
+            return Some(moved.target);
+        }
+        let slot = rule
+            .slots(
+                entry.target.origin,
+                from,
+                Box::new(|date| self.days_off.skipped_through(&self.settings().days_off, date)),
+            )
+            .find(|slot| {
+                slot.on
+                    .and_then(|date| self.days_off.moved(&self.settings().days_off, date))
+                    .is_some()
+            })?;
+        Some(self.recur.target_from(slot.nominal, entry.target.cycle, entry.target.origin))
+    }
+
     fn after_target(&self, latest: Option<&HandledOccurrence>) -> Option<OccurrenceTarget> {
         let settings = self.settings();
         if settings.rule.count.is_some_and(|count| self.recur.handled.len() as u32 >= count) {
             return None;
         }
-        let reopened = self.recur.reopened.iter().min_by_key(|entry| entry.target.cycle);
-        let cycle = reopened.and_then(|entry| entry.target.cycle).unwrap_or_else(|| {
-            self.recur
-                .handled
-                .iter()
-                .chain(&self.recur.reopened)
-                .filter_map(|entry| entry.target.cycle)
-                .max()
-                .map_or(0, |cycle| cycle + 1)
-        });
+        if let Some(target) = self
+            .recur
+            .reopened
+            .iter()
+            .filter_map(|entry| self.after_reopened_target(entry))
+            .min_by_key(|target| target.cycle)
+        {
+            return Some(target);
+        }
+        let cycle = self
+            .recur
+            .handled
+            .iter()
+            .chain(&self.recur.reopened)
+            .filter_map(|entry| entry.target.cycle)
+            .max()
+            .map_or(0, |cycle| cycle + 1);
         let key = self.recur.target(settings.start, Some(cycle)).key;
         let mut rule = settings.rule.clone();
         rule.count = None;
-        let origin = reopened.map_or_else(
-            || latest.map_or(settings.start, |entry| entry.day.max(settings.start)),
-            |entry| entry.target.origin,
-        );
-        let from = reopened
-            .map_or_else(
-                || latest.map_or(origin, |entry| entry.day.add_days(1).max(origin)),
-                |entry| entry.target.date,
-            )
+        let origin = latest.map_or(settings.start, |entry| entry.day.max(settings.start));
+        let from = latest
+            .map_or(origin, |entry| entry.day.add_days(1).max(origin))
             .max(self.recur.not_before);
         if let Some(moved) = self.recur.moved.iter().find(|entry| entry.key == key)
             && rule.all_dates(origin, moved.date).next() == Some(moved.date)
@@ -1432,14 +1546,10 @@ impl<'a> Occurrences<'a> {
     }
 
     fn is_past(&self, date: Date, current: Option<&Occurrence>) -> bool {
-        self.is_missed(date)
-            || (self.settings().missed == Missed::Latest
-                && self.started(date).is_some_and(|start| {
-                    start <= self.today
-                        && current.is_none_or(|current| {
-                            (start, date) < (current.defer.unwrap_or(current.on), current.date)
-                        })
-                }))
+        matches!(
+            self.calendar_state(date, current),
+            CalendarState::Settled(_) | CalendarState::Superseded
+        )
     }
 
     fn waiting(&self, current: &Occurrence) -> u32 {
@@ -1473,21 +1583,36 @@ impl<'a> Occurrences<'a> {
         if self.settings().missed != Missed::Latest || count == 0 {
             return Vec::new();
         }
-        let end = self
+        let mut end = self
             .settings()
             .rule
             .period_end(self.today.add_days(-self.settings().defer.unwrap_or(0)));
-        let moved: Vec<_> = self
-            .moved
-            .keys()
-            .copied()
-            .filter(|&date| {
-                self.gives(date)
-                    && !self.handled.contains_key(&self.recur.target(date, None).key)
-                    && self.started(date).is_some_and(|start| start <= self.today)
-                    && self.is_past(date, current)
-            })
-            .collect();
+        if let Some(until) = self.settings().rule.until {
+            end = end.min(until);
+        }
+        if self.settings().rule.count.is_some() {
+            end = self
+                .settings()
+                .rule
+                .slots(self.settings().start, self.settings().start, Box::new(|_| None))
+                .map(|slot| slot.nominal)
+                .take_while(|&date| date <= end)
+                .last()
+                .unwrap_or(self.settings().start.add_days(-1));
+        }
+        end = end.max(
+            self.cutoff()
+                .reaches
+                .iter()
+                .flat_map(|reach| std::iter::once(reach.through).chain(reach.extra.iter().copied()))
+                .max()
+                .unwrap_or(self.settings().start),
+        );
+        let mut rule = self.settings().rule.clone();
+        rule.count = None;
+        rule.until = None;
+        let moved: Vec<_> =
+            self.moved.keys().copied().filter(|&date| self.is_past(date, current)).collect();
         let mut span = 64i32;
         loop {
             let from = if span >= end.days_since(self.settings().start) {
@@ -1495,24 +1620,109 @@ impl<'a> Occurrences<'a> {
             } else {
                 end.add_days(-span)
             };
-            let mut found: Vec<_> = self
-                .unhandled(from)
+            let mut found: Vec<_> = rule
+                .slots(self.settings().start, from.max(self.recur.not_before), Box::new(|_| None))
+                .map(|slot| slot.nominal)
                 .take_while(|&date| date <= end)
-                .filter(|&date| {
-                    self.started(date).is_some_and(|start| start <= self.today)
-                        && self.is_past(date, current)
-                })
+                .filter(|&date| self.is_past(date, current))
                 .chain(moved.iter().copied())
                 .collect();
             found.sort_unstable();
             found.dedup();
-            found.sort_by_key(|&date| std::cmp::Reverse((self.started(date), date)));
+            found.sort_by_key(|&date| {
+                let on = match self.calendar_state(date, current) {
+                    CalendarState::Settled(_) => Some(date),
+                    _ => self.started(date),
+                };
+                std::cmp::Reverse((on, date))
+            });
             if found.len() >= count || from <= self.settings().start {
                 found.truncate(count);
                 return found;
             }
             span = span.saturating_mul(4);
         }
+    }
+
+    fn inactive_reason(&self, entry: &HandledOccurrence) -> Option<OccurrenceInactiveReason> {
+        if entry.scope != self.recur.scope {
+            return Some(OccurrenceInactiveReason::PreviousCalendar);
+        }
+        if self.ignored {
+            return Some(OccurrenceInactiveReason::Ignored);
+        }
+        if self.stopped {
+            return Some(OccurrenceInactiveReason::Stopped);
+        }
+        if self.settings().missed == Missed::After {
+            if self
+                .settings()
+                .rule
+                .count
+                .is_some_and(|count| self.recur.handled.len() >= count as usize)
+            {
+                return Some(OccurrenceInactiveReason::CycleLimit);
+            }
+            if self.after_reopened_target(entry).is_some() {
+                return None;
+            }
+            let mut rule = self.settings().rule.clone();
+            rule.count = None;
+            return Some(
+                if rule
+                    .all_dates(entry.target.origin, entry.date.max(self.recur.not_before))
+                    .next()
+                    .is_some()
+                {
+                    OccurrenceInactiveReason::DaysOff
+                } else {
+                    OccurrenceInactiveReason::Bounds
+                },
+            );
+        }
+        if entry.date < self.recur.not_before
+            || self
+                .settings()
+                .rule
+                .slots(self.settings().start, entry.date, Box::new(|_| None))
+                .next()
+                .is_none_or(|slot| slot.nominal != entry.date)
+        {
+            Some(OccurrenceInactiveReason::Bounds)
+        } else if self.on(entry.date).is_none() {
+            Some(OccurrenceInactiveReason::DaysOff)
+        } else {
+            None
+        }
+    }
+
+    fn reopened_occurrence(
+        &self,
+        entry: &HandledOccurrence,
+        current: Option<&Occurrence>,
+    ) -> Occurrence {
+        let reason = self.inactive_reason(entry);
+        let target = if reason.is_none() && self.settings().missed == Missed::After {
+            self.after_reopened_target(entry).unwrap_or(entry.target)
+        } else {
+            entry.target
+        };
+        let status = if reason.is_some() {
+            OccurrenceStatus::Reopened
+        } else if self.settings().missed != Missed::After && self.is_past(entry.date, current) {
+            OccurrenceStatus::Missed
+        } else {
+            OccurrenceStatus::Upcoming
+        };
+        let mut occurrence = self.occurrence_target(target, status);
+        occurrence.handled = Some(*entry);
+        occurrence.inactive_reason = reason;
+        if reason.is_some() {
+            occurrence.on = entry.on;
+            occurrence.defer = entry.defer;
+            occurrence.due = entry.due;
+        }
+        occurrence
     }
 
     pub(crate) fn history(&self, past: usize, upcoming: usize) -> Vec<Occurrence> {
@@ -1522,7 +1732,7 @@ impl<'a> Occurrences<'a> {
             .handled
             .iter()
             .chain(&self.recur.past)
-            .filter(|entry| entry.on <= self.today)
+            .filter(|entry| entry.state != OccurrenceState::Open && entry.on <= self.today)
             .map(|entry| self.occurrence_target(entry.target, OccurrenceStatus::Done))
             .collect();
         earlier.extend(
@@ -1610,9 +1820,30 @@ impl<'a> Occurrences<'a> {
                 .handled
                 .iter()
                 .chain(&self.recur.past)
-                .filter(|entry| entry.on > self.today)
+                .filter(|entry| entry.state != OccurrenceState::Open && entry.on > self.today)
                 .map(|entry| self.occurrence_target(entry.target, OccurrenceStatus::Done)),
         );
+        for entry in self
+            .recur
+            .reopened
+            .iter()
+            .chain(self.recur.past.iter().filter(|entry| entry.state == OccurrenceState::Open))
+        {
+            if later.iter().chain(&earlier).any(|occurrence| occurrence.target.key == entry.key) {
+                continue;
+            }
+            let occurrence = self.reopened_occurrence(entry, current.as_ref());
+            if occurrence.upcoming {
+                later.push(occurrence);
+            } else {
+                earlier.push(occurrence);
+            }
+        }
+        for occurrence in earlier.iter_mut().chain(&mut later) {
+            if matches!(occurrence.status, OccurrenceStatus::Done | OccurrenceStatus::Skipped) {
+                occurrence.upcoming |= current.is_some_and(|current| occurrence.on > current.on);
+            }
+        }
         later.sort_by_key(|occurrence| {
             (
                 occurrence.status != OccurrenceStatus::Current,
@@ -1623,6 +1854,14 @@ impl<'a> Occurrences<'a> {
             )
         });
         later.dedup_by_key(|occurrence| occurrence.target.key);
+        earlier.sort_by_key(|occurrence| {
+            std::cmp::Reverse((
+                occurrence.on,
+                occurrence.date,
+                occurrence.target.cycle,
+                occurrence.target.key,
+            ))
+        });
         later.extend(earlier);
         later
     }

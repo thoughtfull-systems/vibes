@@ -69,10 +69,9 @@ format adds them.
   same evaluator as recurring actions, exclusions included.
 - **Occurrence dates.** Each occurrence has a date, and the rule gives the action's due and start
   dates as offsets in days from it. The due offset can be absent, and without a start offset an
-  occurrence starts on its date, so an action never shows before it. An action can be due on the
-  date, start on it with no deadline, or start three days before it's due. One rule drives both
-  dates, so they can't drift apart. While an action recurs, its occurrence's dates replace its own
-  `due` and `defer`.
+  occurrence starts on its date. An action can be due on the date, start on it with no deadline, or
+  start three days before it's due. One rule drives both dates, so they can't drift apart. While an
+  action recurs, its occurrence's dates replace its own `due` and `defer`.
 - **Identity.** A calendar occurrence has a stable nominal slot, independent of the date that days
   off or an explicit move gives it. An `after` occurrence has a cycle number, so different cycles
   can reuse a calendar date. Deterministic identifiers include the action, calendar scope, and slot
@@ -105,7 +104,10 @@ format adds them.
   settled stay missed after later edits. A newer explicit reopen makes its slot pending again.
   `after` derives the next cycle from the latest handling day. Its configured start remains eligible
   when it comes later than that day, and `COUNT` limits closed cycles. Reopening a cycle makes that
-  cycle current.
+  cycle pending, subject to bounds, days off, and the series' lifecycle. Readers choose the earliest
+  eligible reopened cycle before allocating a new one. Switching between `all` and `latest`
+  reinterprets existing settlement: `all` ignores it, and `latest` applies it, including boundaries
+  recorded under `all`. Changing to `all` can restore older obligations without an explicit reopen.
 - **Days off.** A library holds two kinds of days off: holidays, and vacations. Each holds named
   schedules, such as Christmas or a trip: a span of days that a rule can bring back, such as every
   year. A recurring action says, for each kind, whether a day off removes an occurrence, moves it to
@@ -131,6 +133,19 @@ format adds them.
   never makes its temporary step completions permanent inside a nested repeat that becomes active.
   Removing an exhausted repeat keeps the action done and preserves the step states shown for its
   last handled occurrence.
+
+Readers distinguish an occurrence that `latest` temporarily passes over from one that a handling
+event settles. Live date edits can restore the first. Under the same scope and `latest` policy, they
+don't restore the second or remove it from history and the missed count. Settled history names the
+nominal slot and the date of settlement; the records don't snapshot every missed slot's former
+effective dates. Replacing a scope preserves explicit handling history, but doesn't retain the old
+scope's implicit missed occurrences.
+
+Reopening changes an occurrence's handling state. It doesn't extend bounds, remove days off, or
+resume a stopped series. History keeps reopened records that can't enter scheduled work and states
+why: bounds, the completion limit, days off, a former calendar, an outer repeat, or a stopped
+series. Expanding bounds or removing the other restriction restores eligibility. This also covers a
+reopen that one device accepts before another device's concurrent bounds edit arrives.
 
 The nominal slot identifies an occurrence, its effective start orders scheduled work, and its
 logical handling sequence orders completions. Every command carries the occurrence identifier that
@@ -161,11 +176,11 @@ Against the criteria:
   unchanged.
 - **Low friction:** a new recurring action needs only a frequency. The start date, interval, missed
   behavior, offsets, and days off all have defaults.
-- **Interoperable:** a rule is `RRULE` text already, and a calendar override can translate to an
-  iCalendar override for its nominal slot. Internal occurrence identifiers also distinguish
-  completion-relative cycles. Only the `after` behavior and days off need translating, into a fixed
-  rule and `EXDATE` lists. Exclusions that move occurrences add `RDATE` lists too. Dates excluded in
-  an imported event become skipped occurrences, so rules never hold `EXDATE` lists of their own.
+- **Interoperable:** supported rules use `RRULE` text, and calendar overrides name nominal slots.
+  Translating `after`, days off, and first-period position selection needs a later import and export
+  contract. An importer must preserve or reject rules outside the supported subset, including mixed
+  positive and negative positions. Publishing dates can use a fixed rule with `EXDATE` and `RDATE`
+  lists, but those dates alone don't preserve Commonplace's handling and settlement records.
 - **Room for spaced repetition:** the next occurrence is a function of the rule and the handled
   occurrences. A spaced repetition schedule is another such function, with a rating in each entry.
 - **Shared with other notes:** rules hold dates only, and each kind of note adds its times on top,

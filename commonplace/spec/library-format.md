@@ -128,8 +128,9 @@ own list and its ancestors' lists, in the order `active`, `waiting`, `someday`, 
 ### Recurring actions
 
 An action with a readable `recur` map recurs. The outermost recurring ancestor governs every step in
-its subtree. A nested repeat keeps its settings and records, but stays ignored until the outer
-repeat ends or the nested action moves outside it.
+its subtree. A nested repeat keeps its settings and records, but stays ignored until the owner
+removes the outer repeat or moves the nested action outside it. Exhausting or stopping the outer
+repeat doesn't activate nested repeats.
 
 | Key         | Type      | Value                                              |
 | ----------- | --------- | -------------------------------------------------- |
@@ -280,6 +281,12 @@ ordered handling events. Reopening writes `open` instead of deleting the record.
 settlement of that occurrence, while a later handling can settle it again. A completion's stored
 dates remain history after calendar, offset, move, or days-off edits.
 
+An `open` record remains history even when its occurrence falls outside the current bounds, days off
+block it, an outer repeat governs it, or the owner stops or replaces the series. History shows the
+dates recorded on reopening and the reason it isn't scheduled. A former scope's record stays
+read-only. Reopening doesn't change bounds, calendars, or the series' lifecycle. This also covers an
+accepted offline reopen followed by a concurrent bounds edit from another device.
+
 Each completion or skip also creates one immutable value in `recurrence_settled`, in the same
 commit. Its key is `<action-id>/<occurrence-id>/<order>/<peer>`, with decimal `order` and `peer`.
 Its value copies the handling record and adds `reach`, the settlement boundary described below.
@@ -316,27 +323,43 @@ January clears it. Reopening January makes it pending again. The waiting count i
 occurrences due through today, using the due offset, or the effective date without one.
 
 Under `latest`, older started occurrences count as missed. If none has started, select the earliest
-future start. A settlement event snapshots which slots had started so later edits can't restore
-them. Its `reach` holds `on`, which records the later of the handling day and its start date;
-`through`, that day minus the start offset, capped at the last nominal slot through that date within
-`COUNT` or `UNTIL` when either bound exists; `pending`, sorted nominal dates through that boundary
-whose effective starts come later or that have no effective date; and `extra`, sorted nominal dates
-beyond the boundary whose effective starts already came. If no bounded slot precedes the boundary,
-set `through` to the day before the origin. Both lists include only slots within the rule's bounds
-and on or after `not_before`, even if a stored move names another date. A boundary settles a slot if
-the slot falls on or before the boundary and isn't in `pending`, or if `extra` includes it. The
-boundary applies once its `on` arrives. A newer explicit `open` record exempts that slot. `all`
-ignores these boundaries. Moving an old slot after a newer nominal slot can make the old slot
-current when its effective start arrives. A slot with no effective date hasn't started, so days off
-never settle it; later calendar edits can make it available.
+future start. An unhandled occurrence that only falls behind the current occurrence remains eligible
+for live date edits to restore. A settlement event snapshots which slots had started so later edits
+can't restore them. Its `reach` holds `on`, which records the later of the handling day and its
+start date; `through`, that day minus the start offset, capped at the last nominal slot through that
+date within `COUNT` or `UNTIL` when either bound exists; `pending`, sorted nominal dates through
+that boundary whose effective starts come later or that have no effective date; and `extra`, sorted
+nominal dates beyond the boundary whose effective starts already came. If no bounded slot precedes
+the boundary, set `through` to the day before the origin. Both lists include only slots within the
+rule's bounds and on or after `not_before`, even if a stored move names another date. A boundary
+settles a slot if the slot falls on or before the boundary and isn't in `pending`, or if `extra`
+includes it. The boundary applies once its `on` arrives. A newer explicit `open` record exempts that
+slot. `all` ignores these boundaries. Moving an old slot after a newer nominal slot can make the old
+slot current when its effective start arrives. A slot with no effective date hasn't started, so days
+off never settle it; later calendar edits can make it available.
+
+History and the missed count include settled slots in the selected scope even when later bounds,
+offsets, or days-off edits remove them from live scheduled work. A settled row shows the nominal
+date and the earliest active settlement date that the latest explicit reopen doesn't override. It
+doesn't claim to reconstruct the slot's former effective dates. A temporarily superseded row uses
+its live effective dates. Readers use the same distinction for selection, history, and counts.
+
+Switching between `all` and `latest` reinterprets earlier handling records without changing their
+identities. `all` ignores settlement boundaries; `latest` applies them, including boundaries
+recorded while `all` applied. Changing to `all` can restore previously missed obligations. Replacing
+the scope preserves explicit handling history but doesn't retain its former implicit missed
+occurrences.
 
 Under `after`, count from the later of the configured origin and the most recent handling day. After
 a completion choose the first rule date strictly after its handling day. The configured origin
 itself remains eligible when it comes later than that day. Without a completion, choose the first
 date on or after the origin. `COUNT` limits closed cycles, and `UNTIL` limits nominal rule dates.
-Reopening a cycle makes that cycle current. Preview assumes each shown occurrence completes on the
-later of today and its effective date. It closes reopened cycles in cycle order before allocating
-new cycle numbers, and applies `COUNT` to those simulated completions too.
+Readers choose the earliest eligible reopened cycle before allocating a new cycle. Bounds, days off,
+and the series' lifecycle still apply, and `COUNT` can prevent further work while the number of
+closed cycles reaches it. History retains an ineligible reopened cycle with its reason. Preview
+assumes each shown occurrence completes on the later of today and its effective date. It closes
+reopened cycles in cycle order before allocating new cycle numbers, and applies `COUNT` to those
+simulated completions too.
 
 Rule previews select effective dates on or after the requested date. Include nominal slots from
 earlier dates that days off move into that range, and exclude effective dates before the range even
@@ -365,6 +388,11 @@ pending.
 Without a current occurrence, readers suppress the action's plain due and start dates, including
 their inheritance by steps. Removing recurrence copies open as well as done step states; an old
 permanent completion can't replace the current occurrence's open state.
+
+The projection assigns each history row to Upcoming or Past. Current and pending occurrences enter
+Upcoming. Completed or skipped occurrences enter Upcoming when their effective date follows today or
+the current occurrence. Missed and inactive reopened records enter Past, even when live dates move
+into the future. Both apps use this assignment instead of comparing dates again.
 
 #### Version 4 migration
 
