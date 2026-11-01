@@ -957,6 +957,19 @@ impl Recurrence {
         self.target_from(date, cycle, self.settings.start)
     }
 
+    pub(crate) fn legacy_scope(&self) -> Option<OccurrenceId> {
+        let mut settings = self.settings.clone();
+        if settings.rule.frequency != crate::Frequency::Weekly
+            || settings.rule.interval != 1
+            || settings.rule.positions.is_empty()
+            || settings.rule.week_start == 0
+        {
+            return None;
+        }
+        settings.rule.week_start = 0;
+        Some(Self::new(self.series, settings, self.generation, self.not_before).scope)
+    }
+
     pub(crate) fn target_from(
         &self,
         date: Date,
@@ -1212,13 +1225,32 @@ impl<'a> Occurrences<'a> {
         peer: u64,
     ) -> OccurrenceReach {
         let through = on.add_days(-self.settings().defer.unwrap_or(0));
-        let window = self.days_off.before(&self.settings().days_off, through);
-        let from = self.settings().rule.period_start(window).max(self.settings().start);
         let end = self.settings().rule.period_end(through);
-        let walked = self.dates(from).take_while(|&date| date <= end);
-        let mut candidates: Vec<_> = walked.chain(self.moved.keys().copied()).collect();
+        let rule = &self.settings().rule;
+        let nominal = rule
+            .slots(self.settings().start, self.recur.not_before, Box::new(|_| None))
+            .map(|slot| slot.nominal)
+            .take_while(|&date| date <= end);
+        let moved = self.moved.keys().copied().filter(|&date| {
+            date >= self.recur.not_before
+                && rule
+                    .slots(self.settings().start, date, Box::new(|_| None))
+                    .next()
+                    .is_some_and(|slot| slot.nominal == date)
+        });
+        let mut candidates: Vec<_> = nominal.chain(moved).collect();
         candidates.sort_unstable();
         candidates.dedup();
+        let through = if rule.count.is_some() || rule.until.is_some() {
+            candidates
+                .iter()
+                .copied()
+                .filter(|&date| date <= through)
+                .max()
+                .unwrap_or(self.settings().start.add_days(-1))
+        } else {
+            through
+        };
         let pending = candidates
             .iter()
             .copied()
@@ -1323,22 +1355,12 @@ impl<'a> Occurrences<'a> {
         walked.max(moved).map(|(_, date)| date)
     }
 
-    fn after_target(
-        &self,
-        latest: Option<&HandledOccurrence>,
-        projected: u32,
-    ) -> Option<OccurrenceTarget> {
+    fn after_target(&self, latest: Option<&HandledOccurrence>) -> Option<OccurrenceTarget> {
         let settings = self.settings();
-        if settings
-            .rule
-            .count
-            .is_some_and(|count| self.recur.handled.len() as u32 + projected >= count)
-        {
+        if settings.rule.count.is_some_and(|count| self.recur.handled.len() as u32 >= count) {
             return None;
         }
-        let reopened = (projected == 0)
-            .then(|| self.recur.reopened.iter().min_by_key(|entry| entry.target.cycle))
-            .flatten();
+        let reopened = self.recur.reopened.iter().min_by_key(|entry| entry.target.cycle);
         let cycle = reopened.and_then(|entry| entry.target.cycle).unwrap_or_else(|| {
             self.recur
                 .handled
@@ -1347,7 +1369,6 @@ impl<'a> Occurrences<'a> {
                 .filter_map(|entry| entry.target.cycle)
                 .max()
                 .map_or(0, |cycle| cycle + 1)
-                + projected
         });
         let key = self.recur.target(settings.start, Some(cycle)).key;
         let mut rule = settings.rule.clone();
@@ -1384,7 +1405,7 @@ impl<'a> Occurrences<'a> {
             return None;
         }
         if self.settings().missed == Missed::After {
-            let target = self.after_target(self.recur.latest_handling(), 0)?;
+            let target = self.after_target(self.recur.latest_handling())?;
             return Some(self.occurrence_target(target, OccurrenceStatus::Current));
         }
         let date = if self.settings().missed == Missed::Latest {
@@ -1508,7 +1529,8 @@ impl<'a> Occurrences<'a> {
             later.push(current);
             if self.settings().missed == Missed::After {
                 let mut last = current;
-                for projected in 1..=upcoming as u32 {
+                let mut projected = self.recur.clone();
+                for _ in 0..upcoming {
                     let entry = HandledOccurrence {
                         at: 0,
                         date: last.date,
@@ -1524,7 +1546,10 @@ impl<'a> Occurrences<'a> {
                         state: OccurrenceState::Done,
                         target: last.target,
                     };
-                    let Some(target) = self.after_target(Some(&entry), projected) else { break };
+                    projected.reopened.retain(|reopened| reopened.key != entry.key);
+                    projected.handled.push(entry);
+                    let next = Occurrences::new(&projected, self.days_off, self.today);
+                    let Some(target) = next.after_target(Some(&entry)) else { break };
                     last = self.occurrence_target(target, OccurrenceStatus::Upcoming);
                     later.push(last);
                 }

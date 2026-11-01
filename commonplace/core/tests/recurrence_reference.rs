@@ -255,11 +255,13 @@ impl Reference {
         let activation = today.max(self.started(slot).unwrap());
         let settled = self
             .calendar
-            .dates(self.start, 100)
+            .dates(self.start, self.count as usize)
             .into_iter()
             .filter(|&date| {
-                self.started(Slot { key: Key::Calendar(date), date })
-                    .is_some_and(|start| start <= activation)
+                date >= self.not_before
+                    && self
+                        .started(Slot { key: Key::Calendar(date), date })
+                        .is_some_and(|start| start <= activation)
             })
             .collect();
         let origin = self.reopened.get(&slot.key).map_or_else(

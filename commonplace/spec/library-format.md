@@ -1,6 +1,6 @@
 # Library format
 
-Version 6. This spec defines how a Commonplace library stores its notes, so that every
+Version 7. This spec defines how a Commonplace library stores its notes, so that every
 implementation can read and write the same data.
 [Decision 0002](../../decisions/0002-commonplace-library-storage.md) explains the choice of format,
 [decision 0004](../../decisions/0004-commonplace-actions.md) explains actions, and
@@ -11,7 +11,9 @@ Version 1 covered memos. Version 2 adds actions. Version 3 lets every note go to
 adds journals. Version 4 adds recurring actions and days off, and lets journal schedules use any
 [rule](#rules). Version 5 gives action occurrences stable identifiers and shared record maps.
 Version 6 keeps settlement events apart from the latest handling state and limits position selectors
-to one direction per rule. Later versions add curios, zettels, attachments, and spaced repetition.
+to one direction per rule. Version 7 preserves week starts that affect position selection and limits
+settlement to slots that have started within the rule's bounds. Later versions add curios, zettels,
+attachments, and spaced repetition.
 
 ## Document
 
@@ -163,9 +165,10 @@ followed by the UTF-8 name below. Take the first 16 output bytes and encode them
 
 First derive a scope using the name `<generation>|<kind>|<start>|<normalized-rule>`, where kind is
 `after` or `calendar`. Remove `COUNT` and `UNTIL` to normalize a rule. Sort each list and remove
-duplicates. Set `WKST` to Monday unless it changes a weekly interval greater than one. Derive a
-calendar occurrence with `<scope>|<nominal-date>`, or an `after` occurrence with
-`<scope>|cycle:<number>`.
+duplicates. Set `WKST` to Monday outside weekly rules, or in a weekly rule whose interval is 1 and
+whose `BYSETPOS` is absent. Keep it in other weekly rules: the week start can change which dates a
+position selects even when the interval is 1. Derive a calendar occurrence with
+`<scope>|<nominal-date>`, or an `after` occurrence with `<scope>|cycle:<number>`.
 
 The normalized rule uses these exact bytes:
 
@@ -302,19 +305,25 @@ occurrences due through today, using the due offset, or the effective date witho
 Under `latest`, older started occurrences count as missed. If none has started, select the earliest
 future start. A settlement event snapshots which slots had started so later edits can't restore
 them. Its `reach` holds `on`, which records the later of the handling day and its start date;
-`through`, that day minus the start offset; `pending`, sorted nominal dates through that boundary
-whose effective starts come later; and `extra`, sorted dates beyond the boundary whose effective
-starts already came. A boundary settles a slot if the slot falls on or before the boundary and isn't
-in `pending`, or if `extra` includes it. The boundary applies once its `on` arrives. A newer
-explicit `open` record exempts that slot. `all` ignores these boundaries. Moving an old slot after a
-newer nominal slot can make the old slot current when its effective start arrives.
+`through`, that day minus the start offset, capped at the last nominal slot through that date within
+`COUNT` or `UNTIL` when either bound exists; `pending`, sorted nominal dates through that boundary
+whose effective starts come later or that have no effective date; and `extra`, sorted nominal dates
+beyond the boundary whose effective starts already came. If no bounded slot precedes the boundary,
+set `through` to the day before the origin. Both lists include only slots within the rule's bounds
+and on or after `not_before`, even if a stored move names another date. A boundary settles a slot if
+the slot falls on or before the boundary and isn't in `pending`, or if `extra` includes it. The
+boundary applies once its `on` arrives. A newer explicit `open` record exempts that slot. `all`
+ignores these boundaries. Moving an old slot after a newer nominal slot can make the old slot
+current when its effective start arrives. A slot with no effective date hasn't started, so days off
+never settle it; later calendar edits can make it available.
 
 Under `after`, count from the later of the configured origin and the most recent handling day. After
 a completion choose the first rule date strictly after its handling day. The configured origin
 itself remains eligible when it comes later than that day. Without a completion, choose the first
 date on or after the origin. `COUNT` limits closed cycles, and `UNTIL` limits nominal rule dates.
 Reopening a cycle makes that cycle current. Preview assumes each shown occurrence completes on the
-later of today and its effective date.
+later of today and its effective date. It closes reopened cycles in cycle order before allocating
+new cycle numbers, and applies `COUNT` to those simulated completions too.
 
 #### Lifecycle
 
@@ -344,10 +353,11 @@ permanent completion can't replace the current occurrence's open state.
 Before exposing a version 4 library, copy its nested `handled`, `moved`, and `notes` records into
 the root maps and write `calendar` with generation zero. Preserve unknown fields and the legacy
 maps. Convert date-only moves to map values. Match holiday-adjusted position dates to their nominal
-slot. Assign legacy `after` cycles in handling order and preserve matching step completions.
+slot. Assign legacy `after` cycles in handling order and preserve matching step completions. Load
+legacy moves before reconstructing settlement, so a moved slot that hadn't started stays pending.
 Migration is idempotent and runs on open and import. Convert a legacy recurring action's
 `state=done` and `closed` into `recurrence_stopped` and open its plain state. Update every device
-before resuming writes and sync: version 4 readers open version 6 read-only. Migration preserves
+before resuming writes and sync: version 4 readers open version 7 read-only. Migration preserves
 available records; it can't recover entries that a version 4 container conflict already discarded.
 
 #### Version 5 migration
@@ -356,7 +366,20 @@ Copy each available completion or skip with a readable `reach` from `recurrence_
 `recurrence_settled`, using its existing occurrence identifier, order, and peer. Preserve unknown
 fields. Don't replace an event that already exists. Run this step after version 4 migration, on open
 and import. It can't recover settlement boundaries that a version 5 reopen or later handling already
-replaced. Version 5 readers open version 6 libraries read-only.
+replaced. Version 5 readers open version 7 libraries read-only.
+
+#### Version 6 migration
+
+Earlier scope normalization discarded `WKST` for every weekly rule with interval 1. For an active
+rule with interval 1, a nonempty `BYSETPOS`, and a week start other than Monday, derive its former
+scope with `WKST` set to Monday. Move matching records from all five root maps to the corrected
+scope and occurrence keys. Step records keep their step identifiers and change the governing
+occurrence key. Settlement keys keep their order and peer suffixes. Preserve unknown fields and any
+record that already exists at the new key, and remove the old keys to avoid duplicate history. Run
+this migration on open and import; repeated runs leave the records unchanged.
+
+Version 6 readers open version 7 libraries read-only. Migration can't recover calendar provenance
+that an earlier scope combined, or availability exceptions that earlier settlement records omitted.
 
 ### Journal fields
 

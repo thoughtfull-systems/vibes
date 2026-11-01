@@ -77,7 +77,8 @@ format adds them.
   off or an explicit move gives it. An `after` occurrence has a cycle number, so different cycles
   can reuse a calendar date. Deterministic identifiers include the action, calendar scope, and slot
   or cycle. The scope changes when recurrence restarts or its calendar or origin changes. Editing
-  bounds, offsets, or days off keeps it. The format spec defines the derivation.
+  bounds, offsets, or days off keeps it. Week starts remain part of a weekly position selector's
+  calendar even with interval 1. The format spec defines the derivation.
 - **Handled occurrences.** Root maps keyed by action and occurrence identifier hold completion,
   skip, reopen, move, and memo records. Step records use the step identifier and the governing
   occurrence identifier. Root maps avoid competing child containers when devices independently
@@ -94,10 +95,12 @@ format adds them.
 - **Missed occurrences.** `all` keeps every obligation pending until the owner closes or skips it.
   Handling March's bill leaves January's unpaid bill owed. `latest` selects the latest effective
   start through today, or the earliest future start. Closing one snapshots the other slots that have
-  started, including exceptions for moved dates. Those slots stay missed after later edits. A newer
-  explicit reopen makes its slot pending again. `after` derives the next cycle from the latest
-  handling day. Its configured start remains eligible when it comes later than that day, and `COUNT`
-  limits closed cycles. Reopening a cycle makes that cycle current.
+  started within the rule's bounds, including exceptions for moved dates. A slot with no effective
+  date hasn't started and stays unsettled, so later calendar edits can restore it. Those that have
+  settled stay missed after later edits. A newer explicit reopen makes its slot pending again.
+  `after` derives the next cycle from the latest handling day. Its configured start remains eligible
+  when it comes later than that day, and `COUNT` limits closed cycles. Reopening a cycle makes that
+  cycle current.
 - **Days off.** A library holds two kinds of days off: holidays, and vacations. Each holds named
   schedules, such as Christmas or a trip: a span of days that a rule can bring back, such as every
   year. A recurring action says, for each kind, whether a day off removes an occurrence, moves it to
@@ -228,7 +231,7 @@ Against the criteria:
 
 ## Consequences
 
-- The library format becomes version 6. Older versions of Commonplace open a version 6 library
+- The library format becomes version 7. Older versions of Commonplace open a version 7 library
   read-only.
 - Every implementation needs an `RRULE` evaluator for dates, extended with days off, overrides, and
   the `after` behavior.

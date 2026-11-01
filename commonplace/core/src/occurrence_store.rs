@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use loro::{LoroDoc, LoroMap, LoroValue};
 
-use crate::library::{integer, loro_error, string};
+use crate::library::{VERSION, integer, loro_error, string};
 use crate::recurring::{
     HandledOccurrence, MovedOccurrence, OccurrenceNote, OccurrenceReach, OccurrenceState,
     OccurrenceTarget, Occurrences, StepOccurrence,
@@ -219,10 +219,65 @@ impl Library {
         }
     }
 
+    fn migrate_recurrence_scopes(&self) -> Result<bool, Error> {
+        let series: HashMap<_, _> = self
+            .notes()
+            .into_iter()
+            .filter_map(|note| {
+                let recur = note.action?.recur?;
+                Some((note.id, (recur.legacy_scope()?, recur)))
+            })
+            .collect();
+        let mut changed = false;
+        for root in [HANDLED, MOVED, NOTES, SETTLED, STEPS] {
+            let records = self.doc.get_map(root);
+            let LoroValue::Map(values) = records.get_value() else { continue };
+            for (key, value) in values.iter() {
+                let Some((owner, tail)) = key.split_once('/') else { continue };
+                let Some(owner) = owner.parse().ok() else { continue };
+                let Some(map) = fields(value) else { continue };
+                let id = if root == STEPS {
+                    let Some(id) = text(map, "series").and_then(|id| id.parse().ok()) else {
+                        continue;
+                    };
+                    id
+                } else {
+                    owner
+                };
+                let Some((scope, recur)) = series.get(&id) else { continue };
+                if text(map, "scope").and_then(|text| text.parse().ok()) != Some(*scope) {
+                    continue;
+                }
+                let Some(old) = target(map) else { continue };
+                let target = recur.target_from(old.date, old.cycle, old.origin);
+                let new_key = if root == SETTLED {
+                    let Some((_, suffix)) = tail.split_once('/') else { continue };
+                    format!("{owner}/{}/{suffix}", target.key)
+                } else {
+                    record_key(owner, target.key)
+                };
+                if records.get(&new_key).is_none() {
+                    let mut values: Vec<_> =
+                        map.iter().map(|(key, value)| (key.clone(), value.clone())).collect();
+                    values.extend(target_fields(recur.scope, target));
+                    insert_preserving(&records, &new_key, values)?;
+                }
+                records.delete(key).map_err(loro_error)?;
+                changed = true;
+            }
+        }
+        Ok(changed)
+    }
+
     pub(crate) fn migrate_recurrence(&self) -> Result<bool, Error> {
+        let mut changed = self.migrate_recurrence_scopes()?;
+        let meta = self.doc.get_map("meta");
+        if meta.get("version").and_then(|value| integer(value.get_deep_value())) != Some(VERSION) {
+            meta.insert("version", VERSION).map_err(loro_error)?;
+            changed = true;
+        }
         let raw = self.notes();
         let days_off = self.days_off_set();
-        let mut changed = false;
         for note in &raw {
             let Some(recur) = note.action.as_ref().and_then(|action| action.recur.as_ref()) else {
                 continue;
@@ -275,6 +330,31 @@ impl Library {
                 );
                 origin = date.max(recur.settings.start);
             }
+            for (old_key, root, field) in [("moved", MOVED, "to"), ("notes", NOTES, "note")] {
+                for (date, value) in legacy_dates(old_key) {
+                    let target = targets[&date];
+                    let mut values = target_fields(recur.scope, target);
+                    if let Some(old) = fields(&value) {
+                        values.extend(old.iter().map(|(key, value)| (key.clone(), value.clone())));
+                    } else {
+                        values.push((field.into(), value));
+                    }
+                    if root == MOVED {
+                        if !values.iter().any(|(key, _)| key == "rule") {
+                            values.push(("rule".into(), recur.settings.rule.to_string().into()));
+                        }
+                        if !values.iter().any(|(key, _)| key == "start") {
+                            values.push(("start".into(), recur.settings.start.to_string().into()));
+                        }
+                    }
+                    let key = record_key(note.id, target.key);
+                    if self.doc.get_map(root).get(&key).is_none() {
+                        insert_preserving(&self.doc.get_map(root), &key, values)?;
+                    }
+                }
+            }
+            let projection = self.note(note.id).and_then(|note| note.action?.recur);
+            let projection = projection.as_ref().unwrap_or(recur);
             for (date, value) in handled {
                 let Some(old) = fields(&value) else { continue };
                 let target = targets[&date];
@@ -304,7 +384,7 @@ impl Library {
                 if !old.contains_key("reach") {
                     let day = crate::occurrence_store::date(old, "day").unwrap_or(date);
                     let start = on.add_days(recur.settings.defer.unwrap_or(0));
-                    let reach = Occurrences::new(recur, &days_off, day).reach(
+                    let reach = Occurrences::new(projection, &days_off, day).reach(
                         target,
                         day.max(start),
                         number(old, "at").max(0) as u64,
@@ -315,29 +395,6 @@ impl Library {
                 let key = record_key(note.id, target.key);
                 if self.doc.get_map(HANDLED).get(&key).is_none() {
                     insert_preserving(&self.doc.get_map(HANDLED), &key, values)?;
-                }
-            }
-            for (old_key, root, field) in [("moved", MOVED, "to"), ("notes", NOTES, "note")] {
-                for (date, value) in legacy_dates(old_key) {
-                    let target = targets[&date];
-                    let mut values = target_fields(recur.scope, target);
-                    if let Some(old) = fields(&value) {
-                        values.extend(old.iter().map(|(key, value)| (key.clone(), value.clone())));
-                    } else {
-                        values.push((field.into(), value));
-                    }
-                    if root == MOVED {
-                        if !values.iter().any(|(key, _)| key == "rule") {
-                            values.push(("rule".into(), recur.settings.rule.to_string().into()));
-                        }
-                        if !values.iter().any(|(key, _)| key == "start") {
-                            values.push(("start".into(), recur.settings.start.to_string().into()));
-                        }
-                    }
-                    let key = record_key(note.id, target.key);
-                    if self.doc.get_map(root).get(&key).is_none() {
-                        insert_preserving(&self.doc.get_map(root), &key, values)?;
-                    }
                 }
             }
             if let Some(action) = &note.action

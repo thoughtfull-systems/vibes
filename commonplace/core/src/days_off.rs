@@ -412,7 +412,24 @@ impl Library {
         }
         // Each schedule sits in the root map, not a map per kind: two devices that each made the
         // first map of a kind would make two containers under one key, and sync keeps only one.
-        self.doc.get_map(DAYS_OFF).insert(&days.id, days.to_value()).map_err(loro_error)?;
+        let map = self.doc.get_map(DAYS_OFF);
+        let mut fields: Vec<_> = map
+            .get(&days.id)
+            .and_then(|value| crate::occurrence_store::fields(&value.get_deep_value()).cloned())
+            .into_iter()
+            .flat_map(|fields| {
+                fields
+                    .iter()
+                    .filter(|(key, _)| {
+                        ![ARCHIVED, FIRST, KIND, LAST, NAME, RULE].contains(&key.as_str())
+                    })
+                    .map(|(key, value)| (key.clone(), value.clone()))
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        let LoroValue::Map(updates) = days.to_value() else { unreachable!() };
+        fields.extend(updates.iter().map(|(key, value)| (key.clone(), value.clone())));
+        map.insert(&days.id, LoroValue::Map(fields.into())).map_err(loro_error)?;
         self.commit()
     }
 

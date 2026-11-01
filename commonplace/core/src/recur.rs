@@ -165,7 +165,8 @@ impl Rule {
         let mut rule = self.clone();
         rule.count = None;
         rule.until = None;
-        if rule.frequency != Frequency::Weekly || rule.interval == 1 {
+        if rule.frequency != Frequency::Weekly || (rule.interval == 1 && rule.positions.is_empty())
+        {
             rule.week_start = 0;
         }
         rule.weekdays.sort_unstable_by_key(|day| (day.weekday, day.ordinal));
@@ -309,7 +310,7 @@ impl Rule {
         from: Date,
         skip: Box<dyn Fn(Date) -> Option<Date> + 'a>,
     ) -> Dates<'a> {
-        Dates { slots: self.slots(start, from, skip), from, previous: None }
+        Dates { slots: self.slots(start, self.period_start(from), skip), from, previous: None }
     }
 
     /// A number for the period that holds `date`, which grows by one from each period to the next.
@@ -615,7 +616,9 @@ fn parse_weekday_num(text: &str) -> Option<WeekdayNum> {
 }
 
 fn parse_compact_date(text: &str) -> Option<Date> {
-    let text = text.get(..8)?;
+    if text.len() != 8 {
+        return None;
+    }
     text.bytes().all(|b| b.is_ascii_digit()).then_some(())?;
     format!("{}-{}-{}", &text[..4], &text[4..6], &text[6..]).parse().ok()
 }
