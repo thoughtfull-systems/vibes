@@ -15,7 +15,8 @@ use crate::drag_scroll::DragScroll;
 use crate::libraries;
 use crate::link_picker::{Choice, LinkPicker, Purpose};
 use crate::repeat::{
-    DaysOffMenus, MISSED, OffsetRow, RepeatChoice, RepeatEditor, RepeatMenu, present_repeat_dialog,
+    DaysOffMenus, MISSED, OffsetRow, RepeatChoice, RepeatEditor, RepeatMenu, RepeatValues,
+    present_repeat_dialog,
 };
 use crate::rows::{
     STEP_CHECK_COLUMN, STEP_MENU_COLUMN, STEP_TITLE_COLUMN, connect_day_clicked, format_date,
@@ -866,13 +867,8 @@ impl ActionPanel {
                 );
                 let state = self.state.clone();
                 present_repeat_dialog(&self.widget, editor, move |values| {
-                    let settings = RecurrenceSettings {
-                        rule: values.rule,
-                        start: values.start,
-                        ..settings.clone()
-                    };
                     let result =
-                        state.write(|spaces| spaces.set_recurrence(id, Some(settings), today()));
+                        state.write(|spaces| save_repeat(spaces, id, values, &settings, today()));
                     if let Err(error) = result {
                         eprintln!("commonplace: {error}");
                     }
@@ -1564,6 +1560,21 @@ impl ActionPanel {
     }
 }
 
+fn save_repeat(
+    spaces: &mut Spaces,
+    id: NoteId,
+    values: RepeatValues,
+    fallback: &RecurrenceSettings,
+    today: Date,
+) -> Result<(), Error> {
+    let settings = spaces
+        .note(id)
+        .and_then(|note| note.action?.recur)
+        .map_or_else(|| fallback.clone(), |recur| recur.settings);
+    let settings = RecurrenceSettings { rule: values.rule, start: values.start, ..settings };
+    spaces.set_recurrence(id, Some(settings), today)
+}
+
 /// Settings that make `action` repeat by `rule`, from its due date, or else its start date, or
 /// else today, keeping the gap between its start and due dates.
 fn new_settings(action: &Action, rule: Rule) -> RecurrenceSettings {
@@ -1583,6 +1594,30 @@ fn new_settings(action: &Action, rule: Rule) -> RecurrenceSettings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn repeat_editor_keeps_independent_changes_received_while_open() {
+        let mut spaces = Spaces::in_memory(&["test"]);
+        let day = "2026-11-01".parse().unwrap();
+        let id = spaces.library_mut("test").unwrap().create_task("Routine", None).unwrap();
+        let original = RecurrenceSettings::new(Rule::default(), day);
+        spaces.set_recurrence(id, Some(original.clone()), day).unwrap();
+        let mut received = original.clone();
+        received.due = Some(3);
+        received.days_off.holidays = commonplace_core::DayOffEffect::Skip;
+        spaces.set_recurrence(id, Some(received.clone()), day).unwrap();
+        let rule = Rule::parse("FREQ=WEEKLY").unwrap();
+        save_repeat(
+            &mut spaces,
+            id,
+            RepeatValues { rule: rule.clone(), start: day },
+            &original,
+            day,
+        )
+        .unwrap();
+        received.rule = rule;
+        assert_eq!(spaces.note(id).unwrap().action.unwrap().recur.unwrap().settings, received);
+    }
 
     #[test]
     #[ignore = "needs an isolated GTK Broadway display and temporary sample library"]

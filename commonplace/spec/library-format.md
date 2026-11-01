@@ -1,6 +1,6 @@
 # Library format
 
-Version 5. This spec defines how a Commonplace library stores its notes, so that every
+Version 6. This spec defines how a Commonplace library stores its notes, so that every
 implementation can read and write the same data.
 [Decision 0002](../../decisions/0002-commonplace-library-storage.md) explains the choice of format,
 [decision 0004](../../decisions/0004-commonplace-actions.md) explains actions, and
@@ -9,8 +9,9 @@ and days off.
 
 Version 1 covered memos. Version 2 adds actions. Version 3 lets every note go to the archive, and
 adds journals. Version 4 adds recurring actions and days off, and lets journal schedules use any
-[rule](#rules). Version 5 gives action occurrences stable identifiers and shared record maps. Later
-versions add curios, zettels, attachments, and spaced repetition.
+[rule](#rules). Version 5 gives action occurrences stable identifiers and shared record maps.
+Version 6 keeps settlement events apart from the latest handling state and limits position selectors
+to one direction per rule. Later versions add curios, zettels, attachments, and spaced repetition.
 
 ## Document
 
@@ -24,7 +25,7 @@ its own, and syncs on its own.
 Each running instance of an implementation uses a fresh, random Loro peer identifier, as Loro does
 by default. Two instances that write at the same time must never share one.
 
-The document has ten root containers.
+The document has eleven root containers.
 
 | Name                 | Type | Contents                                                     |
 | -------------------- | ---- | ------------------------------------------------------------ |
@@ -36,6 +37,7 @@ The document has ten root containers.
 | `recurrence_handled` | Map  | Completion, skip, and reopen records for action occurrences. |
 | `recurrence_moved`   | Map  | Explicit moves of action occurrences.                        |
 | `recurrence_notes`   | Map  | Links from action occurrences to memos.                      |
+| `recurrence_settled` | Map  | Immutable settlement events for action occurrences.          |
 | `settings`           | Map  | Preferences that follow the owner across devices.            |
 | `step_occurrences`   | Map  | Completion records for steps within action occurrences.      |
 
@@ -145,6 +147,11 @@ slot's effective day within that period, while its identifier stays the same. Fo
 December's last workday remains one obligation when removing a holiday changes December 30 to
 December 31. Separate slots can fall on the same effective date.
 
+All positions in one `BYSETPOS` list count from the same end of the period: they're either positive
+or negative. Positions that count from opposite ends can select one nominal date but separate
+effective dates after exclusions. One nominal slot can't identify both. Readers treat a mixed list
+as an unreadable rule and preserve its stored fields.
+
 An `after` occurrence uses a cycle number, starting at zero, instead of a nominal date for identity.
 Two cycles can reuse a date. Completing a cycle moved early doesn't mark a later cycle on that date
 done. Concurrent handling of the same cycle resolves to one record.
@@ -159,6 +166,61 @@ First derive a scope using the name `<generation>|<kind>|<start>|<normalized-rul
 duplicates. Set `WKST` to Monday unless it changes a weekly interval greater than one. Derive a
 calendar occurrence with `<scope>|<nominal-date>`, or an `after` occurrence with
 `<scope>|cycle:<number>`.
+
+The normalized rule uses these exact bytes:
+
+- Write uppercase names and values, without spaces, with `=` between each name and value and `;`
+  between properties. Write integers in decimal without a leading plus sign or leading zeroes.
+- Write properties in this order: `FREQ`, `INTERVAL`, `BYMONTH`, `BYMONTHDAY`, `BYDAY`, `BYSETPOS`,
+  `WKST`. Include `FREQ` and omit empty lists. Omit `INTERVAL` when it's 1, and omit `WKST` when
+  it's Monday after normalization.
+- Sort numeric lists in ascending numeric order. Sort `BYDAY` by weekday, Monday through Sunday,
+  then by signed ordinal in ascending numeric order. Write an ordinal of zero as the weekday alone.
+  Join each list with commas and remove duplicates.
+
+Write generation and cycle numbers as decimal integers without leading zeroes. Write dates as
+`YYYY-MM-DD`, scopes in their 26-character encoding, and the action's bytes in Universally Unique
+Identifier (UUID) byte order. The occurrence context string and these encodings are part of the
+format; changing one changes identities and needs a format migration.
+
+For these identifier test vectors, the action is `01j8000000e008000000000000` and its origin is
+`2026-11-01`. Each rule below is already normalized.
+
+```text
+Generation: 0
+Kind: calendar
+Occurrence identifier: 5zgfvn6n7a367669ys6yhbtvft
+Rule: FREQ=DAILY
+Scope: 5t711daa7qf144d6cpekwspv9q
+Slot: 2026-11-01
+```
+
+```text
+Generation: 0
+Kind: calendar
+Occurrence identifier: 3dms9ff48wyzwekr2x2y6smhb9
+Rule: FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,TU;WKST=SU
+Scope: 3ak4zczn8np349jkk2fpa3ya7g
+Slot: 2026-11-02
+```
+
+```text
+Generation: 2
+Kind: calendar
+Occurrence identifier: 2mjzc397hcg3qepdfkypf734xx
+Rule: FREQ=MONTHLY;BYDAY=-1MO,2MO,1TU
+Scope: 1rm15c2w8cp9cp05qv68shr80b
+Slot: 2026-11-09
+```
+
+```text
+Generation: 3
+Kind: after
+Occurrence identifier: 0cdqgh32y95tq3ysp3h9r6ak95
+Rule: FREQ=DAILY;INTERVAL=7
+Scope: 7jqrad31qpdmxd7s5wk9a2np7k
+Slot: cycle:0
+```
 
 The first activation uses generation zero. Starting again after removing recurrence, changing its
 calendar pattern or origin, or switching between `after` and a calendar policy increments the stored
@@ -177,7 +239,9 @@ for concurrent edits to the same record.
 Every record includes `origin`, the date its rule counts from; `key`, the occurrence identifier;
 `scope`; `date`, the nominal date; and, for `after`, `cycle`, a nonnegative integer. A command
 carries these fields from the rendered row. Writers reject a target from another scope rather than
-resolving the current occurrence again.
+resolving the current occurrence again. For a new `after` target, its nominal date must belong to
+the rule counted from `origin`, satisfy `UNTIL`, and come on or after `not_before`. Validate bounds
+again when executing a displayed target.
 
 `recurrence_handled` adds these fields:
 
@@ -191,7 +255,6 @@ resolving the current occurrence again.
 | `on`    | String         | Its effective occurrence date when handled.                       |
 | `order` | Integer        | A logical sequence greater than every observed handling sequence. |
 | `peer`  | String         | The unsigned decimal Loro peer identifier of the writer.          |
-| `reach` | Map value      | The settlement boundary for `latest`, described below.            |
 | `state` | String         | `done`, `skipped`, or `open`.                                     |
 
 Writers choose `order` as the greater of the document's operation count and one more than the
@@ -200,6 +263,14 @@ largest observed handling sequence for the action. Handling events order by `ord
 ordered handling events. Reopening writes `open` instead of deleting the record. It overrides older
 settlement of that occurrence, while a later handling can settle it again. A completion's stored
 dates remain history after calendar, offset, move, or days-off edits.
+
+Each completion or skip also creates one immutable value in `recurrence_settled`, in the same
+commit. Its key is `<action-id>/<occurrence-id>/<order>/<peer>`, with decimal `order` and `peer`.
+Its value copies the handling record and adds `reach`, the settlement boundary described below.
+Readers take settlement only from this root map. Reopening or handling an occurrence again leaves
+earlier settlement events in place, including concurrent events for the same occurrence. A later
+explicit reopen exempts only its own occurrence from older events. The optional legacy `reach` in
+`recurrence_handled` doesn't govern settlement after migration.
 
 `recurrence_moved` adds `to`, the chosen effective date, and `rule` and `start`, the calendar when
 the owner moved it. Explicit moves override days off, even on the nominal date. Removing a move
@@ -229,14 +300,14 @@ January clears it. Reopening January makes it pending again. The waiting count i
 occurrences due through today, using the due offset, or the effective date without one.
 
 Under `latest`, older started occurrences count as missed. If none has started, select the earliest
-future start. A completion snapshots which slots had started so later edits can't restore them. Its
-`reach` holds `on`, which records the later of the handling day and its start date; `through`, that
-day minus the start offset; `pending`, sorted nominal dates through that boundary whose effective
-starts come later; and `extra`, sorted dates beyond the boundary whose effective starts already
-came. A boundary settles a slot if the slot falls on or before the boundary and isn't in `pending`,
-or if `extra` includes it. The boundary applies once its `on` arrives. A newer explicit `open`
-record exempts that slot. `all` ignores these boundaries. Moving an old slot after a newer nominal
-slot can make the old slot current when its effective start arrives.
+future start. A settlement event snapshots which slots had started so later edits can't restore
+them. Its `reach` holds `on`, which records the later of the handling day and its start date;
+`through`, that day minus the start offset; `pending`, sorted nominal dates through that boundary
+whose effective starts come later; and `extra`, sorted dates beyond the boundary whose effective
+starts already came. A boundary settles a slot if the slot falls on or before the boundary and isn't
+in `pending`, or if `extra` includes it. The boundary applies once its `on` arrives. A newer
+explicit `open` record exempts that slot. `all` ignores these boundaries. Moving an old slot after a
+newer nominal slot can make the old slot current when its effective start arrives.
 
 Under `after`, count from the later of the configured origin and the most recent handling day. After
 a completion choose the first rule date strictly after its handling day. The configured origin
@@ -264,6 +335,10 @@ leaves the action done. A checkbox with no occurrence target can't write a perma
 inside a repeat. Archiving pauses visibility; on return, the selected policy decides which
 occurrences remain pending.
 
+Without a current occurrence, readers suppress the action's plain due and start dates, including
+their inheritance by steps. Removing recurrence copies open as well as done step states; an old
+permanent completion can't replace the current occurrence's open state.
+
 #### Version 4 migration
 
 Before exposing a version 4 library, copy its nested `handled`, `moved`, and `notes` records into
@@ -272,8 +347,16 @@ maps. Convert date-only moves to map values. Match holiday-adjusted position dat
 slot. Assign legacy `after` cycles in handling order and preserve matching step completions.
 Migration is idempotent and runs on open and import. Convert a legacy recurring action's
 `state=done` and `closed` into `recurrence_stopped` and open its plain state. Update every device
-before resuming writes and sync: version 4 readers open version 5 read-only. Migration preserves
+before resuming writes and sync: version 4 readers open version 6 read-only. Migration preserves
 available records; it can't recover entries that a version 4 container conflict already discarded.
+
+#### Version 5 migration
+
+Copy each available completion or skip with a readable `reach` from `recurrence_handled` into
+`recurrence_settled`, using its existing occurrence identifier, order, and peer. Preserve unknown
+fields. Don't replace an event that already exists. Run this step after version 4 migration, on open
+and import. It can't recover settlement boundaries that a version 5 reopen or later handling already
+replaced. Version 5 readers open version 6 libraries read-only.
 
 ### Journal fields
 
@@ -329,7 +412,8 @@ allowed only `FREQ=DAILY`, or `FREQ=WEEKLY` with a `BYDAY` that names days witho
 - **Random:** `start` and `end` bound a window, `mean` is a whole number of minutes, at least 1, and
   `min_gap` is a whole number of minutes.
 
-Readers skip a schedule whose rule or fields they can't read.
+Readers skip a schedule whose rule or fields they can't read. Editing another schedule keeps
+unreadable rules and their stored fields.
 
 #### Prompts
 
@@ -507,7 +591,7 @@ Readers ignore a tombstone for a note that `notes` still holds.
   checkbox, move, handling, and note command.
 - **Edit only changed settings.** Write the calendar tuple atomically, and write independent offsets
   and days-off choices only when the owner changes them.
-- **Move occurrence records with their note.** Copy all four root maps' entries for each transferred
+- **Move occurrence records with their note.** Copy all five root maps' entries for each transferred
   action or step in the same commit as the note.
 - **Preserve lifecycle boundaries.** Transfer plain completions when recurrence starts. When it
   ends, copy only the governing occurrence's dates and plain steps. Leave a newly active nested
@@ -574,7 +658,8 @@ these parts, and readers treat a rule with any other part as one they can't read
 - `INTERVAL`, `COUNT`, and `UNTIL`, with `UNTIL` written as eight digits, `YYYYMMDD`.
 - `BYDAY`, with ordinals such as `2MO` or `-1FR` only in monthly and yearly rules.
 - `BYMONTHDAY`, from 1 to 31 or -1 to -31, which counts from the end of the month.
-- `BYMONTH`, `BYSETPOS`, and `WKST`.
+- `BYMONTH`, `BYSETPOS`, and `WKST`. A `BYSETPOS` list contains only positive positions or only
+  negative positions.
 
 A rule produces the dates that RFC 5545 gives, with three differences. The start date counts only if
 the rule produces it. In the first partial period, remove candidates before the start before

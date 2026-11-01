@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use loro::{LoroMap, LoroValue};
+use loro::{LoroDoc, LoroMap, LoroValue};
 
 use crate::library::{integer, loro_error, string};
 use crate::recurring::{
@@ -14,10 +14,29 @@ use crate::{Date, Error, Library, Note, NoteId, OccurrenceId};
 pub(crate) const HANDLED: &str = "recurrence_handled";
 pub(crate) const MOVED: &str = "recurrence_moved";
 pub(crate) const NOTES: &str = "recurrence_notes";
+pub(crate) const SETTLED: &str = "recurrence_settled";
 pub(crate) const STEPS: &str = "step_occurrences";
 
 pub(crate) fn record_key(series: NoteId, key: OccurrenceId) -> String {
     format!("{series}/{key}")
+}
+
+pub(crate) fn settlement_key(series: NoteId, key: OccurrenceId, order: u64, peer: u64) -> String {
+    format!("{series}/{key}/{order}/{peer}")
+}
+
+pub(crate) fn next_handling_order(doc: &LoroDoc, series: NoteId) -> u64 {
+    let prefix = format!("{series}/");
+    let mut order = 0;
+    for root in [HANDLED, SETTLED] {
+        let LoroValue::Map(records) = doc.get_map(root).get_value() else { continue };
+        for (_, value) in records.iter().filter(|(key, _)| key.starts_with(&prefix)) {
+            if let Some(map) = fields(value) {
+                order = order.max(number(map, "order").max(0) as u64);
+            }
+        }
+    }
+    (doc.len_ops() as u64).max(order.saturating_add(1))
 }
 
 pub(crate) fn fields(value: &LoroValue) -> Option<&loro::LoroMapValue> {
@@ -81,7 +100,7 @@ pub(crate) fn insert_preserving(
 impl Library {
     pub(crate) fn copy_occurrences(&self, source: &Self, id: NoteId) -> Result<(), Error> {
         let prefix = format!("{id}/");
-        for root in [HANDLED, MOVED, NOTES, STEPS] {
+        for root in [HANDLED, MOVED, NOTES, SETTLED, STEPS] {
             let LoroValue::Map(records) = source.doc.get_map(root).get_value() else { continue };
             for (key, value) in records.iter().filter(|(key, _)| key.starts_with(&prefix)) {
                 self.doc.get_map(root).insert(key, value.clone()).map_err(loro_error)?;
@@ -93,7 +112,7 @@ impl Library {
     pub(crate) fn hydrate_occurrences(&self, notes: &mut [Note]) {
         let indices: HashMap<NoteId, usize> =
             notes.iter().enumerate().map(|(index, note)| (note.id, index)).collect();
-        for root in [HANDLED, MOVED, NOTES, STEPS] {
+        for root in [HANDLED, MOVED, NOTES, SETTLED, STEPS] {
             let LoroValue::Map(records) = self.doc.get_map(root).get_value() else { continue };
             for (key, value) in records.iter() {
                 let Some((series, _)) = key.split_once('/') else { continue };
@@ -118,7 +137,7 @@ impl Library {
                 let Some(recur) = action.recur.as_mut() else { continue };
                 let active = scope == recur.scope;
                 match root {
-                    HANDLED => {
+                    HANDLED | SETTLED => {
                         let state = match text(map, "state").as_deref() {
                             Some("done") => OccurrenceState::Done,
                             Some("skipped") => OccurrenceState::Skipped,
@@ -140,6 +159,15 @@ impl Library {
                             state,
                             target,
                         };
+                        if root == SETTLED {
+                            if active
+                                && let Some(reach) =
+                                    OccurrenceReach::from_value(&handled, map.get("reach"))
+                            {
+                                recur.reaches.push(reach);
+                            }
+                            continue;
+                        }
                         if !active {
                             if state != OccurrenceState::Open {
                                 recur.past.push(handled);
@@ -148,11 +176,6 @@ impl Library {
                             recur.reopened.push(handled);
                         } else {
                             recur.handled.push(handled);
-                            if let Some(reach) =
-                                OccurrenceReach::from_value(&handled, map.get("reach"))
-                            {
-                                recur.reaches.push(reach);
-                            }
                         }
                     }
                     MOVED if active => {
@@ -384,6 +407,28 @@ impl Library {
                     }
                 }
                 self.action_map(note.id)?.delete("occurrences").map_err(loro_error)?;
+                changed = true;
+            }
+        }
+        let LoroValue::Map(records) = self.doc.get_map(HANDLED).get_value() else {
+            return Ok(changed);
+        };
+        let settled = self.doc.get_map(SETTLED);
+        for (key, value) in records.iter() {
+            let Some((series, _)) = key.split_once('/') else { continue };
+            let Some(series) = series.parse().ok() else { continue };
+            let Some(map) = fields(value) else { continue };
+            if !matches!(text(map, "state").as_deref(), Some("done" | "skipped"))
+                || map.get("reach").and_then(fields).is_none()
+            {
+                continue;
+            }
+            let Some(target) = target(map) else { continue };
+            let order = number(map, "order") as u64;
+            let peer = text(map, "peer").and_then(|text| text.parse().ok()).unwrap_or(0);
+            let key = settlement_key(series, target.key, order, peer);
+            if settled.get(&key).is_none() {
+                settled.insert(&key, value.clone()).map_err(loro_error)?;
                 changed = true;
             }
         }

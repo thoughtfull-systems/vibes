@@ -17,7 +17,7 @@ use crate::{Error, NoteId, label, parse_links};
 const SETTINGS: &str = "settings";
 
 const FORMAT: &str = "commonplace-library";
-const VERSION: i64 = 5;
+const VERSION: i64 = 6;
 
 pub(crate) const ARCHIVED: &str = "archived";
 const BODY: &str = "body";

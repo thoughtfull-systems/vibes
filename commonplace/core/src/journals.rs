@@ -1061,13 +1061,19 @@ impl Library {
         child_map(&self.journal_map(id)?, SCHEDULES, id)
     }
 
-    /// The journal's schedules, after deleting those that `Schedule::from_value` skips. The apps
-    /// never show those, so changing the schedules is the only chance to remove them.
+    // An unreadable rule may come from another version. Editing another schedule must keep it.
     fn editable_schedules(&self, id: NoteId) -> Result<LoroMap, Error> {
         let map = self.schedules_map(id)?;
         if let LoroValue::Map(entries) = map.get_value() {
             for (key, value) in entries.iter() {
-                if Schedule::from_value(key, value).is_none() {
+                if let LoroValue::Map(fields) = value
+                    && fields
+                        .get("rule")
+                        .and_then(|value| string(value.clone()))
+                        .and_then(|rule| Rule::parse(&rule))
+                        .is_some()
+                    && Schedule::from_value(key, value).is_none()
+                {
                     map.delete(key).map_err(loro_error)?;
                 }
             }

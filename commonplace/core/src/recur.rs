@@ -145,6 +145,8 @@ impl Rule {
             && self.month_days.iter().all(|day| (1..=31).contains(&day.unsigned_abs()))
             && self.months.iter().all(|month| (1..=12).contains(month))
             && self.positions.iter().all(|position| (1..=366).contains(&position.unsigned_abs()))
+            && !(self.positions.iter().any(|&position| position < 0)
+                && self.positions.iter().any(|&position| position > 0))
             && self.week_start < 7
             && self
                 .weekdays
@@ -1104,13 +1106,13 @@ mod tests {
             .map(|d| d.to_string())
             .collect();
         assert_eq!(dates, ["2026-11-02", "2026-12-02"]);
-        let first_and_last =
-            Rule::parse("FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=1,-1;COUNT=3").unwrap();
-        let dates: Vec<String> = first_and_last
+        let first_two =
+            Rule::parse("FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=1,2;COUNT=3").unwrap();
+        let dates: Vec<String> = first_two
             .dates(start, start, |day| day == date("2026-12-01"))
             .map(|d| d.to_string())
             .collect();
-        assert_eq!(dates, ["2026-11-02", "2026-11-30", "2026-12-02"]);
+        assert_eq!(dates, ["2026-11-02", "2026-11-03", "2026-12-02"]);
     }
 
     #[test]

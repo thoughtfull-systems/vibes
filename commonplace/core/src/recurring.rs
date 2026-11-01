@@ -147,13 +147,15 @@ impl Library {
                             let Some(fields) = self.note(step).and_then(|note| note.action) else {
                                 continue;
                             };
-                            if let Some(done) = fields
+                            let closed = fields
                                 .occurrences
                                 .iter()
-                                .find(|entry| entry.key == Some(current.target.key))
-                            {
-                                set_state(&self.action_map(step)?, Some(done.at))?;
-                            }
+                                .find(|entry| {
+                                    entry.key == Some(current.target.key)
+                                        && entry.series == Some(id)
+                                })
+                                .map(|entry| entry.at);
+                            set_state(&self.action_map(step)?, closed)?;
                         }
                     } else if before.state == ActionState::Open
                         && self.occurrence_summary(id, today).is_some_and(|summary| {
@@ -234,6 +236,13 @@ impl Library {
             recur.handled.iter().chain(&recur.reopened).any(|entry| entry.key == target.key);
         if !known {
             if target.cycle.is_some() {
+                let mut rule = recur.settings.rule.clone();
+                rule.count = None;
+                if target.date < recur.not_before
+                    || rule.all_dates(target.origin, target.date).next() != Some(target.date)
+                {
+                    return Err(Error::InvalidOccurrence);
+                }
                 if recur
                     .settings
                     .rule
@@ -271,17 +280,7 @@ impl Library {
             .current()
             .filter(|current| current.target.key == target.key)
             .unwrap_or_else(|| occurrences.occurrence_target(target, OccurrenceStatus::Upcoming));
-        let order = (self.doc.len_ops() as u64).max(
-            recur
-                .handled
-                .iter()
-                .chain(&recur.reopened)
-                .chain(&recur.past)
-                .map(|entry| entry.order)
-                .max()
-                .unwrap_or(0)
-                .saturating_add(1),
-        );
+        let order = store::next_handling_order(&self.doc, id);
         let peer = self.doc.peer_id();
         let early = today < occurrence.defer.unwrap_or(occurrence.on);
         let reach = occurrences.reach(
@@ -311,6 +310,10 @@ impl Library {
         ]);
         for (key, date) in [("defer", occurrence.defer), ("due", occurrence.due)] {
             values.push((key.into(), date.map_or(LoroValue::Null, |date| date.to_string().into())));
+        }
+        if state != OccurrenceState::Open {
+            let key = store::settlement_key(id, target.key, order, peer);
+            insert_preserving(&self.doc.get_map(store::SETTLED), &key, values.clone())?;
         }
         insert_preserving(&self.doc.get_map(store::HANDLED), &record_key(id, target.key), values)
     }
@@ -585,6 +588,8 @@ impl Library {
             let occurrences = Occurrences::new(recur, &days_off, today);
             let current = occurrences.current();
             let plain_closed = action.closed;
+            action.due = None;
+            action.defer = None;
             action.state =
                 if recur.stopped.is_some() { ActionState::Done } else { ActionState::Open };
             action.closed = recur.stopped;
@@ -1610,6 +1615,56 @@ impl<'a> Occurrences<'a> {
 mod tests {
     use super::*;
     use crate::{ActionView, DayOffEffect, DaysOff, DaysOffKind};
+
+    #[test]
+    fn occurrence_identifier_vectors() {
+        let id = "01j8000000e008000000000000".parse().unwrap();
+        let start = date("2026-11-01");
+        for (rule, missed, generation, slot, cycle, scope, key) in [
+            (
+                "FREQ=DAILY;INTERVAL=1;WKST=SU;COUNT=3",
+                Missed::Latest,
+                0,
+                start,
+                None,
+                "5t711daa7qf144d6cpekwspv9q",
+                "5zgfvn6n7a367669ys6yhbtvft",
+            ),
+            (
+                "BYDAY=TU,MO,TU;FREQ=WEEKLY;WKST=SU;INTERVAL=2;UNTIL=20270101",
+                Missed::All,
+                0,
+                date("2026-11-02"),
+                None,
+                "3ak4zczn8np349jkk2fpa3ya7g",
+                "3dms9ff48wyzwekr2x2y6smhb9",
+            ),
+            (
+                "FREQ=MONTHLY;BYDAY=1TU,2MO,-1MO,-1MO;WKST=SU",
+                Missed::Latest,
+                2,
+                date("2026-11-09"),
+                None,
+                "1rm15c2w8cp9cp05qv68shr80b",
+                "2mjzc397hcg3qepdfkypf734xx",
+            ),
+            (
+                "FREQ=DAILY;INTERVAL=7;COUNT=4",
+                Missed::After,
+                3,
+                start,
+                Some(0),
+                "7jqrad31qpdmxd7s5wk9a2np7k",
+                "0cdqgh32y95tq3ysp3h9r6ak95",
+            ),
+        ] {
+            let mut settings = RecurrenceSettings::new(Rule::parse(rule).unwrap(), start);
+            settings.missed = missed;
+            let recur = Recurrence::new(id, settings, generation, start);
+            assert_eq!(recur.scope.to_string(), scope);
+            assert_eq!(recur.target(slot, cycle).key.to_string(), key);
+        }
+    }
 
     #[test]
     fn handling_order_survives_a_backwards_clock_change() {

@@ -86,6 +86,7 @@ impl Slot {
     }
 }
 
+#[derive(Clone)]
 struct Completion {
     activation: Date,
     day: Date,
@@ -107,6 +108,7 @@ struct Reference {
     policy: Missed,
     reopened: BTreeMap<Key, (Slot, u32, Date)>,
     sequence: u32,
+    settlements: Vec<Completion>,
     start: Date,
     steps: BTreeSet<Key>,
 }
@@ -125,6 +127,7 @@ impl Reference {
             policy,
             reopened: BTreeMap::new(),
             sequence: 0,
+            settlements: Vec::new(),
             start: first(),
             steps: BTreeSet::new(),
         }
@@ -144,6 +147,7 @@ impl Reference {
         self.moved.clear();
         self.not_before = not_before;
         self.reopened.clear();
+        self.settlements.clear();
         self.steps.clear();
     }
 
@@ -168,7 +172,7 @@ impl Reference {
 
     fn missed(&self, slot: Slot, today: Date) -> bool {
         self.policy == Missed::Latest
-            && self.closed.values().any(|entry| {
+            && self.settlements.iter().any(|entry| {
                 entry.activation <= today
                     && entry.settled.contains(&slot.date)
                     && self.reopened.get(&slot.key).is_none_or(|(_, seq, _)| *seq <= entry.sequence)
@@ -268,10 +272,10 @@ impl Reference {
             |(_, _, origin)| *origin,
         );
         self.reopened.remove(&slot.key);
-        self.closed.insert(
-            slot.key,
-            Completion { activation, day: today, origin, settled, sequence: self.sequence, slot },
-        );
+        let completion =
+            Completion { activation, day: today, origin, settled, sequence: self.sequence, slot };
+        self.settlements.push(completion.clone());
+        self.closed.insert(slot.key, completion);
     }
 
     fn check(&self, library: &Library, id: NoteId, step: NoteId, today: Date) {

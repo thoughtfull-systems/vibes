@@ -139,7 +139,7 @@ fn missed_occurrences_stay_missed_after_moves_days_off_and_sync() {
         );
     }
     phone.handle_occurrence(id, date("2026-10-19"), None, date("2026-10-21")).unwrap();
-    assert_eq!(phone.current_occurrence(id, date("2026-10-21")).unwrap().date, date("2026-10-12"),);
+    assert_eq!(phone.current_occurrence(id, date("2026-10-21")).unwrap().date, date("2026-10-19"),);
 }
 
 #[test]

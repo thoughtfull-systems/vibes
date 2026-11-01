@@ -60,8 +60,9 @@ format adds them.
 - **Rules.** A rule is an `RRULE` string with no time parts, plus the date it starts from. It
   supports `FREQ` of `DAILY`, `WEEKLY`, `MONTHLY`, or `YEARLY`, and `INTERVAL`, `BYDAY` with
   ordinals such as `-1FR`, `BYMONTHDAY` including negative days, `BYMONTH`, `BYSETPOS`, `UNTIL`, and
-  `COUNT`. Editing a rule keeps the occurrences already handled, and the unhandled occurrences of
-  the old rule give way to those of the new one.
+  `COUNT`. A `BYSETPOS` list counts from only one end of its period. Editing a rule keeps the
+  occurrences already handled, and the unhandled occurrences of the old rule give way to those of
+  the new one.
 - **Times of day.** Rules produce dates only. A note that happens at times of day adds its times to
   each occurrence date, as journal schedules do with a list of times or a window, so the times never
   change which days a rule produces. Journals, and later a calendar, evaluate their rules with the
@@ -82,7 +83,10 @@ format adds them.
   occurrence identifier. Root maps avoid competing child containers when devices independently
   enable recurrence. Concurrent writes to one occurrence use Loro's conflict order; writes to
   different occurrences survive independently. A handling record snapshots its effective dates.
-  Logical sequences order handling events, so a clock correction can't reverse later work.
+  Logical sequences order handling events, so a clock correction can't reverse later work. Immutable
+  settlement events live in their own root map, so reopening or replacing a handling record doesn't
+  remove another slot's settlement. The format specifies exact rule bytes and test vectors for
+  deriving occurrence identifiers.
 - **Overrides.** A move changes the effective date of one stable occurrence. Offsets then give its
   start and due dates. Explicit moves override days off. Replacing a calendar leaves old overrides
   in their old scope, where they can't change the new rule's candidates. Memo and step records stay
@@ -189,6 +193,13 @@ Against the criteria:
 - **Dates as occurrence identity.** Days off can change a position-selected date, and two
   completion-relative cycles can reuse one date. Date keys then duplicate an obligation or mark a
   new cycle done. This fails the merges well and one occurrence can change criteria.
+- **Positions counted from both ends in one rule.** Two selectors can share a nominal date but
+  choose separate dates after days off filter the candidates. Supporting both needs slot identities
+  and rules for splitting and combining obligations. Limiting a list to one direction keeps stable
+  nominal slots and covers every rule the editors produce.
+- **Settlement in the latest handling record alone.** Reopening or handling an occurrence again
+  replaces that record, which can restore other slots that it settled. Immutable events preserve
+  settlement across these edits and concurrent handling of the same occurrence.
 - **Settling old obligations under every policy.** Closing March's bill would silently clear
   January's unpaid bill. Only `latest` treats other started occurrences as missed; `all` needs each
   obligation to remain pending. Applying settlement to `all` fails the expressive criterion.
@@ -217,7 +228,7 @@ Against the criteria:
 
 ## Consequences
 
-- The library format becomes version 5. Older versions of Commonplace open a version 5 library
+- The library format becomes version 6. Older versions of Commonplace open a version 6 library
   read-only.
 - Every implementation needs an `RRULE` evaluator for dates, extended with days off, overrides, and
   the `after` behavior.

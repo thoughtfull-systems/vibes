@@ -670,10 +670,9 @@ internal fun ActionDetails(model: NotebookModel, note: MobileNote, open: (String
       daysOff = settings.daysOff,
       dismiss = { custom = false }
     ) { values ->
-      if (recur != null) {
-        updateRecurrence { it.copy(rule = values.rule, start = values.start) }
-      } else {
-        setRecurrence(settings.copy(rule = values.rule, start = values.start))
+      model.perform { core ->
+        val latest = core.note(note.id)?.action?.recur?.settings ?: settings
+        core.setRecurrence(note.id, latest.copy(rule = values.rule, start = values.start), today)
       }
       custom = false
     }
