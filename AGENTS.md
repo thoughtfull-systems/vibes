@@ -35,6 +35,7 @@ editors read `.editorconfig` only from the root, and GitHub reads workflows only
 - `.config/gitlint`: commit message rules.
 - `.config/lychee.toml`: link checking.
 - `.config/taplo.toml`: formatting for `.toml` files.
+- `.config/typos.toml`: spelling checks that skip note and occurrence identifiers.
 - `.config/yamlfmt.yaml`: formatting for `.yaml` files.
 - `.config/yamllint.yaml`: linting for `.yaml` files.
 

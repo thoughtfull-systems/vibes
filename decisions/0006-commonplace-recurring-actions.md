@@ -16,7 +16,13 @@ merges edits from many devices, and [decision 0003](0003-commonplace-note-identi
 gives every note a permanent identifier that links use. A recurring action has to fit both.
 
 The [iCalendar standard][rfc5545] defines recurrence rules, written in its `RRULE` property, that
-calendar apps share, including Google Calendar.
+calendar apps share, including Google Calendar. Calendar apps also let their owner move or change a
+single occurrence of a recurring event, which the standard records as an override of that
+occurrence.
+
+Actions aren't the only notes that recur. [Decision 0010](0010-commonplace-journals.md) gives
+journals schedules that prompt at times of day, and a calendar of events may follow, which would
+sync with calendar apps through iCalendar.
 
 ## Criteria
 
@@ -27,8 +33,11 @@ calendar apps share, including Google Calendar.
 - **Expressive.** The rules cover daily, weekday, and workday schedules; weekly on one or more days;
   monthly by date, by the nth or last weekday, or by the last day; yearly; every nth period; and
   schedules that count from the last completion.
-- **Exclusions stay live.** Holidays and vacations remove or move occurrences, and taking an
-  exclusion away brings its occurrences back.
+- **One occurrence can change.** Moving a single occurrence, such as paying this month's bill on
+  Monday, leaves the rest of the schedule alone.
+- **Exclusions stay live.** Holidays and vacations remove or move occurrences, and ending a vacation
+  early brings eligible occurrences back. Completion records keep what happened, and `latest`
+  settlement stays settled after later edits. Unhandled `all` obligations follow the live calendar.
 - **Fits Getting Things Done (GTD).** The current occurrence behaves like any other action in the
   lists and reviews, with a start date that brings it into view before it's due.
 - **Low friction.** A plain repeat, such as every week, takes a keystroke or two, and the details
@@ -37,47 +46,122 @@ calendar apps share, including Google Calendar.
   subscribe from calendar apps.
 - **Room for spaced repetition.** The same model can later schedule reviews whose next date depends
   on how the last one went.
+- **Shared with other notes.** Journals, and later a calendar, schedule with the same rules, so
+  every implementation evaluates rules in one place.
 
 ## Decision
 
 A recurring action is one action note with a `recur` map in its action fields. The map holds a rule
 that produces occurrence dates, and a record of the occurrences its owner handled. The current
 occurrence comes from the two, and nothing writes it. The
-[library format specification](../commonplace/spec/library-format.md) defines the fields.
+[library format specification](../commonplace/spec/library-format.md) defines the fields when the
+format adds them.
 
 - **Rules.** A rule is an `RRULE` string with no time parts, plus the date it starts from. It
   supports `FREQ` of `DAILY`, `WEEKLY`, `MONTHLY`, or `YEARLY`, and `INTERVAL`, `BYDAY` with
   ordinals such as `-1FR`, `BYMONTHDAY` including negative days, `BYMONTH`, `BYSETPOS`, `UNTIL`, and
-  `COUNT`. Editing a rule keeps the occurrences already handled, and the unhandled occurrences of
-  the old rule give way to those of the new one.
+  `COUNT`. Ordinal weekdays can filter a set of month days, as iCalendar defines. A `BYSETPOS` list
+  counts from only one end of its period. Editing a rule keeps the occurrences already handled, and
+  the unhandled occurrences of the old rule give way to those of the new one.
+- **Times of day.** Rules produce dates only. A note that happens at times of day adds its times to
+  each occurrence date, as journal schedules do with a list of times or a window, so the times never
+  change which days a rule produces. Journals, and later a calendar, evaluate their rules with the
+  same evaluator as recurring actions, exclusions included.
 - **Occurrence dates.** Each occurrence has a date, and the rule gives the action's due and start
-  dates as offsets in days from it. Either offset can be absent, so an action can be due on the
-  date, start on it with no deadline, or start three days before it's due. One rule drives both
-  dates, so they can't drift apart. While an action recurs, its occurrence's dates replace its own
-  `due` and `defer`.
-- **Handled occurrences.** A map keyed by occurrence date records each occurrence its owner closed
-  or skipped, when, and the day it happened. Closing the current occurrence adds an entry and leaves
-  the action's `state` open. Two devices that close the same occurrence write the same key, so the
-  merge keeps one entry. An entry can link to a note written for that occurrence, such as the notes
-  from one week's review, so an occurrence gets a note only when it needs one.
-- **Missed occurrences.** The rule names one of three behaviors. `all` makes every occurrence count,
-  so missed ones pile up, as bills do. `latest` shows only the latest occurrence that has come into
-  view, and counts earlier unhandled ones as missed, as a weekly review does. `after` starts the
-  rule again from the day its owner handled the last occurrence, as watering plants does.
-- **Exclusions.** A library holds named calendars of excluded days: single days, date ranges, and
-  rules for days that come back, such as a holiday each year. A recurring action refers to the
-  calendars that apply to it, and each reference says whether an excluded day removes an occurrence
-  or moves it to the next day that isn't excluded. Exclusions filter the candidate days before
-  `BYSETPOS` picks among them, so "the last weekday of the month" with a holiday calendar means the
-  last workday. Every reader computes occurrences from the calendars as they stand, so removing an
-  exclusion brings its occurrences back.
+  dates as offsets in days from it. The due offset can be absent, and without a start offset an
+  occurrence starts on its date. An action can be due on the date, start on it with no deadline, or
+  start three days before it's due. One rule drives both dates, so they can't drift apart. While an
+  action recurs, its occurrence's dates replace its own `due` and `defer`. Both offsets range from
+  -999 to 999 days, matching the editors. Writers reject other values; readers ignore them and keep
+  their stored fields.
+- **Identity.** A calendar occurrence has a stable nominal slot, independent of the date that days
+  off or an explicit move gives it. An `after` occurrence has a cycle number, so different cycles
+  can reuse a calendar date. Deterministic identifiers include the action, calendar scope, and slot
+  or cycle. The scope changes when recurrence restarts or its calendar or origin changes. Editing
+  bounds, offsets, or days off keeps it. Week starts remain part of a weekly position selector's
+  calendar even with interval 1. A shared allocation history retains every generation, including
+  those of calendars that lose concurrent edits. New calendars use a generation greater than every
+  observed allocation, so a later edit can't reuse a discarded calendar's identifiers. The format
+  spec defines the derivation. Saving unchanged calendar choices preserves their original selectors,
+  including when only the ending changes. The editors retain an existing ordinal even when they
+  don't offer it for new rules.
+- **Handled occurrences.** Root maps keyed by action and occurrence identifier hold completion,
+  skip, reopen, move, and memo records. Step records use the step identifier and the governing
+  occurrence identifier. Root maps avoid competing child containers when devices independently
+  enable recurrence. Concurrent writes to one occurrence use Loro's conflict order; writes to
+  different occurrences survive independently. A handling record snapshots its effective dates.
+  Logical sequences order handling events, so a clock correction can't reverse later work. Immutable
+  settlement events live in their own root map, so reopening or replacing a handling record doesn't
+  remove another slot's settlement. A winning reopen overrides every settlement from handling its
+  own occurrence, including a losing concurrent completion. Other occurrences' settlement events
+  still apply in logical handling order. Records name their identity algorithm's version. Migration
+  checks an unmarked record's writer in the editing history, so it never treats a legitimate
+  concurrent calendar as legacy data. The format specifies exact rule bytes and test vectors for
+  deriving occurrence identifiers.
+- **Overrides.** A move changes the effective date of one stable occurrence. Offsets then give its
+  start and due dates. Explicit moves override days off. Replacing a calendar leaves old overrides
+  in their old scope, where they can't change the new rule's candidates. Memo and step records stay
+  attached when a holiday changes a position-selected date within its period.
+- **Missed occurrences.** `all` keeps every obligation pending until the owner closes or skips it.
+  Handling March's bill leaves January's unpaid bill owed. `latest` selects the latest effective
+  start through today, or the earliest future start. Closing one snapshots the other slots that have
+  started within the rule's bounds, including exceptions for moved dates. A slot with no effective
+  date hasn't started and stays unsettled, so later calendar edits can restore it. Those that have
+  settled stay missed after later edits. A newer explicit reopen makes its slot pending again.
+  `after` derives the next cycle from the latest handling day. Its configured start remains eligible
+  when it comes later than that day, and `COUNT` limits closed cycles. Reopening a cycle makes that
+  cycle pending, subject to bounds, days off, and the series' lifecycle. Readers choose the earliest
+  eligible reopened cycle before allocating a new one. Switching between `all` and `latest`
+  reinterprets existing settlement: `all` ignores it, and `latest` applies it, including boundaries
+  recorded under `all`. Changing to `all` can restore older obligations without an explicit reopen.
+- **Days off.** A library holds two kinds of days off: holidays, and vacations. Each holds named
+  schedules, such as Christmas or a trip: a span of days that a rule can bring back, such as every
+  year. A recurring action says, for each kind, whether a day off removes an occurrence, moves it to
+  the next day that isn't a day off, or doesn't affect it, which is the default. Days off that
+  remove occurrences filter the candidate days before `BYSETPOS` picks among them, so "the last
+  weekday of the month" with holidays removed means the last workday. Removed days still count
+  toward `COUNT`, as excluded dates do in iCalendar, so days off never add a period to the end of a
+  rule, nor another date to its last period. Every reader computes occurrences from the days off as
+  they stand, so archiving a schedule early brings its later occurrences back. Schedules are never
+  deleted, only archived, and an archived schedule keeps applying through the day its owner archived
+  it, so the past doesn't change. The apps hide a schedule once it's archived or a week after its
+  last day.
 - **Steps.** The steps of a recurring action record their completion in the same way, keyed by the
   occurrence of the recurring action they belong to, so each occurrence starts with every step open
   and nothing resets them. Readers ignore `recur` on an action inside the subtree of another
   recurring action.
-- **Ending.** A rule ends at its `UNTIL` or `COUNT`, after which the action counts as done. Marking
-  the action itself done stops it early. Archiving it pauses it, and on its return the missed
-  occurrences behave as the rule's missed behavior says.
+- **Ending.** Readers distinguish active, blocked, exhausted, ignored, and stopped recurrence. An
+  exhausted rule projects the action as done. Days off that prevent all remaining dates leave it
+  open, so editing them can restore an occurrence. A separate stop timestamp stops the series, while
+  the plain action state keeps its own meaning. Starting an outer repeat therefore leaves a nested
+  series' stop record intact. A step's projected completion belongs to its governing occurrence; a
+  checkbox without an occurrence can't turn into a permanent completion. Removing an outer repeat
+  never makes its temporary step completions permanent inside a nested repeat that becomes active.
+  Removing an exhausted repeat keeps the action done and preserves the step states shown for its
+  last handled occurrence.
+
+Readers distinguish an occurrence that `latest` temporarily passes over from one that a handling
+event settles. Live date edits can restore the first. Under the same scope and `latest` policy, they
+don't restore the second or remove it from history and the missed count. Settled history names the
+nominal slot and the date of settlement; the records don't snapshot every missed slot's former
+effective dates. Replacing a scope preserves explicit handling history, but doesn't retain the old
+scope's implicit missed occurrences. History orders rows by their displayed dates, so requesting
+more history doesn't change which rows lead it when days off move old slots forward.
+
+Reopening changes an occurrence's handling state. It doesn't extend bounds, remove days off, or
+resume a stopped series. History keeps reopened records that can't enter scheduled work and states
+why: bounds, the completion limit, days off, a former calendar, an outer repeat, or a stopped
+series. Expanding bounds or removing the other restriction restores eligibility. This also covers a
+reopen that one device accepts before another device's concurrent bounds edit arrives.
+
+The nominal slot identifies an occurrence, its effective start orders scheduled work, and its
+logical handling sequence orders completions. Every command carries the occurrence identifier that
+its row showed. A delayed click can't complete a different cycle after another device advances the
+series. A replacement calendar rejects an old row's target.
+
+The core projects lists, detail views, counts, and history from the same evaluator. Regression and
+reference tests cover settings, bounds, calendars, policies, days off, lifecycle, hierarchy, and
+concurrent replicas. Migration preserves available version 4 records and snapshots their dates.
 
 Against the criteria:
 
@@ -86,20 +170,28 @@ Against the criteria:
   holds the next date for two devices to overwrite.
 - **An action is a note:** the recurring action is one note for its whole life, and notes for single
   occurrences link to it without replacing it.
-- **Expressive:** `RRULE` covers each calendar schedule in the criterion. Exclusion calendars add
-  workdays, and the `after` behavior adds schedules that count from the last completion, which
-  `RRULE` can't express.
-- **Exclusions stay live:** readers compute occurrences from the calendars on every read, so an
-  exclusion's effect lasts only as long as the exclusion.
+- **Expressive:** `RRULE` covers each calendar schedule in the criterion. Holidays add workdays, and
+  the `after` behavior adds schedules that count from the last completion, which `RRULE` can't
+  express.
+- **One occurrence can change:** an override moves one occurrence and leaves the rule, and every
+  other occurrence, as they were.
+- **Exclusions stay live:** readers compute occurrences from the days off on every read, so a
+  vacation ended early stops shaping the dates after it. Archived schedules keep shaping the dates
+  before. `latest` snapshots settlement while `all` keeps every unpaid obligation.
 - **Fits GTD:** the current occurrence has a due date, a start date, and open steps like any other
   action, so the list order, the next tasks, and the review questions in decision 0004 apply
   unchanged.
 - **Low friction:** a new recurring action needs only a frequency. The start date, interval, missed
-  behavior, offsets, and calendars all have defaults.
-- **Interoperable:** a rule is `RRULE` text already. Only the `after` behavior and exclusion
-  calendars need translating, into a fixed rule and `EXDATE` lists.
+  behavior, offsets, and days off all have defaults.
+- **Interoperable:** supported rules use `RRULE` text, and calendar overrides name nominal slots.
+  Translating `after`, days off, and first-period position selection needs a later import and export
+  contract. An importer must preserve or reject rules outside the supported subset, including mixed
+  positive and negative positions. Publishing dates can use a fixed rule with `EXDATE` and `RDATE`
+  lists, but those dates alone don't preserve Commonplace's handling and settlement records.
 - **Room for spaced repetition:** the next occurrence is a function of the rule and the handled
   occurrences. A spaced repetition schedule is another such function, with a rating in each entry.
+- **Shared with other notes:** rules hold dates only, and each kind of note adds its times on top,
+  so one evaluator serves actions, journals, and a calendar.
 
 ## Rejected alternatives
 
@@ -122,9 +214,51 @@ Against the criteria:
 - **Separate rules for the start and due dates.** Org repeats its scheduled and deadline dates
   separately, and they drift apart when one moves without the other. It fails the fits GTD
   criterion.
+- **Times in the rule.** `RRULE` can give times with `BYHOUR` and `BYMINUTE`, but it combines every
+  hour with every minute, so 9:00 and 17:30 also produce 9:30 and 17:00, and it has no way to give
+  the random windows that journals need. Actions recur by day, and times in their rules would only
+  add cases to handle. It fails the shared with other notes criterion.
+- **Records in lazily created child maps.** Devices that independently enable recurrence can make
+  competing containers under the same key. Loro then retains only one container, losing independent
+  completions. Creating the child maps earlier doesn't cover independent activation, so this fails
+  the merges well criterion.
+- **Dates as occurrence identity.** Days off can change a position-selected date, and two
+  completion-relative cycles can reuse one date. Date keys then duplicate an obligation or mark a
+  new cycle done. This fails the merges well and one occurrence can change criteria.
+- **A last-write-wins generation integer.** A concurrent calendar can replace a higher generation
+  with a lower one. Incrementing that lower value can reuse the discarded calendar's scope and apply
+  its old records to new work. A permanent allocation history prevents this reuse.
+- **Recognizing legacy records by scope alone.** A current calendar can use the same scope that an
+  older identity algorithm would produce for another calendar. Migrating by this match alone moves
+  legitimate records into a competing calendar. The writer's format version supplies provenance.
+- **Positions counted from both ends in one rule.** Two selectors can share a nominal date but
+  choose separate dates after days off filter the candidates. Supporting both needs slot identities
+  and rules for splitting and combining obligations. Limiting a list to one direction keeps stable
+  nominal slots and covers every rule the editors produce.
+- **Settlement in the latest handling record alone.** Reopening or handling an occurrence again
+  replaces that record, which can restore other slots that it settled. Immutable events preserve
+  settlement across these edits and concurrent handling of the same occurrence.
+- **Settling old obligations under every policy.** Closing March's bill would silently clear
+  January's unpaid bill. Only `latest` treats other started occurrences as missed; `all` needs each
+  obligation to remain pending. Applying settlement to `all` fails the expressive criterion.
+- **Overrides keyed by the new date.** Keying a moved occurrence by the date it moved to would
+  detach it from its handled entry and its steps, and a second move would leave two keys for one
+  occurrence. It fails the merges well and one occurrence can change criteria.
+- **Moving an occurrence by skipping it and adding a separate action.** The new action would lose
+  the recurring action's steps and links, and nothing would tie it to the occurrence it replaces. It
+  fails the an action is a note criterion.
 - **A rule syntax of Commonplace's own.** A smaller syntax, like Org's repeaters, would be quicker
   to parse, but each schedule it lacks needs a new design, and every calendar app would need a
   translation. It fails the expressive and interoperable criteria.
+- **Calendars of excluded days of the owner's own.** Any number of named calendars, each with its
+  own choice on every recurring action and journal schedule, would cover more kinds of days off, but
+  each new calendar would add a choice to every rule. Two fixed kinds cover holidays and vacations,
+  and a later version can add more. It fails the low friction criterion.
+- **A choice on each rule for each holiday.** Choosing per schedule of days off would mean marking
+  every recurring action for Christmas, Thanksgiving, and every other holiday, and again for each
+  new one. It fails the low friction criterion.
+- **Deleting days off.** Deleting a past vacation would bring back the occurrences it removed, as
+  missed or overdue. It fails the exclusions stay live criterion.
 - **Exclusions as `EXDATE` lists in each rule.** The iCalendar standard's own exclusions list fixed
   dates that each rule keeps a copy of. A vacation would mean editing every rule it touches, and
   ending it early would mean finding them all again. It fails the exclusions stay live and low
@@ -132,12 +266,16 @@ Against the criteria:
 
 ## Consequences
 
-- The library format becomes version 3. Older versions of Commonplace open a version 3 library
+- The library format becomes version 8. Older versions of Commonplace open a version 8 library
   read-only.
-- Every implementation needs an `RRULE` evaluator for dates, extended with exclusion calendars and
+- Every implementation needs an `RRULE` evaluator for dates, extended with days off, overrides, and
   the `after` behavior.
-- The apps need ways to edit rules and exclusion calendars, to see upcoming and past occurrences,
-  and to skip one.
+- Journal schedules accept any rule this decision supports, and skip or move past days off as
+  recurring actions do.
+- The apps need ways to edit rules and days off, to see upcoming and past occurrences, and to skip
+  or move one.
+- A calendar of events needs a later decision on time zones, durations, keys for occurrences at
+  times of day, and translating its events to and from iCalendar.
 - Subscribing to iCalendar feeds, as a source of exclusions such as holidays and time off, needs a
   later decision.
 - Publishing to calendar apps needs a later decision. Google Calendar fetches a subscribed calendar

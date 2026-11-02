@@ -39,10 +39,15 @@ private fun task(id: String, status: ActionStatus = ActionStatus.NORMAL) = Mobil
   dates = ActionDates(null, null, status),
   depth = 0u,
   note = note(id).copy(
-    action = Action(null, null, null, ActionList.ACTIVE, null, false, ActionState.OPEN, null)
+    action = Action(
+      closed = null, defer = null, due = null, list = ActionList.ACTIVE, occurrence = null,
+      occurrences = emptyList(), planning = null, project = false, recur = null,
+      state = ActionState.OPEN, waitingFor = null
+    )
   ),
   parents = emptyList(),
-  stalled = false
+  stalled = false,
+  waiting = 0u
 )
 
 class BrowseTest {

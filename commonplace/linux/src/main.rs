@@ -12,11 +12,13 @@ mod answers;
 mod bottom_pane;
 mod browse;
 mod capture;
+mod days_off;
 mod device;
 mod drag_scroll;
 mod editor;
 mod entry_panel;
 mod highlight;
+mod history;
 mod inbox;
 mod journal_capture;
 mod journal_panel;
@@ -27,6 +29,7 @@ mod link_icons;
 mod link_picker;
 mod note_page;
 mod prompts;
+mod repeat;
 mod rows;
 mod state;
 mod sync;
@@ -70,6 +73,7 @@ const SOURCE_LUCIDE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../vendor/luci
 const CSS: &str = "
 textview.note-editor, .word-count { font-size: 1.25em; }
 .project-title { font-style: italic; }
+button.repeat-choice { font-weight: normal; }
 checkbutton.row-check { padding: 0; }
 .step-list:drop(active) { box-shadow: none; outline: none; }
 button.inline-link {

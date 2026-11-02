@@ -17,7 +17,7 @@ use crate::{Error, NoteId, label, parse_links};
 const SETTINGS: &str = "settings";
 
 const FORMAT: &str = "commonplace-library";
-const VERSION: i64 = 3;
+pub(crate) const VERSION: i64 = 8;
 
 pub(crate) const ARCHIVED: &str = "archived";
 const BODY: &str = "body";
@@ -148,7 +148,9 @@ impl Library {
                 true
             }
         };
-        if self.move_archived_to_notes()? || upgraded { self.commit() } else { Ok(()) }
+        let archived = self.move_archived_to_notes()?;
+        let recurring = self.migrate_recurrence(&VersionVector::default())?;
+        if archived || recurring || upgraded { self.commit() } else { Ok(()) }
     }
 
     /// Moves `archived` from the action fields, where version 2 kept it, to the note, and returns
@@ -207,7 +209,9 @@ impl Library {
 
     pub fn note(&self, id: NoteId) -> Option<Note> {
         let value = self.notes_map().get(&id.to_string())?.get_deep_value();
-        note_from_value(id, &value)
+        let mut notes = [note_from_value(id, &value)?];
+        self.hydrate_occurrences(&mut notes);
+        notes.into_iter().next()
     }
 
     /// Every note, including those in the trash, most recently modified first.
@@ -220,6 +224,7 @@ impl Library {
             .filter_map(|(key, value)| note_from_value(key.parse().ok()?, value))
             .collect();
         notes.sort_by(|a, b| b.modified.cmp(&a.modified).then(b.id.cmp(&a.id)));
+        self.hydrate_occurrences(&mut notes);
         notes
     }
 
@@ -378,6 +383,10 @@ impl Library {
         tombstone.get(LABEL).and_then(|label| string(label.clone()))
     }
 
+    pub(crate) fn is_deleted(&self, id: NoteId) -> bool {
+        self.note_map(id).is_err() && self.doc.get_map(DELETED).get(&id.to_string()).is_some()
+    }
+
     /// Notes outside the trash whose bodies contain every word of `query`, ignoring case.
     pub fn search(&self, query: &str) -> Vec<Note> {
         let in_trash = self.notes_in_trash();
@@ -532,6 +541,7 @@ impl Library {
     /// the merge lost, as merging libraries does.
     pub fn merge_updates(&mut self, bytes: &[u8], repair: bool) -> Result<(), Error> {
         self.check_writable()?;
+        let since = self.doc.oplog_vv();
         let trial = self.doc.fork();
         trial.import(bytes).map_err(loro_error)?;
         Self::validate(&trial)?;
@@ -545,6 +555,7 @@ impl Library {
             let _ = incoming.import(bytes);
             self.restore_lost(&[before.get_map("notes"), incoming.get_map("notes")])?;
         }
+        self.migrate_recurrence(&since)?;
         self.commit()
     }
 
@@ -593,8 +604,10 @@ impl Library {
     /// Merges another document's changes into the library, as a sync does.
     pub(crate) fn import(&mut self, bytes: &[u8]) -> Result<(), Error> {
         self.check_writable()?;
+        let since = self.doc.oplog_vv();
         self.doc.import(bytes).map_err(loro_error)?;
         self.move_archived_to_notes()?;
+        self.migrate_recurrence(&since)?;
         self.commit()
     }
 
@@ -689,7 +702,7 @@ fn note_from_value(id: NoteId, value: &LoroValue) -> Option<Note> {
     };
     let created = map.get(CREATED).and_then(|v| integer(v.clone()))?;
     let kind = map.get(KIND).and_then(|v| string(v.clone())).unwrap_or_else(|| MEMO.to_owned());
-    let action = (kind == ACTION_KIND).then(|| Action::from_value(map.get(ACTION)));
+    let action = (kind == ACTION_KIND).then(|| Action::from_value(map.get(ACTION), id));
     Some(Note {
         body: map.get(BODY).and_then(|v| string(v.clone())).unwrap_or_default(),
         created,

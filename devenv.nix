@@ -206,6 +206,13 @@ in
     };
     typos = {
       enable = true;
+      # The stock entry pins a generated config before args.
+      entry = lib.mkForce (
+        lib.concatStringsSep " " [
+          (lib.getExe config.git-hooks.hooks.typos.package)
+          "--config .config/typos.toml --force-exclude"
+        ]
+      );
       excludes = [ vendored ];
     };
     vale = {

@@ -18,8 +18,8 @@ for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
   mkdir -p "$drawables" "$mipmaps"
   for icon in actions add all_notes back bold bullets checklist clear_search code down drag \
     dropdown edit execute heading_one heading_two highlight inbox indent italic link more numbers \
-    outdent pin plan quote review search sort_ascending sort_descending starred starred_filled \
-    strike trash up; do
+    outdent pin plan quote remove repeat review search sort_ascending sort_descending starred \
+    starred_filled strike trash up; do
     rsvg-convert --width "$size" --height "$size" --output "$drawables/$icon.png" \
       "$lucide/systems.thoughtfull.Commonplace-$(echo "$icon" | tr _ -)-symbolic.svg"
   done

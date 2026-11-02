@@ -14,6 +14,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import androidx.test.platform.app.InstrumentationRegistry
+import java.time.LocalDate
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -91,7 +92,7 @@ class QuickCaptureTest {
         1,
         runBlocking {
           repository.use { core ->
-            core.notes("").count {
+            core.notes("", LocalDate.now().toString()).count {
               it.space == space && it.body == "A thought from another app"
             }
           }
