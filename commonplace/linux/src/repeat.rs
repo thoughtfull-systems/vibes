@@ -147,6 +147,8 @@ const ENDS: [&str; 3] = ["Never", "On a date", "After"];
 /// The widgets of the custom repeat editor.
 pub struct RepeatEditor {
     pub widget: gtk::Box,
+    original: Option<Rule>,
+    ordinals: Vec<i8>,
     interval: gtk::SpinButton,
     unit: gtk::DropDown,
     weekdays: Vec<gtk::ToggleButton>,
@@ -184,7 +186,7 @@ impl RepeatEditor {
             *row += 1;
         };
 
-        let interval = gtk::SpinButton::with_range(1.0, 999.0, 1.0);
+        let interval = gtk::SpinButton::with_range(1.0, f64::from(form.interval.max(999)), 1.0);
         interval.set_value(f64::from(form.interval));
         let unit = gtk::DropDown::from_strings(&UNITS);
         let frequency = FREQUENCIES.iter().position(|f| *f == form.frequency);
@@ -205,8 +207,17 @@ impl RepeatEditor {
                 button
             })
             .collect();
+        let mut ordinals = ORDINALS.to_vec();
+        if let MonthlyOn::Nth { ordinal, .. } = form.on
+            && !ordinals.contains(&ordinal)
+        {
+            ordinals.insert(ordinals.len() - 1, ordinal);
+        }
+        let ordinal_index = |ordinal| {
+            ordinals.iter().position(|&n| n == ordinal).map_or(0, |index| index as u32 + 1)
+        };
         let mut picks = vec!["Day".to_owned()];
-        picks.extend(ORDINALS.iter().map(|&n| format!("The {}", ordinal_word(n))));
+        picks.extend(ordinals.iter().map(|&n| format!("The {}", ordinal_word(n))));
         let picks: Vec<&str> = picks.iter().map(String::as_str).collect();
         let on_pick = gtk::DropDown::from_strings(&picks);
         let day = gtk::SpinButton::with_range(1.0, 31.0, 1.0);
@@ -263,7 +274,11 @@ impl RepeatEditor {
         };
         let (until_button, until_calendar) = day_picker(&format_date(until), None);
         show_on_calendar(&until_calendar, until);
-        let count = gtk::SpinButton::with_range(1.0, 999.0, 1.0);
+        let maximum = match form.ends {
+            Ends::After { count } => count.max(999),
+            _ => 999,
+        };
+        let count = gtk::SpinButton::with_range(1.0, f64::from(maximum), 1.0);
         count.set_value(10.0);
         match form.ends {
             Ends::Never => ends.set_selected(0),
@@ -286,6 +301,8 @@ impl RepeatEditor {
         widget.append(&preview);
         let editor = Rc::new(Self {
             widget,
+            original: rule.cloned(),
+            ordinals,
             interval,
             unit,
             weekdays,
@@ -414,7 +431,8 @@ impl RepeatEditor {
         let on = if self.on_pick.selected() == 0 {
             MonthlyOn::Day { day: self.day.value_as_int().clamp(1, 31) as i8 }
         } else {
-            let ordinal = ORDINALS[(self.on_pick.selected() as usize - 1).min(ORDINALS.len() - 1)];
+            let ordinal =
+                self.ordinals[(self.on_pick.selected() as usize - 1).min(self.ordinals.len() - 1)];
             let kind = match self.kind.selected() {
                 0 => DayKind::Day,
                 1 => DayKind::Workday,
@@ -433,18 +451,20 @@ impl RepeatEditor {
         }
         let ends = match self.ends.selected() {
             1 => Ends::On { date: *self.until.borrow() },
-            2 => Ends::After { count: self.count.value_as_int().max(1) as u32 },
+            2 => Ends::After { count: self.count.value().max(1.0) as u32 },
             _ => Ends::Never,
         };
         let form = RepeatForm {
             frequency: self.frequency(),
-            interval: self.interval.value_as_int().max(1) as u32,
+            interval: self.interval.value().max(1.0) as u32,
             weekdays,
             on,
             month: self.month.selected() as u8 + 1,
             ends,
         };
-        RepeatValues { rule: form.rule(), start }
+        let rule =
+            self.original.as_ref().map_or_else(|| form.rule(), |rule| form.apply_to(rule, start));
+        RepeatValues { rule, start }
     }
 }
 
@@ -532,11 +552,6 @@ impl DaysOffMenus {
     }
 }
 
-/// The index of `ordinal` in the "On" menu, where "Day" comes first.
-fn ordinal_index(ordinal: i8) -> u32 {
-    ORDINALS.iter().position(|&n| n == ordinal).map_or(ORDINALS.len(), |i| i + 1) as u32
-}
-
 /// Opens the custom repeat editor in a dialog, and calls `on_save` with what it describes.
 pub fn present_repeat_dialog(
     parent: &impl IsA<gtk::Widget>,
@@ -570,6 +585,72 @@ pub fn show_on_calendar(calendar: &gtk::Calendar, date: Date) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "needs an isolated GTK Broadway display"]
+    fn unchanged_rules_keep_their_calendar_and_bounds_edits_keep_pending_work() {
+        assert_eq!(std::env::var("GDK_BACKEND").as_deref(), Ok("broadway"));
+        adw::init().unwrap();
+        let start = Date::new(2026, 10, 6).unwrap();
+        let today = Date::new(2026, 10, 28).unwrap();
+        for text in [
+            "FREQ=DAILY;INTERVAL=1000;COUNT=4294967295",
+            "FREQ=MONTHLY",
+            "FREQ=WEEKLY;INTERVAL=2;BYDAY=TU;WKST=MO",
+            "FREQ=YEARLY",
+        ] {
+            let rule = Rule::parse(text).unwrap();
+            let editor = RepeatEditor::new(Some(&rule), start, true, Box::new(|_, _| Vec::new()));
+            let mut library = commonplace_core::Library::in_memory();
+            let id = library.create_task("Bill", None).unwrap();
+            let mut settings = commonplace_core::RecurrenceSettings::new(rule, start);
+            settings.missed = Missed::All;
+            library.set_recurrence(id, Some(settings.clone()), start).unwrap();
+            let before = library.current_occurrence(id, today).unwrap().target;
+            for ends in [0, 2] {
+                editor.ends.set_selected(ends);
+                settings.rule = editor.values().rule;
+                library.set_recurrence(id, Some(settings.clone()), today).unwrap();
+                assert_eq!(library.current_occurrence(id, today).unwrap().target, before, "{text}");
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "needs an isolated GTK Broadway display"]
+    fn changing_the_origin_keeps_the_day_selected_in_the_editor() {
+        assert_eq!(std::env::var("GDK_BACKEND").as_deref(), Ok("broadway"));
+        adw::init().unwrap();
+        let start = Date::new(2026, 10, 6).unwrap();
+        let changed = start.add_days(1);
+        for (text, expected) in [
+            ("FREQ=MONTHLY", Date::new(2026, 11, 6).unwrap()),
+            ("FREQ=WEEKLY", Date::new(2026, 10, 13).unwrap()),
+            ("FREQ=YEARLY", Date::new(2027, 10, 6).unwrap()),
+        ] {
+            let rule = Rule::parse(text).unwrap();
+            let editor = RepeatEditor::new(Some(&rule), start, true, Box::new(|_, _| Vec::new()));
+            *editor.start.borrow_mut() = changed;
+            let settings = commonplace_core::RecurrenceSettings::new(editor.values().rule, changed);
+            assert_eq!(
+                commonplace_core::Library::in_memory().preview_dates(&settings, changed, 1),
+                [expected]
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "needs an isolated GTK Broadway display"]
+    fn an_unusual_ordinal_survives_opening_and_saving_the_editor() {
+        assert_eq!(std::env::var("GDK_BACKEND").as_deref(), Ok("broadway"));
+        adw::init().unwrap();
+        let start = Date::new(2026, 11, 1).unwrap();
+        for ordinal in [6, 53] {
+            let rule = Rule::parse(&format!("FREQ=MONTHLY;BYDAY={ordinal}MO")).unwrap();
+            let editor = RepeatEditor::new(Some(&rule), start, true, Box::new(|_, _| Vec::new()));
+            assert_eq!(editor.values().rule, rule);
+        }
+    }
 
     #[test]
     #[ignore = "needs an isolated GTK Broadway display"]

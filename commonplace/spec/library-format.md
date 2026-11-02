@@ -147,6 +147,14 @@ concurrent calendar edits can't combine a rule with another edit's origin. Write
 settings that the owner edited. Changing a due offset on one device therefore merges with changing
 the holiday behavior on another.
 
+Start and due offsets range from -999 to 999 days, inclusive. Writers reject values outside that
+range. Readers ignore an invalid offset without removing its stored field.
+
+An editor preserves the original calendar selectors when the owner saves the same calendar choices,
+including when only the ending changes. Making an implicit selector explicit, or changing a week
+start that produces the same editor choices, mustn't replace the calendar scope. Editors keep an
+existing ordinal in their choices even when they don't offer it for new rules.
+
 #### Occurrence identity
 
 An occurrence has an opaque identifier independent of its effective date. Calendar occurrences use
@@ -292,8 +300,11 @@ commit. Its key is `<action-id>/<occurrence-id>/<order>/<peer>`, with decimal `o
 Its value copies the handling record and adds `reach`, the settlement boundary described below.
 Readers take settlement only from this root map. Reopening or handling an occurrence again leaves
 earlier settlement events in place, including concurrent events for the same occurrence. A later
-explicit reopen exempts only its own occurrence from older events. The optional legacy `reach` in
-`recurrence_handled` doesn't govern settlement after migration.
+explicit reopen exempts only its own occurrence from older events. A winning `open` handling record
+also exempts its occurrence from every settlement event written by handling that same occurrence,
+including a concurrent completion that loses Loro's conflict. Events from other occurrences still
+apply in logical handling order. The optional legacy `reach` in `recurrence_handled` doesn't govern
+settlement after migration.
 
 `recurrence_moved` adds `to`, the chosen effective date, and `rule` and `start`, the calendar when
 the owner moved it. Explicit moves override days off, even on the nominal date. Removing a move
@@ -343,6 +354,8 @@ offsets, or days-off edits remove them from live scheduled work. A settled row s
 date and the earliest active settlement date that the latest explicit reopen doesn't override. It
 doesn't claim to reconstruct the slot's former effective dates. A temporarily superseded row uses
 its live effective dates. Readers use the same distinction for selection, history, and counts.
+History orders both kinds of rows by their displayed occurrence dates. Requesting more rows keeps
+the existing rows in the same order, including when days off move an older nominal slot forward.
 
 Switching between `all` and `latest` reinterprets earlier handling records without changing their
 identities. `all` ignores settlement boundaries; `latest` applies them, including boundaries

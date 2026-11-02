@@ -71,7 +71,9 @@ format adds them.
   dates as offsets in days from it. The due offset can be absent, and without a start offset an
   occurrence starts on its date. An action can be due on the date, start on it with no deadline, or
   start three days before it's due. One rule drives both dates, so they can't drift apart. While an
-  action recurs, its occurrence's dates replace its own `due` and `defer`.
+  action recurs, its occurrence's dates replace its own `due` and `defer`. Both offsets range from
+  -999 to 999 days, matching the editors. Writers reject other values; readers ignore them and keep
+  their stored fields.
 - **Identity.** A calendar occurrence has a stable nominal slot, independent of the date that days
   off or an explicit move gives it. An `after` occurrence has a cycle number, so different cycles
   can reuse a calendar date. Deterministic identifiers include the action, calendar scope, and slot
@@ -80,7 +82,9 @@ format adds them.
   calendar even with interval 1. A shared allocation history retains every generation, including
   those of calendars that lose concurrent edits. New calendars use a generation greater than every
   observed allocation, so a later edit can't reuse a discarded calendar's identifiers. The format
-  spec defines the derivation.
+  spec defines the derivation. Saving unchanged calendar choices preserves their original selectors,
+  including when only the ending changes. The editors retain an existing ordinal even when they
+  don't offer it for new rules.
 - **Handled occurrences.** Root maps keyed by action and occurrence identifier hold completion,
   skip, reopen, move, and memo records. Step records use the step identifier and the governing
   occurrence identifier. Root maps avoid competing child containers when devices independently
@@ -88,7 +92,9 @@ format adds them.
   different occurrences survive independently. A handling record snapshots its effective dates.
   Logical sequences order handling events, so a clock correction can't reverse later work. Immutable
   settlement events live in their own root map, so reopening or replacing a handling record doesn't
-  remove another slot's settlement. Records name their identity algorithm's version. Migration
+  remove another slot's settlement. A winning reopen overrides every settlement from handling its
+  own occurrence, including a losing concurrent completion. Other occurrences' settlement events
+  still apply in logical handling order. Records name their identity algorithm's version. Migration
   checks an unmarked record's writer in the editing history, so it never treats a legitimate
   concurrent calendar as legacy data. The format specifies exact rule bytes and test vectors for
   deriving occurrence identifiers.
@@ -139,7 +145,8 @@ event settles. Live date edits can restore the first. Under the same scope and `
 don't restore the second or remove it from history and the missed count. Settled history names the
 nominal slot and the date of settlement; the records don't snapshot every missed slot's former
 effective dates. Replacing a scope preserves explicit handling history, but doesn't retain the old
-scope's implicit missed occurrences.
+scope's implicit missed occurrences. History orders rows by their displayed dates, so requesting
+more history doesn't change which rows lead it when days off move old slots forward.
 
 Reopening changes an occurrence's handling state. It doesn't extend bounds, remove days off, or
 resume a stopped series. History keeps reopened records that can't enter scheduled work and states

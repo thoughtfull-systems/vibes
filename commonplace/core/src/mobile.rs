@@ -1342,6 +1342,11 @@ pub fn repeat_form_rule(form: RepeatForm) -> Rule {
     form.rule()
 }
 
+#[uniffi::export]
+pub fn edit_repeat_form_rule(form: RepeatForm, original: Rule, start: Date) -> Rule {
+    form.apply_to(&original, start)
+}
+
 /// "first" to "fifth", or "last."
 #[uniffi::export]
 pub fn ordinal_word(ordinal: i8) -> String {

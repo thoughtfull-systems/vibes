@@ -663,7 +663,7 @@ const WORKDAYS: [u8; 5] = [0, 1, 2, 3, 4];
 pub enum MonthlyOn {
     /// A day of the month, from 1, or from -1 for the last day.
     Day { day: i8 },
-    /// The first to fourth, or with -1 the last, of a kind of day.
+    /// An ordinal within the period, counting from the end when negative.
     Nth { ordinal: i8, kind: DayKind },
 }
 
@@ -704,6 +704,15 @@ pub struct RepeatForm {
 }
 
 impl RepeatForm {
+    pub fn apply_to(&self, original: &Rule, start: Date) -> Rule {
+        let rule = self.rule();
+        if Self::from_rule(original, start).is_some_and(|form| form.rule().same_calendar(&rule)) {
+            Rule { count: rule.count, until: rule.until, ..original.clone() }
+        } else {
+            rule
+        }
+    }
+
     /// A weekly form, on the day of the week of `start`, with every other choice ready for when
     /// the editor switches frequency.
     pub fn new(start: Date) -> Self {

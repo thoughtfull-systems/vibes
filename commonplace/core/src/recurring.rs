@@ -26,6 +26,11 @@ impl Library {
         today: Date,
     ) -> Result<(), Error> {
         self.check_writable()?;
+        if settings.as_ref().is_some_and(|settings| {
+            [settings.defer, settings.due].into_iter().flatten().any(|offset| !valid_offset(offset))
+        }) {
+            return Err(Error::InvalidOffset);
+        }
         let action = self.action_map(id)?;
         let before = self.note(id).and_then(|note| note.action).ok_or(Error::NotAnAction(id))?;
         let old = before.recur.as_ref();
@@ -816,6 +821,10 @@ pub struct RecurrenceSettings {
     pub days_off: DaysOffUse,
 }
 
+fn valid_offset(offset: i32) -> bool {
+    (-999..=999).contains(&offset)
+}
+
 impl RecurrenceSettings {
     pub fn new(rule: Rule, start: Date) -> Self {
         Self {
@@ -939,7 +948,11 @@ impl Recurrence {
     ) -> Option<Self> {
         let map = fields(value?)?;
         let calendar = map.get("calendar").and_then(fields).unwrap_or(map);
-        let offset = |key| map.get(key).and_then(|value| integer(value.clone())?.try_into().ok());
+        let offset = |key| {
+            map.get(key)
+                .and_then(|value| integer(value.clone())?.try_into().ok())
+                .filter(|&offset| valid_offset(offset))
+        };
         let settings = RecurrenceSettings {
             rule: Rule::parse(&text(calendar, "rule")?)?,
             start: date(calendar, "start")?,
@@ -1363,8 +1376,9 @@ impl<'a> Occurrences<'a> {
             .iter()
             .filter(|reach| {
                 reach.misses(date)
-                    && reopened
-                        .is_none_or(|entry| (entry.order, entry.peer) <= (reach.order, reach.peer))
+                    && reopened.is_none_or(|entry| {
+                        reach.date != date && (entry.order, entry.peer) <= (reach.order, reach.peer)
+                    })
             })
             .map(|reach| reach.on)
             .min()
@@ -1613,6 +1627,10 @@ impl<'a> Occurrences<'a> {
         rule.until = None;
         let moved: Vec<_> =
             self.moved.keys().copied().filter(|&date| self.is_past(date, current)).collect();
+        let on = |date| match self.calendar_state(date, current) {
+            CalendarState::Settled(_) => date,
+            _ => self.on(date).unwrap_or(date),
+        };
         let mut span = 64i32;
         loop {
             let from = if span >= end.days_since(self.settings().start) {
@@ -1629,14 +1647,16 @@ impl<'a> Occurrences<'a> {
                 .collect();
             found.sort_unstable();
             found.dedup();
-            found.sort_by_key(|&date| {
-                let on = match self.calendar_state(date, current) {
-                    CalendarState::Settled(_) => Some(date),
-                    _ => self.started(date),
-                };
-                std::cmp::Reverse((on, date))
+            found.sort_by_key(|&date| std::cmp::Reverse((on(date), date)));
+            // Days off can move an older nominal slot ahead of settled rows in this window.
+            let complete = found.get(count - 1).is_some_and(|&date| {
+                let shown = on(date);
+                let earliest = rule
+                    .period_start(self.days_off.before(&self.settings().days_off, shown))
+                    .min(shown);
+                from <= earliest
             });
-            if found.len() >= count || from <= self.settings().start {
+            if complete || from <= self.settings().start {
                 found.truncate(count);
                 return found;
             }

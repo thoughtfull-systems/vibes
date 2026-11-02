@@ -19,6 +19,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.unit.Density
 import androidx.test.espresso.Espresso
 import androidx.test.platform.app.InstrumentationRegistry
@@ -300,12 +301,77 @@ class DetailsTest {
   }
 
   @Test
+  fun savingAnUnchangedWeeklyEditorKeepsItsWeekStart() {
+    assertEditorKeepsRule("FREQ=WEEKLY;INTERVAL=2;BYDAY=TU;WKST=MO")
+  }
+
+  @Test
+  fun savingAnUnusualOrdinalKeepsItsOriginalSelection() {
+    assertEditorKeepsRule("FREQ=MONTHLY;BYDAY=6MO")
+  }
+
+  @Test
+  fun savingLargeStoredNumbersKeepsTheirOriginalValues() {
+    assertEditorKeepsRule("FREQ=DAILY;INTERVAL=1000;COUNT=4294967295")
+  }
+
+  private fun assertEditorKeepsRule(text: String) {
+    space("Repeat editor round trip")
+    model = NotebookModel(application)
+    val rule = checkNotNull(parseRule(text))
+    var saved: RepeatValues? = null
+    compose.setContent {
+      CommonplaceTheme {
+        RepeatEditorDialog(
+          model,
+          null,
+          rule,
+          "2026-10-06",
+          true,
+          DaysOffUse(DayOffEffect.IGNORE, DayOffEffect.IGNORE),
+          {},
+          { saved = it }
+        )
+      }
+    }
+    compose.onNodeWithText("Save").performClick()
+    compose.runOnIdle { assertEquals(rule, checkNotNull(saved).rule) }
+  }
+
+  @Test
+  fun coalescedOffsetSavesDoNotHideLaterSyncedValues() {
+    space("Coalesced offsets")
+    val offset = mutableStateOf<Int?>(-3)
+    val completions = mutableListOf<(Boolean) -> Unit>()
+    compose.setContent {
+      CommonplaceTheme {
+        OffsetRow("coalesced", offset.value, -1, "days before", false) { _, saved ->
+          completions.add(saved)
+        }
+      }
+    }
+    compose.onNodeWithText("3").performTextReplacement("4")
+    compose.onNodeWithText("4").performTextReplacement("45")
+    compose.onNodeWithText("45").performTextReplacement("4")
+    compose.runOnIdle {
+      offset.value = -4
+      completions.last()(true)
+    }
+    compose.onNodeWithText("4").assertExists()
+    compose.runOnIdle { offset.value = -45 }
+    compose.onNodeWithText("45").assertExists()
+  }
+
+  @Test
   fun syncedOffsetsReplaceTheDisplayedValue() {
     space("Synced offset")
     val offset = mutableStateOf<Int?>(-3)
     compose.setContent {
       CommonplaceTheme {
-        OffsetRow("synced", offset.value, -1, "days before", false) { offset.value = it }
+        OffsetRow("synced", offset.value, -1, "days before", false) { value, saved ->
+          offset.value = value
+          saved(true)
+        }
       }
     }
     compose.onNodeWithText("3").assertExists()

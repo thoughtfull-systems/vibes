@@ -58,6 +58,7 @@ import systems.thoughtfull.commonplace.core.RepeatForm
 import systems.thoughtfull.commonplace.core.Rule
 import systems.thoughtfull.commonplace.core.daysOffKindName
 import systems.thoughtfull.commonplace.core.describeRule
+import systems.thoughtfull.commonplace.core.editRepeatFormRule
 import systems.thoughtfull.commonplace.core.newRepeatForm
 import systems.thoughtfull.commonplace.core.ordinalWord
 import systems.thoughtfull.commonplace.core.repeatForm
@@ -148,7 +149,7 @@ private val monthNames = listOf(
 )
 
 /** The ordinals the monthly "On" menu offers after "Day", in the Linux app's order. */
-private val ordinals = listOf<Byte>(1, 2, 3, 4, 5, -1)
+private val defaultOrdinals = listOf<Byte>(1, 2, 3, 4, 5, -1)
 internal val missedChoices = listOf(
   "Keep each one" to Missed.ALL,
   "Only the latest" to Missed.LATEST,
@@ -196,15 +197,21 @@ private fun NumberField(
 internal data class OffsetInput(
   val value: Int?,
   val text: String,
-  val pending: List<Int> = emptyList()
+  val pending: Long? = null,
+  val sequence: Long = 0
 ) {
   fun receive(offset: Int?, sign: Int): OffsetInput {
+    if (pending != null) return copy(value = offset)
     if (offset == value) return this
-    val saved = pending.indexOf(offset)
-    return if (saved >= 0) {
-      copy(value = offset, pending = pending.drop(saved + 1))
+    return copy(value = offset, text = ((offset ?: 0) * sign).toString())
+  }
+
+  fun saved(sequence: Long, offset: Int, success: Boolean, sign: Int): OffsetInput {
+    if (pending != sequence) return this
+    return if (success) {
+      copy(value = offset, pending = null)
     } else {
-      OffsetInput(offset, ((offset ?: 0) * sign).toString())
+      copy(text = ((value ?: 0) * sign).toString(), pending = null)
     }
   }
 }
@@ -222,23 +229,27 @@ internal fun OffsetRow(
   sign: Int,
   after: String,
   optional: Boolean,
-  change: (Int?) -> Unit
+  change: (Int?, (Boolean) -> Unit) -> Unit
 ) {
   val on = offset != null || !optional
   var input by remember(key, on) {
     mutableStateOf(OffsetInput(offset, ((offset ?: 0) * sign).toString()))
   }
-  LaunchedEffect(offset) { input = input.receive(offset, sign) }
+  LaunchedEffect(offset, input.pending) { input = input.receive(offset, sign) }
   Row(verticalAlignment = Alignment.CenterVertically) {
     if (optional) {
       Checkbox(on, { checked ->
-        change(if (checked) (input.text.toIntOrNull() ?: 0) * sign else null)
+        change(if (checked) (input.text.toIntOrNull() ?: 0) * sign else null) { }
       })
     }
     NumberField(input.text, { typed ->
       val value = typed.toIntOrNull()?.times(sign)?.takeIf { on }
-      input = input.copy(text = typed, pending = input.pending + listOfNotNull(value))
-      value?.let(change)
+      input = input.copy(text = typed)
+      if (value != null) {
+        val sequence = input.sequence + 1
+        input = input.copy(pending = sequence, sequence = sequence)
+        change(value) { success -> input = input.saved(sequence, value, success, sign) }
+      }
     }, signed = true)
     Text(" $after")
   }
@@ -259,11 +270,20 @@ internal fun RepeatEditorDialog(
   dismiss: () -> Unit,
   save: (RepeatValues) -> Unit
 ) {
-  val form = remember { rule?.let { repeatForm(it, start) } ?: newRepeatForm(start) }
+  val original = remember { rule }
+  val origin = remember { start }
+  val form = remember { original?.let { repeatForm(it, origin) } ?: newRepeatForm(origin) }
   var frequency by remember { mutableStateOf(form.frequency) }
   var interval by remember { mutableStateOf(form.interval.toString()) }
   var weekdays by remember { mutableStateOf(form.weekdays.map { it.toInt() }.toSet()) }
   val formOn = form.on
+  val ordinals = remember(formOn) {
+    defaultOrdinals.toMutableList().apply {
+      if (formOn is MonthlyOn.Nth && formOn.ordinal !in this) {
+        add(size - 1, formOn.ordinal)
+      }
+    }
+  }
   var pick by remember {
     mutableStateOf(
       when {
@@ -332,18 +352,20 @@ internal fun RepeatEditorDialog(
     val days = weekdays.ifEmpty { setOf(LocalDate.parse(startDate).dayOfWeek.value - 1) }
     val ending = when (ends) {
       1 -> Ends.On(until)
-      2 -> Ends.After((count.toIntOrNull() ?: 1).coerceAtLeast(1).toUInt())
+      2 -> Ends.After((count.toUIntOrNull() ?: 1u).coerceAtLeast(1u))
       else -> Ends.Never
     }
     val repeat = RepeatForm(
       frequency,
-      (interval.toIntOrNull() ?: 1).coerceAtLeast(1).toUInt(),
+      (interval.toUIntOrNull() ?: 1u).coerceAtLeast(1u),
       days.sorted().map { it.toByte() }.toByteArray(),
       on,
       month.toUByte(),
       ending
     )
-    return RepeatValues(repeatFormRule(repeat), startDate)
+    val edited =
+      original?.let { editRepeatFormRule(repeat, it, startDate) } ?: repeatFormRule(repeat)
+    return RepeatValues(edited, startDate)
   }
   val current = values()
   var preview by remember { mutableStateOf("") }

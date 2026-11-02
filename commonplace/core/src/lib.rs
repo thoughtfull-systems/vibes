@@ -77,6 +77,8 @@ pub enum Error {
     InvalidInvite(String),
     #[error("the occurrence changed; refresh the action and try again")]
     InvalidOccurrence,
+    #[error("a repeat offset must be between -999 and 999 days")]
+    InvalidOffset,
     #[error("{0:?} isn't a relay address")]
     InvalidRelay(String),
     #[error("the repeat rule isn't one Commonplace can follow")]

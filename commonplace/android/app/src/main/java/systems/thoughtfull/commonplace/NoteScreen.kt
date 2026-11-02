@@ -491,8 +491,11 @@ internal fun ActionDetails(model: NotebookModel, note: MobileNote, open: (String
   }
 
   // Changes the stored settings, not the shown ones, which miss a change still being saved.
-  fun updateRecurrence(change: (RecurrenceSettings) -> RecurrenceSettings) {
-    model.perform { core ->
+  fun updateRecurrence(
+    complete: (Boolean) -> Unit = {},
+    change: (RecurrenceSettings) -> RecurrenceSettings
+  ) {
+    model.perform(complete) { core ->
       core.note(note.id)?.action?.recur?.settings?.let {
         core.setRecurrence(note.id, change(it), today)
       }
@@ -579,13 +582,13 @@ internal fun ActionDetails(model: NotebookModel, note: MobileNote, open: (String
     } else {
       val settings = recur.settings
       ActionField("Starts", "detail-starts") {
-        OffsetRow(note.id, settings.defer, -1, "days before", optional = false) {
-          updateRecurrence { settings -> settings.copy(defer = it) }
+        OffsetRow(note.id, settings.defer, -1, "days before", optional = false) { value, saved ->
+          updateRecurrence(saved) { settings -> settings.copy(defer = value) }
         }
       }
       ActionField("Due", "detail-due") {
-        OffsetRow(note.id, settings.due, 1, "days after", optional = true) {
-          updateRecurrence { settings -> settings.copy(due = it) }
+        OffsetRow(note.id, settings.due, 1, "days after", optional = true) { value, saved ->
+          updateRecurrence(saved) { settings -> settings.copy(due = value) }
         }
       }
       ActionField("If missed", "detail-missed") {
